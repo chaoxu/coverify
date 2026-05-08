@@ -31,7 +31,16 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+- **Golden Truth Is Guarded**: [PASS/FAIL with explanation]
+- **Exploration Records Are First-Class**: [PASS/FAIL with explanation]
+- **Documents Stay Readable**: [PASS/FAIL with explanation]
+- **Indexes Are Derived Views**: [PASS/FAIL with explanation]
+- **One Workflow For Humans And Agents**: [PASS/FAIL with explanation]
+- **Spec Before Behavior**: [PASS/FAIL with explanation]
+- **Simple Testable Loops First**: [PASS/FAIL with explanation]
+
+If this plan adds a database, server, Git workflow, external API, or new
+automation layer, explain the concrete blocker that requires it.
 
 ## Project Structure
 

@@ -1,5 +1,9 @@
 # autoprover draft spec
 
+> Historical draft. Active development now uses GitHub Spec Kit. See
+> `specs/001-mathhub-core/spec.md` for the current feature specification and
+> `.specify/memory/constitution.md` for project principles.
+
 ## Goal
 
 `autoprover` is an automated mathematical exploration harness.
