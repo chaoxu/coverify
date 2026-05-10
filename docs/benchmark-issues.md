@@ -19,17 +19,22 @@ Initial tracker:
 
 Dataset inputs:
 
-The benchmark harness accepts JSON, JSONL, and CSV exports. It intentionally
-does not depend on parquet readers or Cosheaf credentials. Convert downloaded
-OPC or BrokenMath files to one of those formats before running local
-benchmarks.
+The benchmark harness accepts JSON, JSONL, and CSV exports. It does not require
+Cosheaf credentials. `scripts/prepare-benchmarks` converts public source data
+into runnable JSONL.
 
 `scripts/prepare-benchmarks` prepares the currently runnable public data:
 
 - `.autoprover/benchmarks/datasets/brokenmath.jsonl`: runnable BrokenMath
   sample data.
+- `.autoprover/benchmarks/datasets/opc-test.jsonl`: runnable OPC Hugging Face
+  proof-body data.
 - `.autoprover/benchmarks/datasets/opc-pass-at-n.jsonl`: OPC aggregate
-  repository metadata, not runnable as proof-body input.
+  repository metadata.
+
+OPC is distributed as Parquet. If `pyarrow` is not already installed, the prep
+script re-runs itself through `uv --with pyarrow` without adding a project
+dependency.
 
 Useful sources:
 

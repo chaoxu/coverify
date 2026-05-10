@@ -122,10 +122,10 @@ Prepare the currently runnable public benchmark data with:
 ./scripts/prepare-benchmarks
 ```
 
-This writes `.autoprover/benchmarks/datasets/brokenmath.jsonl`, which can be
-used directly with `autoprover benchmark brokenmath`. The Open Proof Corpus
-GitHub repository only includes aggregate metadata; OPC proof-body benchmark
-input still needs a Hugging Face export.
+This writes runnable BrokenMath and OPC JSONL files under
+`.autoprover/benchmarks/datasets/`. OPC is downloaded from the Hugging Face
+Parquet export; if `pyarrow` is unavailable, the script re-runs itself through
+`uv --with pyarrow`.
 
 Generated Cosheaf documents are linted before submission. The linter requires a
 non-empty Coflat Markdown body with exactly one H1 heading and no triple-backtick

@@ -12,6 +12,7 @@ class PrepareBenchmarksTests(unittest.TestCase):
             check=True,
         )
         self.assertIn("--limit", result.stdout)
+        self.assertIn("--opc-split", result.stdout)
 
     def test_brokenmath_prepared_file_is_runnable_shape(self) -> None:
         result = subprocess.run(
