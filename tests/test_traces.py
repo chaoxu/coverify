@@ -14,8 +14,12 @@ class TraceTests(unittest.TestCase):
             rows = path.read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(rows), 1)
             parsed = json.loads(rows[0])
+            self.assertEqual(parsed["schema_version"], 1)
             self.assertEqual(parsed["kind"], "explore")
             self.assertEqual(parsed["context_ids"], ["a"])
+            self.assertEqual(parsed["inputs"]["context_ids"], ["a"])
+            self.assertEqual(parsed["outputs"]["raw"], "output")
+            self.assertEqual(parsed["result"]["cosheaf"], {"id": "x"})
             self.assertEqual(parsed["prompt_version"], "autoprover-prompts-v1")
 
 

@@ -24,22 +24,59 @@ def slugify(text: str) -> str:
 def format_context(docs: list[ContextDoc]) -> str:
     if not docs:
         return "No Cosheaf context was retrieved."
+    golden = [doc for doc in docs if doc.status == "golden"]
+    working = [doc for doc in docs if doc.status != "golden"]
     parts: list[str] = []
-    for doc in docs:
+    if golden:
         parts.append(
-            "\n".join(
-                [
-                    f"## Context: {doc.title or doc.path}",
-                    f"- id: {doc.doc_id}",
-                    f"- path: {doc.path}",
-                    f"- type: {doc.doc_type}",
-                    f"- status: {doc.status}",
-                    "- body follows without Cosheaf YAML frontmatter:",
-                    "",
-                    doc.content,
-                ]
+            "\n\n---\n\n".join(
+                format_context_doc(doc, "ESTABLISHED GOLDEN CONTEXT") for doc in golden
             )
         )
+    if working:
+        parts.append(
+            "\n\n---\n\n".join(
+                format_context_doc(doc, "WORKING CONTEXT - NOT ESTABLISHED") for doc in working
+            )
+        )
+    return "\n\n===\n\n".join(parts)
+
+
+def format_context_doc(doc: ContextDoc, trust_label: str) -> str:
+    return "\n".join(
+        [
+            f"## {trust_label}: {doc.title or doc.path}",
+            f"- id: {doc.doc_id}",
+            f"- path: {doc.path}",
+            f"- type: {doc.doc_type}",
+            f"- status: {doc.status}",
+            f"- trust: {trust_label}",
+            "- body follows without Cosheaf YAML frontmatter:",
+            "",
+            doc.content,
+        ]
+    )
+
+
+def format_target(doc: ContextDoc) -> str:
+    return "\n".join(
+        [
+            f"## Target Document: {doc.title or doc.path}",
+            f"- id: {doc.doc_id}",
+            f"- path: {doc.path}",
+            f"- type: {doc.doc_type}",
+            f"- status: {doc.status}",
+            "- body follows without Cosheaf YAML frontmatter:",
+            "",
+            doc.content,
+        ]
+    )
+
+
+def format_target_context(docs: list[ContextDoc]) -> str:
+    parts: list[str] = []
+    for doc in docs:
+        parts.append(format_target(doc))
     return "\n\n---\n\n".join(parts)
 
 
@@ -76,7 +113,7 @@ def build_proposal_prompt(direction: str, target: ContextDoc, docs: list[Context
             direction,
             "",
             "# Target page",
-            format_context([target]),
+            format_target_context([target]),
             "",
             "# Additional context",
             format_context(docs),
@@ -105,7 +142,7 @@ def build_review_prompt(target: ContextDoc) -> str:
             "Reject if a claimed result is false, unjustified, incomplete, or depends on untrusted assumptions.",
             "",
             "# Target document",
-            format_context([target]),
+            format_target_context([target]),
         ]
     )
 
@@ -124,7 +161,7 @@ def build_repair_prompt(direction: str, target: ContextDoc, reviews: list[Contex
             direction,
             "",
             "# Rejected target",
-            format_context([target]),
+            format_target_context([target]),
             "",
             "# Verifier reviews and rejection rationale",
             format_context(reviews),

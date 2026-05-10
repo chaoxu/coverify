@@ -15,6 +15,9 @@ Future runs should be able to reconstruct:
 - whether the document eventually became golden or rejected
 - repair attempts that followed a rejection
 
+The current JSONL trace contract is documented in
+[`docs/trace-schema.md`](trace-schema.md).
+
 These traces can become training data for:
 
 - choosing promising exploration directions
