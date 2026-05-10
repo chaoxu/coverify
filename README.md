@@ -76,6 +76,23 @@ autoprover workstream start \
   --direction "Explore whether this lemma generalizes to finite lattices."
 
 autoprover workstream step TASK_DOC_ID --submit
+
+autoprover benchmark opc \
+  --input opc-export.jsonl \
+  --output .autoprover/benchmarks/opc.jsonl \
+  --mode review
+
+autoprover benchmark brokenmath \
+  --input brokenmath-export.jsonl \
+  --output .autoprover/benchmarks/brokenmath.jsonl \
+  --mode review
+
+autoprover benchmark opc \
+  --input opc-export.jsonl \
+  --output .autoprover/benchmarks/opc-generate.jsonl \
+  --mode generate \
+  --limit 10 \
+  --seed 1
 ```
 
 The default command is read from `AUTOPROVER_AGENT_CMD`. You can override it
@@ -90,6 +107,11 @@ For offline development without Codex calls:
 ```bash
 export AUTOPROVER_AGENT_CMD='./scripts/fake-agent'
 ```
+
+Benchmark commands are local by default. They read JSON, JSONL, or CSV exports
+and do not require Cosheaf credentials. `review` mode grades existing
+candidate proofs. `generate` mode asks the explorer to write a proof, then asks
+the verifier to review that generated proof.
 
 ## Boundary
 

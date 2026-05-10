@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import json
+from pathlib import Path
 import sys
 
 from .agents import AgentError
+from .benchmarks import BenchmarkError, run_benchmark
 from .commands import (
     command_cycle,
     command_explore,
@@ -96,6 +99,20 @@ def build_parser() -> argparse.ArgumentParser:
     ws_step.add_argument("--submit", action="store_true")
     ws_step.add_argument("--no-trace", action="store_true")
 
+    benchmark = sub.add_parser("benchmark", help="Run local proof benchmarks")
+    benchmark_sub = benchmark.add_subparsers(dest="benchmark_name", required=True)
+    for name, help_text in (
+        ("opc", "Run Open Proof Corpus verifier benchmark"),
+        ("brokenmath", "Run BrokenMath false-proof rejection benchmark"),
+    ):
+        bench = benchmark_sub.add_parser(name, help=help_text)
+        bench.add_argument("--input", required=True, help="JSON, JSONL, or CSV benchmark export")
+        bench.add_argument("--output", required=True, help="JSONL result path")
+        bench.add_argument("--mode", choices=["review", "generate"], default="review")
+        bench.add_argument("--limit", type=int, default=-1, help="Max items; negative means all")
+        bench.add_argument("--seed", type=int, default=None, help="Shuffle seed before applying limit")
+        bench.add_argument("--agent-cmd", default=None)
+
     return parser
 
 
@@ -107,6 +124,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command == "benchmark":
+            summary = run_benchmark(
+                args.benchmark_name,
+                Path(args.input),
+                Path(args.output),
+                args.agent_cmd,
+                args.mode,
+                args.limit,
+                args.seed,
+            )
+            print(json.dumps(summary, sort_keys=True))
+            return 0
         client = make_client(args)
         if args.command == "search":
             return command_search(client, args)
@@ -132,7 +161,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.workstream_command == "step":
                 return command_workstream_step(client, args)
         parser.error(f"unknown command: {args.command}")
-    except (CosheafError, AgentError, KeyError) as exc:
+    except (CosheafError, AgentError, BenchmarkError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     return 0
