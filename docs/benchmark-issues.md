@@ -27,8 +27,8 @@ into runnable JSONL.
 
 - `.autoprover/benchmarks/datasets/brokenmath.jsonl`: runnable BrokenMath
   sample data.
-- `.autoprover/benchmarks/datasets/opc-test.jsonl`: runnable OPC Hugging Face
-  proof-body data.
+- `.autoprover/benchmarks/datasets/opc-*.jsonl`: runnable OPC Hugging Face
+  proof-body data for all available splits.
 - `.autoprover/benchmarks/datasets/opc-pass-at-n.jsonl`: OPC aggregate
   repository metadata.
 

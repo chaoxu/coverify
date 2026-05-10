@@ -123,7 +123,8 @@ Prepare the currently runnable public benchmark data with:
 ```
 
 This writes runnable BrokenMath and OPC JSONL files under
-`.autoprover/benchmarks/datasets/`. OPC is downloaded from the Hugging Face
+`.autoprover/benchmarks/datasets/`. By default it prepares all available OPC
+splits and all selected BrokenMath rows. OPC is downloaded from the Hugging Face
 Parquet export; if `pyarrow` is unavailable, the script re-runs itself through
 `uv --with pyarrow`.
 

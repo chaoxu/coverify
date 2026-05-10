@@ -168,18 +168,20 @@ def prepare_opc_hf(limit: int, split: str) -> tuple[Path, int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--limit", type=int, default=200, help="Max rows per prepared file; <=0 means all")
-    parser.add_argument("--opc-split", choices=OPC_SPLITS, default="test")
+    parser.add_argument("--limit", type=int, default=0, help="Max rows per prepared file; <=0 means all")
+    parser.add_argument("--opc-split", choices=[*OPC_SPLITS, "all"], default="all")
     parser.add_argument("--clean", action="store_true", help="Remove cached repos before preparing")
     args = parser.parse_args()
     if args.clean:
         shutil.rmtree(CACHE, ignore_errors=True)
 
     broken_path, broken_count = prepare_brokenmath(args.limit)
-    opc_path, opc_count = prepare_opc_hf(args.limit, args.opc_split)
+    opc_splits = OPC_SPLITS if args.opc_split == "all" else [args.opc_split]
+    opc_results = [prepare_opc_hf(args.limit, split) for split in opc_splits]
     opc_meta_path, opc_meta_count = prepare_opc_repo_metadata(args.limit)
     print(f"brokenmath\t{broken_count}\t{broken_path}")
-    print(f"opc\t{opc_count}\t{opc_path}")
+    for opc_path, opc_count in opc_results:
+        print(f"opc\t{opc_count}\t{opc_path}")
     print(f"opc-pass-at-n\t{opc_meta_count}\t{opc_meta_path}")
     return 0
 
