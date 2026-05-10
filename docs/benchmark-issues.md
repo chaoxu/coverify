@@ -34,5 +34,6 @@ Useful sources:
 Result records:
 
 Each output line is JSON with benchmark name, item id, mode, expected decision,
-verifier decision, pass/fail, elapsed time, agent command, prompt hash, prompt
-versions, generated proof when applicable, reviewer comment, and error text.
+verifier decision, pass/fail, elapsed time, explorer/verifier commands, prompt
+hash, prompt versions, generated proof when applicable, reviewer comment, and
+error text.

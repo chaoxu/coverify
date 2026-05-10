@@ -38,6 +38,7 @@ export COSHEAF_URL=http://localhost:3030/api/v1
 export COSHEAF_WORKSPACE=notes
 export COSHEAF_TOKEN=cs_...
 export AUTOPROVER_AGENT_CMD='./scripts/codex-agent.sh'
+export AUTOPROVER_VERIFIER_CMD='./scripts/codex-agent.sh'
 ```
 
 See [`.env.example`](.env.example) for the full local environment shape.
@@ -95,8 +96,10 @@ autoprover benchmark opc \
   --seed 1
 ```
 
-The default command is read from `AUTOPROVER_AGENT_CMD`. You can override it
-per call with `--agent-cmd`.
+The default explorer command is read from `AUTOPROVER_AGENT_CMD`. Verifier
+commands use `AUTOPROVER_VERIFIER_CMD` when set, then fall back to
+`AUTOPROVER_AGENT_CMD`. You can override them per call with `--agent-cmd` and
+`--verifier-cmd`.
 
 The included `scripts/codex-agent.sh` wrapper runs `codex exec` and returns only
 Codex's final message, which keeps Cosheaf pages and review documents free of
@@ -112,6 +115,10 @@ Benchmark commands are local by default. They read JSON, JSONL, or CSV exports
 and do not require Cosheaf credentials. `review` mode grades existing
 candidate proofs. `generate` mode asks the explorer to write a proof, then asks
 the verifier to review that generated proof.
+
+Generated Cosheaf documents are linted before submission. The linter requires a
+non-empty Coflat Markdown body with exactly one H1 heading and no triple-backtick
+proof fences. Use `--no-lint` only for emergency bypasses.
 
 ## Boundary
 

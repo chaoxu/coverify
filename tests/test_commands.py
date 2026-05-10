@@ -4,7 +4,7 @@ from io import StringIO
 import os
 import unittest
 
-from autoprover.commands import command_cycle, command_propose, command_repair, command_workstream_step
+from autoprover.commands import command_cycle, command_propose, command_repair, command_review, command_workstream_step
 
 
 class FakeClient:
@@ -129,7 +129,9 @@ class CommandTests(unittest.TestCase):
             context_query="",
             limit=3,
             agent_cmd=fake_agent_path(),
+            verifier_cmd=None,
             no_trace=True,
+            no_lint=False,
         )
         with redirect_stdout(StringIO()):
             rc = command_cycle(client, args)
@@ -148,6 +150,7 @@ class CommandTests(unittest.TestCase):
             agent_cmd=fake_agent_path(),
             submit=True,
             no_trace=True,
+            no_lint=False,
         )
         with redirect_stdout(StringIO()):
             rc = command_propose(client, args)
@@ -163,6 +166,7 @@ class CommandTests(unittest.TestCase):
             agent_cmd=fake_agent_path(),
             submit=True,
             no_trace=True,
+            no_lint=False,
         )
         with redirect_stdout(StringIO()):
             rc = command_repair(client, args)
@@ -180,11 +184,26 @@ class CommandTests(unittest.TestCase):
             agent_cmd=fake_agent_path(),
             submit=True,
             no_trace=True,
+            no_lint=False,
         )
         with redirect_stdout(StringIO()):
             rc = command_workstream_step(client, args)
         self.assertEqual(rc, 0)
         self.assertEqual(client.submitted, ["new-page"])
+
+    def test_review_uses_verifier_command_override(self) -> None:
+        client = FakeClient()
+        args = Namespace(
+            target_id="target",
+            agent_cmd="/does/not/exist",
+            verifier_cmd=fake_agent_path(),
+            no_trace=True,
+            no_lint=False,
+        )
+        with redirect_stdout(StringIO()):
+            rc = command_review(client, args)
+        self.assertEqual(rc, 0)
+        self.assertEqual(client.decisions, [("target", "approve", "review")])
 
 
 if __name__ == "__main__":

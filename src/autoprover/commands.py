@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import os
 from typing import Any, Protocol
 
 from .agents import parse_review_result, run_agent
 from .context import context_from_doc, load_context
+from .lint import LintError, require_valid_coflat
 from .prompts import (
     ContextDoc,
     build_explore_prompt,
@@ -46,6 +48,18 @@ def default_task_path(direction: str) -> str:
     return f"tasks/{slugify(direction)}.md"
 
 
+def lint_enabled(args: argparse.Namespace) -> bool:
+    return not getattr(args, "no_lint", False)
+
+
+def verifier_command(args: argparse.Namespace) -> str | None:
+    return (
+        getattr(args, "verifier_cmd", None)
+        or os.environ.get("AUTOPROVER_VERIFIER_CMD")
+        or getattr(args, "agent_cmd", None)
+    )
+
+
 def command_search(client: Client, args: argparse.Namespace) -> int:
     print_table(client.search(args.query), ["doc_id", "path", "title", "rank"])
     return 0
@@ -74,6 +88,7 @@ def command_task(client: Client, args: argparse.Namespace) -> int:
         ]
     )
     path = args.path or default_task_path(args.direction)
+    require_valid_coflat(body, lint_enabled(args))
     result = client.put_note(path, body)
     meta = result["meta"]
     if args.submit:
@@ -89,6 +104,21 @@ def create_exploration(client: Client, args: argparse.Namespace) -> dict[str, An
     prompt = build_explore_prompt(args.direction, context)
     body = run_agent(prompt, args.agent_cmd)
     path = args.path or default_explore_path(args.direction)
+    try:
+        require_valid_coflat(body, lint_enabled(args))
+    except LintError as exc:
+        if not args.no_trace:
+            append_trace(
+                make_trace(
+                    "explore",
+                    args.direction,
+                    [doc.doc_id for doc in context],
+                    prompt,
+                    body,
+                    {"path": path, "lint_errors": exc.errors},
+                )
+            )
+        raise
     result = client.put_note(path, body)
     meta = result["meta"]
     if args.submit:
@@ -122,6 +152,21 @@ def command_propose(client: Client, args: argparse.Namespace) -> int:
     context = [doc for doc in load_context(client, query, args.limit) if doc.doc_id != args.target_id]
     prompt = build_proposal_prompt(args.direction, target, context)
     body = run_agent(prompt, args.agent_cmd)
+    try:
+        require_valid_coflat(body, lint_enabled(args))
+    except LintError as exc:
+        if not args.no_trace:
+            append_trace(
+                make_trace(
+                    "propose",
+                    args.direction,
+                    [target.doc_id, *[doc.doc_id for doc in context]],
+                    prompt,
+                    body,
+                    {"target_id": args.target_id, "lint_errors": exc.errors},
+                )
+            )
+        raise
     result = client.create_proposal(args.target_id, body)
     meta = result["meta"]
     if args.submit:
@@ -161,6 +206,21 @@ def command_repair(client: Client, args: argparse.Namespace) -> int:
     direction = args.direction or "Repair the rejected document using the verifier reviews."
     prompt = build_repair_prompt(direction, target, reviews)
     body = run_agent(prompt, args.agent_cmd)
+    try:
+        require_valid_coflat(body, lint_enabled(args))
+    except LintError as exc:
+        if not args.no_trace:
+            append_trace(
+                make_trace(
+                    "repair",
+                    direction,
+                    [target.doc_id, *[doc.doc_id for doc in reviews]],
+                    prompt,
+                    body,
+                    {"target_id": args.target_id, "lint_errors": exc.errors},
+                )
+            )
+        raise
     result = client.create_proposal(args.target_id, body)
     meta = result["meta"]
     if args.submit:
@@ -184,8 +244,23 @@ def command_repair(client: Client, args: argparse.Namespace) -> int:
 def command_review(client: Client, args: argparse.Namespace) -> int:
     target = context_from_doc(client, args.target_id)
     prompt = build_review_prompt(target)
-    raw = run_agent(prompt, args.agent_cmd)
+    raw = run_agent(prompt, verifier_command(args))
     review = parse_review_result(raw)
+    try:
+        require_valid_coflat(review.body, lint_enabled(args))
+    except LintError as exc:
+        if not args.no_trace:
+            append_trace(
+                make_trace(
+                    "review",
+                    f"review {args.target_id}",
+                    [target.doc_id],
+                    prompt,
+                    raw,
+                    {"target_id": args.target_id, "lint_errors": exc.errors},
+                )
+            )
+        raise
     created = client.create_review(args.target_id, review.body)
     review_id = str(created["meta"]["id"])
     decided = client.decide(
@@ -226,7 +301,9 @@ def command_review_queue(client: Client, args: argparse.Namespace) -> int:
         child = argparse.Namespace(
             target_id=str(entry["id"]),
             agent_cmd=args.agent_cmd,
+            verifier_cmd=getattr(args, "verifier_cmd", None),
             no_trace=args.no_trace,
+            no_lint=getattr(args, "no_lint", False),
         )
         command_review(client, child)
         reviewed += 1
@@ -242,8 +319,10 @@ def command_cycle(client: Client, args: argparse.Namespace) -> int:
         context_query=args.context_query,
         limit=args.limit,
         agent_cmd=args.agent_cmd,
+        verifier_cmd=getattr(args, "verifier_cmd", None),
         submit=True,
         no_trace=args.no_trace,
+        no_lint=getattr(args, "no_lint", False),
     )
     created = create_exploration(client, explore_args)
     meta = created["meta"]
@@ -251,7 +330,9 @@ def command_cycle(client: Client, args: argparse.Namespace) -> int:
     review_args = argparse.Namespace(
         target_id=str(meta["id"]),
         agent_cmd=args.agent_cmd,
+        verifier_cmd=getattr(args, "verifier_cmd", None),
         no_trace=args.no_trace,
+        no_lint=getattr(args, "no_lint", False),
     )
     return command_review(client, review_args)
 
@@ -271,5 +352,6 @@ def command_workstream_step(client: Client, args: argparse.Namespace) -> int:
         agent_cmd=args.agent_cmd,
         submit=args.submit,
         no_trace=args.no_trace,
+        no_lint=getattr(args, "no_lint", False),
     )
     return command_explore(client, explore_args)

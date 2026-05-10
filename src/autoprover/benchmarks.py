@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, replace
 import csv
 import hashlib
 import json
+import os
 from pathlib import Path
 import random
 import time
@@ -37,6 +38,8 @@ class BenchmarkRecord:
     passed: bool | None
     elapsed_ms: int
     agent_command: str | None
+    explorer_command: str | None
+    verifier_command: str | None
     prompt_hash: str
     prompt_version: str
     coflat_primer_version: str
@@ -219,13 +222,23 @@ def hash_prompt(prompt: str) -> str:
     return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
 
 
-def review_item(item: BenchmarkItem, agent_cmd: str | None, proof: str | None = None) -> BenchmarkRecord:
+def resolve_verifier_cmd(agent_cmd: str | None, verifier_cmd: str | None) -> str | None:
+    return verifier_cmd or os.environ.get("AUTOPROVER_VERIFIER_CMD") or agent_cmd
+
+
+def review_item(
+    item: BenchmarkItem,
+    agent_cmd: str | None,
+    verifier_cmd: str | None = None,
+    proof: str | None = None,
+) -> BenchmarkRecord:
     candidate = proof if proof is not None else item.proof
     prompt = build_review_prompt(benchmark_target_doc(item, candidate))
     start = time.monotonic()
     generated: str | None = None if proof is None else candidate
+    resolved_verifier_cmd = resolve_verifier_cmd(agent_cmd, verifier_cmd)
     try:
-        raw = run_agent(prompt, agent_cmd)
+        raw = run_agent(prompt, resolved_verifier_cmd)
         review = parse_review_result(raw)
         elapsed_ms = int((time.monotonic() - start) * 1000)
         passed = None
@@ -239,7 +252,9 @@ def review_item(item: BenchmarkItem, agent_cmd: str | None, proof: str | None = 
             decision=review.decision,
             passed=passed,
             elapsed_ms=elapsed_ms,
-            agent_command=agent_cmd,
+            agent_command=resolved_verifier_cmd,
+            explorer_command=None,
+            verifier_command=resolved_verifier_cmd,
             prompt_hash=hash_prompt(prompt),
             prompt_version=PROMPT_VERSION,
             coflat_primer_version=COFLAT_PRIMER_VERSION,
@@ -257,7 +272,9 @@ def review_item(item: BenchmarkItem, agent_cmd: str | None, proof: str | None = 
             decision=None,
             passed=False if item.expected_decision is not None else None,
             elapsed_ms=elapsed_ms,
-            agent_command=agent_cmd,
+            agent_command=resolved_verifier_cmd,
+            explorer_command=None,
+            verifier_command=resolved_verifier_cmd,
             prompt_hash=hash_prompt(prompt),
             prompt_version=PROMPT_VERSION,
             coflat_primer_version=COFLAT_PRIMER_VERSION,
@@ -267,7 +284,7 @@ def review_item(item: BenchmarkItem, agent_cmd: str | None, proof: str | None = 
         )
 
 
-def generate_item(item: BenchmarkItem, agent_cmd: str | None) -> BenchmarkRecord:
+def generate_item(item: BenchmarkItem, agent_cmd: str | None, verifier_cmd: str | None = None) -> BenchmarkRecord:
     direction = "\n".join(["Solve this benchmark problem with a complete proof.", "", item.problem])
     prompt = build_explore_prompt(direction, [])
     start = time.monotonic()
@@ -284,6 +301,8 @@ def generate_item(item: BenchmarkItem, agent_cmd: str | None) -> BenchmarkRecord
             passed=False if item.expected_decision is not None else None,
             elapsed_ms=elapsed_ms,
             agent_command=agent_cmd,
+            explorer_command=agent_cmd,
+            verifier_command=resolve_verifier_cmd(agent_cmd, verifier_cmd),
             prompt_hash=hash_prompt(prompt),
             prompt_version=PROMPT_VERSION,
             coflat_primer_version=COFLAT_PRIMER_VERSION,
@@ -291,9 +310,9 @@ def generate_item(item: BenchmarkItem, agent_cmd: str | None) -> BenchmarkRecord
             comment=None,
             error=str(exc),
         )
-    record = review_item(item, agent_cmd, proof=proof)
+    record = review_item(item, agent_cmd, verifier_cmd, proof=proof)
     elapsed_ms = int((time.monotonic() - start) * 1000)
-    return replace(record, mode="generate", elapsed_ms=elapsed_ms)
+    return replace(record, mode="generate", elapsed_ms=elapsed_ms, explorer_command=agent_cmd)
 
 
 def write_records(records: list[BenchmarkRecord], output: Path) -> None:
@@ -330,15 +349,16 @@ def run_benchmark(
     input_path: Path,
     output_path: Path,
     agent_cmd: str | None,
+    verifier_cmd: str | None,
     mode: str,
     limit: int,
     seed: int | None,
 ) -> dict[str, Any]:
     items = select_items(load_benchmark_items(benchmark, input_path), limit, seed)
     if mode == "review":
-        records = [review_item(item, agent_cmd) for item in items]
+        records = [review_item(item, agent_cmd, verifier_cmd) for item in items]
     elif mode == "generate":
-        records = [generate_item(item, agent_cmd) for item in items]
+        records = [generate_item(item, agent_cmd, verifier_cmd) for item in items]
     else:
         raise BenchmarkError(f"unknown benchmark mode: {mode}")
     write_records(records, output_path)
