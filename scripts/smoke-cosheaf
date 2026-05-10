@@ -10,6 +10,11 @@ WORKSPACE="${AUTOPROVER_SMOKE_WORKSPACE:-smoke}"
 
 rm -rf "$DATA_DIR"
 
+if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "port $PORT is already in use; set AUTOPROVER_SMOKE_PORT or stop the existing server" >&2
+  exit 2
+fi
+
 (cd "$COSHEAF_DIR" && COSHEAF_DATA_DIR="$DATA_DIR" COSHEAF_PORT="$PORT" \
   pnpm cli seed --user "$USER" --password "$PASSWORD" --workspace "$WORKSPACE" --workspace-name Smoke >/dev/null)
 (cd "$COSHEAF_DIR" && COSHEAF_DATA_DIR="$DATA_DIR" COSHEAF_PORT="$PORT" \

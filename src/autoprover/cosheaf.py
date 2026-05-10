@@ -101,10 +101,8 @@ class CosheafClient:
         return list(data.get("documents", []))
 
     def get_document(self, doc_id: str) -> dict[str, Any]:
-        for doc in self.documents():
-            if doc.get("id") == doc_id:
-                return doc
-        raise CosheafError(f"document not found: {doc_id}", 404)
+        data = self.request("GET", self.workspace_path(f"document/{quote(doc_id)}"))
+        return dict(data["document"])
 
     def get_note(self, path: str) -> dict[str, Any]:
         params = urlencode({"path": path})
