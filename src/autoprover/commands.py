@@ -5,7 +5,7 @@ import os
 from typing import Any, Protocol
 
 from .agents import parse_review_result, run_agent
-from .context import context_from_doc, load_context
+from .context import context_from_doc, load_context, strip_frontmatter, truncate_content
 from .lint import LintError, require_valid_coflat
 from .prompts import (
     ContextDoc,
@@ -19,7 +19,13 @@ from .traces import append_trace, make_trace
 
 
 class Client(Protocol):
-    def search(self, query: str) -> list[dict[str, Any]]: ...
+    def search(
+        self,
+        query: str,
+        statuses: list[str] | None = None,
+        doc_types: list[str] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]: ...
     def queue(self) -> list[dict[str, Any]]: ...
     def put_note(self, path: str, content: str) -> dict[str, Any]: ...
     def submit(self, doc_id: str) -> dict[str, Any]: ...
@@ -33,6 +39,7 @@ class Client(Protocol):
         comment: str | None = None,
         review_doc_id: str | None = None,
     ) -> dict[str, Any]: ...
+    def reviews(self, doc_id: str) -> list[dict[str, Any]]: ...
 
 
 def print_table(rows: list[dict[str, Any]], fields: list[str]) -> None:
@@ -189,14 +196,23 @@ def command_propose(client: Client, args: argparse.Namespace) -> int:
 
 def review_contexts(client: Client, target_id: str) -> list[ContextDoc]:
     out: list[ContextDoc] = []
-    for approval in client.approvals(target_id):
-        review_id = approval.get("review_doc_id")
+    for review_row in client.reviews(target_id):
+        review_id = review_row.get("review_doc_id")
         if not review_id:
             continue
-        try:
-            out.append(context_from_doc(client, str(review_id)))
-        except Exception:
-            continue
+        meta = review_row.get("meta")
+        content = review_row.get("content")
+        if isinstance(meta, dict) and isinstance(content, str):
+            out.append(
+                ContextDoc(
+                    doc_id=str(review_id),
+                    path=str(meta.get("path") or review_row.get("review_path") or ""),
+                    title=str(meta.get("title") or review_row.get("review_title") or review_id),
+                    doc_type=str(meta.get("type") or "review"),
+                    status=str(meta.get("status") or ""),
+                    content=truncate_content(strip_frontmatter(content)),
+                )
+            )
     return out
 
 

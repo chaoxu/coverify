@@ -87,8 +87,21 @@ class CosheafClient:
     def workspace_path(self, suffix: str) -> str:
         return f"/w/{quote(self.config.workspace)}/{suffix.lstrip('/')}"
 
-    def search(self, query: str) -> list[dict[str, Any]]:
-        params = urlencode({"q": query})
+    def search(
+        self,
+        query: str,
+        statuses: list[str] | None = None,
+        doc_types: list[str] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        pairs: list[tuple[str, str | int]] = [("q", query)]
+        for status in statuses or []:
+            pairs.append(("status", status))
+        for doc_type in doc_types or []:
+            pairs.append(("type", doc_type))
+        if limit is not None:
+            pairs.append(("limit", limit))
+        params = urlencode(pairs)
         data = self.request("GET", self.workspace_path(f"search?{params}"))
         return list(data.get("results", []))
 
@@ -124,6 +137,10 @@ class CosheafClient:
     def approvals(self, doc_id: str) -> list[dict[str, Any]]:
         data = self.request("GET", self.workspace_path(f"document/{quote(doc_id)}/approvals"))
         return list(data.get("approvals", []))
+
+    def reviews(self, doc_id: str) -> list[dict[str, Any]]:
+        data = self.request("GET", self.workspace_path(f"document/{quote(doc_id)}/reviews"))
+        return list(data.get("reviews", []))
 
     def decide(
         self,

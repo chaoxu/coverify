@@ -42,7 +42,11 @@ def context_sort_key(doc: ContextDoc) -> tuple[int, int, str]:
 
 def load_context(client: CosheafClient, query: str, limit: int) -> list[ContextDoc]:
     try:
-        results = client.search(query)
+        results = client.search(
+            query,
+            statuses=["golden", "unreviewed", "draft"],
+            limit=max(limit, 1),
+        )
     except CosheafError:
         return []
     docs: list[ContextDoc] = []

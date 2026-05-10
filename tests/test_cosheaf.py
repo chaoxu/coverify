@@ -17,10 +17,23 @@ class CosheafTests(unittest.TestCase):
 
     def test_load_context_tolerates_search_failure(self) -> None:
         class Client:
-            def search(self, query: str):
+            def search(self, query: str, statuses=None, doc_types=None, limit=None):
                 raise CosheafError("bad fts query")
 
         self.assertEqual(load_context(Client(), "x.y", 3), [])
+
+    def test_load_context_requests_filtered_search(self) -> None:
+        class Client:
+            def __init__(self) -> None:
+                self.args = None
+
+            def search(self, query: str, statuses=None, doc_types=None, limit=None):
+                self.args = (query, statuses, doc_types, limit)
+                return []
+
+        client = Client()
+        self.assertEqual(load_context(client, "compactness", 5), [])
+        self.assertEqual(client.args, ("compactness", ["golden", "unreviewed", "draft"], None, 5))
 
 
 if __name__ == "__main__":

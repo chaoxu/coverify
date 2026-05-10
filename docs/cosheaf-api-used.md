@@ -17,17 +17,18 @@ Authorization: Bearer <token>
 ## Read APIs
 
 ```text
-GET /w/:slug/search?q=<query>
+GET /w/:slug/search?q=<query>&status=golden&limit=<n>
 GET /w/:slug/queue
 GET /w/:slug/documents
 GET /w/:slug/document/:id
 GET /w/:slug/note?path=<path>
 GET /w/:slug/document/:id/approvals
+GET /w/:slug/document/:id/reviews
 ```
 
 Autoprover uses these to retrieve context, find queued documents, map document
-ids to paths, look up one document directly, read Markdown content, and load linked review documents when
-repairing rejected work.
+ids to paths, look up one document directly, read Markdown content, and load
+linked review documents when repairing rejected work.
 
 ## Write APIs
 

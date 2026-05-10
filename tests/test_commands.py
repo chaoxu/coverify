@@ -42,7 +42,7 @@ class FakeClient:
         }
         self.notes["reviews/review-target.md"] = "# Review\n\nPlease repair the target.\n"
 
-    def search(self, query: str):
+    def search(self, query: str, statuses=None, doc_types=None, limit=None):
         return []
 
     def queue(self):
@@ -114,6 +114,20 @@ class FakeClient:
 
     def approvals(self, doc_id: str):
         return self.approval_rows if doc_id == "target" else []
+
+    def reviews(self, doc_id: str):
+        if doc_id != "target":
+            return []
+        review = self.docs["review-target"]
+        return [
+            {
+                "review_doc_id": "review-target",
+                "review_path": review["path"],
+                "review_title": review["title"],
+                "meta": review,
+                "content": self.notes[review["path"]],
+            }
+        ]
 
 
 def fake_agent_path() -> str:
