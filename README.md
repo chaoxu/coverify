@@ -116,6 +116,17 @@ and do not require Cosheaf credentials. `review` mode grades existing
 candidate proofs. `generate` mode asks the explorer to write a proof, then asks
 the verifier to review that generated proof.
 
+Prepare the currently runnable public benchmark data with:
+
+```bash
+./scripts/prepare-benchmarks
+```
+
+This writes `.autoprover/benchmarks/datasets/brokenmath.jsonl`, which can be
+used directly with `autoprover benchmark brokenmath`. The Open Proof Corpus
+GitHub repository only includes aggregate metadata; OPC proof-body benchmark
+input still needs a Hugging Face export.
+
 Generated Cosheaf documents are linted before submission. The linter requires a
 non-empty Coflat Markdown body with exactly one H1 heading and no triple-backtick
 proof fences. Use `--no-lint` only for emergency bypasses.

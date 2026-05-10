@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Any
+
+
+ROOT = Path(__file__).resolve().parents[1]
+DATASETS = ROOT / ".autoprover" / "benchmarks" / "datasets"
+CACHE = ROOT / ".autoprover" / "benchmarks" / "cache"
+
+
+def clone_or_update(url: str, path: Path) -> None:
+    if path.exists():
+        subprocess.run(["git", "-C", str(path), "fetch", "--depth", "1", "origin"], check=True)
+        subprocess.run(["git", "-C", str(path), "reset", "--hard", "origin/HEAD"], check=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "clone", "--depth", "1", url, str(path)], check=True)
+
+
+def rows_from_json(path: Path) -> list[dict[str, Any]]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(data, list):
+        return [row for row in data if isinstance(row, dict)]
+    if isinstance(data, dict):
+        for key in ("data", "items", "examples", "samples", "records"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return [row for row in value if isinstance(row, dict)]
+    return []
+
+
+def has_problem_and_proof(row: dict[str, Any]) -> bool:
+    problem = row.get("problem") or row.get("question") or row.get("statement") or row.get("original_problem")
+    proof = (
+        row.get("proof_solution")
+        or row.get("proof")
+        or row.get("solution")
+        or row.get("model_solution")
+        or row.get("answer")
+        or row.get("response")
+    )
+    return isinstance(problem, str) and bool(problem.strip()) and isinstance(proof, str) and bool(proof.strip())
+
+
+def write_jsonl(rows: list[dict[str, Any]], path: Path, limit: int) -> int:
+    selected = rows[:limit] if limit > 0 else rows
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for row in selected:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return len(selected)
+
+
+def prepare_brokenmath(limit: int) -> tuple[Path, int]:
+    repo = CACHE / "broken-math"
+    clone_or_update("https://github.com/insait-institute/broken-math.git", repo)
+    candidates = [
+        repo / "data" / "raw" / "sycophancy_recent" / "sample.json",
+        repo / "data" / "raw" / "validation" / "sample.json",
+        repo / "data" / "raw" / "recent_comps" / "sample.json",
+    ]
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        for row in rows_from_json(candidate):
+            if not has_problem_and_proof(row):
+                continue
+            key = str(row.get("problem_id") or row.get("id") or row.get("problem"))
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(row)
+    out = DATASETS / "brokenmath.jsonl"
+    return out, write_jsonl(rows, out, limit)
+
+
+def prepare_opc_repo_metadata(limit: int) -> tuple[Path, int]:
+    repo = CACHE / "open-proof-corpus"
+    clone_or_update("https://github.com/insait-institute/open-proof-corpus.git", repo)
+    source = repo / "data" / "pass_at_n.json"
+    rows = rows_from_json(source) if source.exists() else []
+    # This file is useful for tracking OPC problem ids and aggregate correctness,
+    # but it does not contain proof bodies. Keep it separate from runnable input.
+    out = DATASETS / "opc-pass-at-n.jsonl"
+    return out, write_jsonl(rows, out, limit)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--limit", type=int, default=200, help="Max rows per prepared file; <=0 means all")
+    parser.add_argument("--clean", action="store_true", help="Remove cached repos before preparing")
+    args = parser.parse_args()
+    if args.clean:
+        shutil.rmtree(CACHE, ignore_errors=True)
+
+    broken_path, broken_count = prepare_brokenmath(args.limit)
+    opc_path, opc_count = prepare_opc_repo_metadata(args.limit)
+    print(f"brokenmath\t{broken_count}\t{broken_path}")
+    print(f"opc-pass-at-n\t{opc_count}\t{opc_path}")
+    print("note\tOPC proof bodies require the Hugging Face dataset export; repo metadata is not runnable.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

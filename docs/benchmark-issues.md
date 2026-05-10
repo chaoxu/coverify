@@ -24,6 +24,13 @@ does not depend on parquet readers or Cosheaf credentials. Convert downloaded
 OPC or BrokenMath files to one of those formats before running local
 benchmarks.
 
+`scripts/prepare-benchmarks` prepares the currently runnable public data:
+
+- `.autoprover/benchmarks/datasets/brokenmath.jsonl`: runnable BrokenMath
+  sample data.
+- `.autoprover/benchmarks/datasets/opc-pass-at-n.jsonl`: OPC aggregate
+  repository metadata, not runnable as proof-body input.
+
 Useful sources:
 
 - OPC dataset: https://huggingface.co/datasets/INSAIT-Institute/OPC
