@@ -11,6 +11,18 @@ The core invariant:
 > If an agent action matters after the process exits, it must leave a
 > Cosheaf/Forgejo artifact.
 
+## Document Priority
+
+This document is canonical. Other docs in this repo are design inputs or
+background notes. If another doc implies a proof-specific harness, a fixed
+explorer/verifier prompt pipeline, a private trace schema, a daemon, or a local
+durable queue, treat that as stale unless it has been restated here.
+
+The reason is architectural: the new project is a generic Cosheaf tool harness
+with pluggable long-running model backends. Proof work, verifier calibration,
+benchmarking, and learning are future workflows built on top of that harness,
+not the core shape.
+
 The harness exists to preserve progress across bounded and long-running model
 runs. A single Codex or model-backend run may last tens of minutes, and some
 oracle calls may run for more than an hour. Each run should leave behind enough

@@ -1,8 +1,12 @@
-# Ideas From DeepMind Superhuman Repo
+# External Research Ideas
 
 Notes on ideas surfaced in google-deepmind/superhuman (AlphaGeometry, IMO-Bench,
 Aletheia) that are not addressed by mainstream AI4Math work and may be worth
-folding into autoprover.
+folding into a future workflow.
+
+This document is design input only. It must not override
+[`prover-design.md`](prover-design.md). The project is currently a generic
+Cosheaf tool-harness design, not a proof-specific verifier/explorer system.
 
 ## Grader as a first-class, measurable object
 
@@ -12,10 +16,9 @@ IMO-GradingBench (arXiv:2511.01846) benchmarks the *grader*, not the prover:
 autograder conditions a model on problem + reference solution + grading
 guidelines and reaches Pearson 0.93–0.96 vs experts.
 
-For autoprover: the verifier in the Cosheaf review loop is currently
-unevaluated. Borrow the format — store reference solutions and grading
-guidelines alongside problems, and treat verifier calibration as a measurable
-quantity rather than an assumed property.
+Compatible design note: if we later build a review workflow, reviewer or oracle
+calibration should be measurable. Reference solutions, grading guidelines, and
+calibration results should be Cosheaf artifacts, not private harness state.
 
 ## Dual-axis grading: correctness × significance
 
@@ -24,8 +27,9 @@ results on two axes: autonomy (Level H–A) and significance (Level 0–4, routi
 exercise → breakthrough). Most accuracy numbers collapse the two and reward
 trivially-true restatements.
 
-For autoprover: when trace schema is extended, log significance separately from
-correctness so ranking/learning signals do not collapse them.
+Compatible design note: if the harness records grades, keep significance
+separate from correctness. Use Cosheaf labels such as `sig:*` and `grade:*`
+before inventing a local scoring table.
 
 ## Decoupled natural-language verification with external grounding
 
@@ -34,10 +38,9 @@ Verifier uses Google Search / web browsing to ground claimed lemmas and
 citations against real literature. This is distinct from chain-of-thought
 self-critique (no separation) and from Lean (no natural-language reasoning).
 
-For autoprover: the current verifier reads only the workspace. A retrieval
-hook that lets the verifier look up cited lemmas — even just against Cosheaf
-review history or a curated corpus — would match this pattern without
-requiring a formal backend.
+Compatible design note: retrieval should be a context-packing concern. A
+backend should receive cited pages, related issues, PR history, review
+comments, and any curated corpus excerpts as an explicit context pack.
 
 ## Explicit, rewarded abstention
 
@@ -45,9 +48,9 @@ On FirstProof's 10 open problems, Aletheia returned "No solution found" on 4
 rather than fabricating. DeepMind treats this as a primary design goal:
 "reliability as the primary bottleneck to scaling up AI assistance."
 
-For autoprover: the verifier should be able to emit an abstain decision
-distinct from reject, and traces should record it so a future policy can learn
-to prefer abstention over hallucinated proofs.
+Compatible design note: if a review workflow cannot decide, it should record
+that as a Cosheaf review/comment/label such as `needs-human` or `abstain`, not
+as hidden local state.
 
 ## Specification-gaming on ambiguous statements
 
@@ -55,9 +58,9 @@ Aletheia's authors flag that when problem wording is loose, the model
 reinterprets the question in the easiest-to-answer direction. Rarely named
 explicitly in proving papers.
 
-For autoprover: worth a check in the explorer/verifier prompts — if the
-problem is restated in the solution, the verifier should compare the restated
-form to the original, not only check internal consistency of the proof.
+Compatible design note: context packs should preserve the original issue or
+problem statement separately from any proposed restatement, so later review can
+detect specification drift.
 
 ## Out of scope / well-covered elsewhere
 

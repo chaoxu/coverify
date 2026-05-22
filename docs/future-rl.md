@@ -1,30 +1,45 @@
-# Future Reinforcement Learning Harness
+# Future Learning Notes
 
-Autoprover is a proof-writing harness first. A later version may learn better
-proof exploration policies dynamically through reinforcement learning.
+This document is not a v1 requirement. It records how the design can avoid
+closing off future learning or evaluation work while the project is reset as a
+Cosheaf tool harness.
 
-This should affect the design now in one way: keep useful traces.
+The previous version described autoprover as a proof-writing harness with a
+JSONL trace schema. That conflicts with the current design in two ways:
 
-Future runs should be able to reconstruct:
+- the repo is design-only and has no trace implementation
+- durable workflow state should live in Cosheaf artifacts, not in a private
+  learning log
 
-- the user direction
-- the Cosheaf context documents shown to the agent
-- the prompt sent to the explorer or verifier
-- the generated page body, replacement body, or review comment
-- the verifier decisions
-- whether the change eventually merged, stayed in review, or was closed
-- repair attempts that followed a request-changes review
+The compatible replacement idea is: if future implementation records traces,
+they should be derived from or linked to Cosheaf artifacts.
 
-The current JSONL trace contract is documented in
-[`docs/trace-schema.md`](trace-schema.md).
+Useful future records may include:
 
-These traces can become training data for:
+- the issue, branch, PR, review, page, or comment that triggered a run
+- the context pack sent to Codex or a model backend
+- the backend name and invocation metadata
+- the raw backend answer or Codex output
+- the checkpoint comment written after the run
+- whether the related PR merged, changed, closed, or stayed open
+- labels such as `grade:*`, `sig:*`, `needs-human`, or `abstain`
+- follow-up issue/PR/review ids created from the run
 
-- choosing promising exploration directions
-- writing better proof attempts
-- deciding when to ask for more context
-- repairing proofs after request-changes feedback
-- predicting which changes are likely to merge
+Learning or evaluation could later use these records for:
 
-V0 does not implement reinforcement learning. It should avoid choices that make
-those traces impossible to recover later.
+- comparing context-pack strategies
+- deciding when to call a stronger backend
+- predicting which branches or PRs are worth continuing
+- calibrating reviewers or oracle backends
+- studying failed attempts preserved in Cosheaf
+
+Non-goals for the design phase:
+
+- no RL policy
+- no learned scheduler
+- no hidden long-term model memory
+- no trace schema that becomes a second source of truth
+
+The design requirement is only this: future implementation should make
+important run outputs recoverable from Cosheaf artifacts, with any local trace
+data treated as an index or audit log over those artifacts.
