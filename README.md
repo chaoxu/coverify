@@ -8,30 +8,32 @@ until the design is nailed down.
 
 ## Direction
 
-Cosheaf is the durable workspace: Forgejo-backed pages, branches, pull
-requests, reviews, issues, labels, comments, notifications, search, and
-backlinks. Autoprover should give Codex tools for operating on that workspace.
+Cosheaf is the durable workspace: pages, branches, pull requests, reviews,
+issues, labels, comments, notifications, search, and backlinks. The current
+Cosheaf implementation is Forgejo-backed, but autoprover should treat Cosheaf
+as the only workspace interface.
 
 The design target:
 
-- durable state lives in Cosheaf/Forgejo artifacts
+- durable state lives in Cosheaf artifacts
 - local state is only for currently running processes
 - Codex uses tools over Cosheaf rather than a separate workflow database
 - model backends are pluggable: scripts, CLIs, API wrappers, or remote jobs
-- backend calls may run for a long time and need logs, heartbeat, timeout,
-  cancellation, and links to Cosheaf artifacts
-- backend/oracle results are recorded in issues, PRs, comments, or pages
-- each bounded or long-running run leaves checkpoints so later runs start from
-  what was learned
+- the first oracle backend is a Codex `gpt-5.5` / `xhigh` text-in/text-out
+  wrapper, with Claude and Antigravity-style wrappers possible later
+- backend calls may run as simple scripts with logs and timeout wrappers; add
+  job state only when detached or parallel execution exists
+- useful backend/oracle/Codex outputs become reviewed knowledge PRs
+- each bounded or long-running run leaves durable progress in Cosheaf so later
+  runs start from what was learned
 
 ## Documents
 
-- [Tool Harness Design](docs/prover-design.md): canonical design.
-- [Architecture](docs/architecture.md): short-form architecture summary.
+- [Design](docs/design.md): canonical tool-harness design, including Cosheaf
+  mapping, context packs, review, runs, jobs, progress, and build order.
 - [Coflat Primer](docs/coflat-primer.md): markdown/document-format context.
-- [Paper Gap](docs/paper-gap.md): gaps against the agentic mathematics paper.
-- [Future RL](docs/future-rl.md): possible trace/learning direction.
-- [Superhuman Ideas](docs/superhuman-ideas.md): related external ideas.
+- [References And Future Notes](docs/references.md): paper-inspired design
+  lessons and future learning notes.
 
 ## Current State
 

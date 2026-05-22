@@ -4,6 +4,14 @@ This document is retained as format context, not as an implementation contract.
 The old harness injected a short guide into explorer/verifier prompts. The new
 tool-harness design has no fixed prompt pipeline yet.
 
+## Doc Map
+
+- [README](../README.md) is the repository entry point.
+- [Autoprover Design](design.md) defines when this primer is used in context
+  packs, backend calls, and review workflows.
+- [References And Future Notes](references.md) explains the paper-inspired
+  review and knowledge-format constraints that motivate stable block ids.
+
 The full format lives in Cosheaf/Coflat `FORMAT.md`. A future context packer
 or workflow skill may include parts of this primer when it asks a model backend
 to write or review Coflat Markdown.
@@ -53,6 +61,26 @@ Proof text.
 
 Common classes: `.theorem`, `.lemma`, `.proposition`, `.corollary`,
 `.definition`, `.conjecture`, `.example`, `.remark`, `.proof`.
+
+For durable mathematical knowledge, theorem-like and obstruction-like blocks
+should have stable ids. PR bodies and review notes should refer to those ids
+when discussing dependencies, proof obligations, or failed routes.
+
+Use the block class to communicate mathematical status where possible:
+
+```markdown
+::: {.theorem #thm:compactness-main}
+Statement.
+:::
+
+::: {.conjecture #conj:boundary-case}
+Open statement.
+:::
+
+::: {.remark #obs:failed-reduction title="Obstruction"}
+The reduction to @thm:compactness-main fails because ...
+:::
+```
 
 Nested blocks need more colons outside:
 
