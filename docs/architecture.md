@@ -1,64 +1,81 @@
 # Architecture
 
-Autoprover is a thin client and prompt harness around Cosheaf.
+Autoprover is being restarted as a Codex tool harness around Cosheaf.
+
+Cosheaf/Forgejo is the durable workspace. Codex is the active operator.
+External model backends are optional helpers: they may be simple scripts, API
+wrappers, CLIs, or remote jobs. Oracle calls are one workflow over those
+backends, where the harness sends one context string and records the answer
+back into Cosheaf.
+
+The canonical design is [`prover-design.md`](prover-design.md).
 
 ```text
 Cosheaf
-  source of truth for documents, proposals, reviews, approvals, status
+  source of truth for pages, branches, pull requests, reviews, issues,
+  labels, milestones, comments, notifications, and merge state
 
 Autoprover
-  reads Cosheaf context
-  runs local agent commands
-  writes Coflat Markdown back to Cosheaf
+  provides Codex tools over Cosheaf
+  builds context packs
+  runs pluggable model backends when useful
+  tracks active long-running runs
+  writes checkpoints and backend results back to Cosheaf
 ```
 
-## Roles
+## Design Rule
 
-An explorer command writes mathematical documents. Its output is Coflat
-Markdown body text. Autoprover stores that output as either a new page or a
-proposal.
+If an agent action matters after the process exits, it must leave a
+Cosheaf/Forgejo artifact.
 
-A verifier command reads one target document and returns a small line protocol
-(`DECISION`, `COMMENT`, `BODY`) plus a long-form review body. Autoprover creates
-a Cosheaf review document and attaches that review to the approval or rejection
-row.
+Examples:
 
-## Trust
+- accepted knowledge is a page merged to `main`
+- active work is a branch
+- proposed work is a pull request
+- verification is a PR review or line comment
+- backlog and subgoals are issues and dependencies
+- run notes, oracle outputs, and handoffs are issue/PR comments
+- state categories are labels
 
-Autoprover does not decide what is golden. Cosheaf owns the approval threshold
-and document lifecycle.
+## Local State
 
-Autoprover only submits decisions as the authenticated Cosheaf user. If that
-user is a verifier and enough required verifiers approve, Cosheaf promotes the
-document.
+Autoprover may keep local state only for currently running processes: run id,
+backend name, status, heartbeat, timeout, log pointer, cancellation flag, and
+links to Cosheaf artifacts. Durable workflow state belongs in Cosheaf.
+
+## Tools
+
+The first product surface should be tools for Codex, not a separate prover
+application. Tool families:
+
+- read/search pages and backlinks
+- create/update issues and dependencies
+- create/list branches
+- write files on branches
+- open/read/review/merge PRs
+- add labels and comments
+- build context packs
+- run a backend and record the answer
+- ask an oracle through a selected backend
+- checkpoint progress
 
 ## Context
 
-V0 retrieves context through Cosheaf FTS search. This is deliberately simple.
-Later versions can add richer retrieval, theorem dependency extraction, and
-proof-state memory without changing Cosheaf's document model.
+Context management is the core problem. A bounded run should gather the
+objective, current artifacts, accepted facts, open hypotheses, relevant pages,
+issues, PRs, reviews, failed attempts, current diff, constraints, and the exact
+question for this run.
 
-## AI Co-Mathematician Reference
+If the context summary is useful after the run, it should be written to
+Cosheaf as a checkpoint comment or page. The harness should not rely on hidden
+private memory to resume work.
 
-Design decisions should be compared against the best practices in:
+## Trust
 
-```text
-AI Co-Mathematician: Accelerating Mathematicians with Agentic AI
-arXiv:2605.06651
-https://arxiv.org/abs/2605.06651
-```
+Autoprover does not decide what is golden. Cosheaf owns branch protection,
+review records, merge state, issue state, and the shared human-visible history.
 
-The paper describes an asynchronous, stateful mathematical workspace that
-manages uncertainty, refines user intent, tracks failed hypotheses, and emits
-native mathematical artifacts. Those are the right defaults for autoprover.
-
-When choosing between designs, prefer the option that better supports:
-
-- persistent workspace state rather than transient chat
-- native mathematical documents rather than opaque agent memory
-- asynchronous exploration and review
-- preserved failed attempts and rejected hypotheses
-- user steering at the project/workstream level
-- auditable reviewer reasoning
-
-V0 is much smaller than that system, but it should grow in that direction.
+Backend output is advice or raw work product, not truth. Codex may use it,
+reject it, or turn it into a PR/review/comment, but the raw answer and the
+follow-up decision should be recorded in Cosheaf when they affect the work.

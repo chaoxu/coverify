@@ -1,164 +1,39 @@
 # autoprover
 
-`autoprover` is the agent harness for Cosheaf.
+This repository is intentionally design-only for now.
 
-Cosheaf is the mathematical knowledge base: pages, proposals, reviews,
-approvals, search, backlinks, and golden status. Autoprover does not own that
-substrate. It connects to Cosheaf over HTTP as an ordinary user, runs local
-explorer or verifier commands, and writes the resulting Coflat Markdown back to
-Cosheaf.
+The previous Python proof harness has been removed. The project is being
+restarted as a Codex tool harness for Cosheaf, and implementation should wait
+until the design is nailed down.
 
-The first version is intentionally small:
+## Direction
 
-- read/search Cosheaf documents
-- run an explorer command to write a new proof/exploration page
-- run an explorer command to propose a replacement body for an existing page
-- run a verifier command to write a review document and approve/reject the
-  target
-- keep humans and agents on the same workflow
+Cosheaf is the durable workspace: Forgejo-backed pages, branches, pull
+requests, reviews, issues, labels, comments, notifications, search, and
+backlinks. Autoprover should give Codex tools for operating on that workspace.
 
-## Requirements
+The design target:
 
-- Python 3.11+
-- A running Cosheaf server
-- A Cosheaf API token for the user/agent
-- A local command that accepts a prompt on stdin and writes its final answer to
-  stdout
+- durable state lives in Cosheaf/Forgejo artifacts
+- local state is only for currently running processes
+- Codex uses tools over Cosheaf rather than a separate workflow database
+- model backends are pluggable: scripts, CLIs, API wrappers, or remote jobs
+- backend calls may run for a long time and need logs, heartbeat, timeout,
+  cancellation, and links to Cosheaf artifacts
+- backend/oracle results are recorded in issues, PRs, comments, or pages
+- each bounded or long-running run leaves checkpoints so later runs start from
+  what was learned
 
-## Install
+## Documents
 
-```bash
-python3 -m pip install -e .
-```
+- [Tool Harness Design](docs/prover-design.md): canonical design.
+- [Architecture](docs/architecture.md): short-form architecture summary.
+- [Coflat Primer](docs/coflat-primer.md): markdown/document-format context.
+- [Paper Gap](docs/paper-gap.md): gaps against the agentic mathematics paper.
+- [Future RL](docs/future-rl.md): possible trace/learning direction.
+- [Superhuman Ideas](docs/superhuman-ideas.md): related external ideas.
 
-## Configuration
+## Current State
 
-```bash
-export COSHEAF_URL=http://localhost:3030/api/v1
-export COSHEAF_WORKSPACE=notes
-export COSHEAF_TOKEN=cs_...
-export AUTOPROVER_AGENT_CMD='./scripts/codex-agent.sh'
-export AUTOPROVER_VERIFIER_CMD='./scripts/codex-agent.sh'
-```
-
-See [`.env.example`](.env.example) for the full local environment shape.
-
-`COSHEAF_URL` may point either at the API root (`.../api/v1`) or at the server
-root (`http://localhost:3030`); autoprover normalizes it.
-
-## Commands
-
-```bash
-autoprover search "compactness"
-autoprover queue
-
-autoprover explore \
-  --direction "Try to prove the main lemma using compactness." \
-  --path explorations/main-lemma-compactness.md \
-  --submit
-
-autoprover propose TARGET_DOC_ID \
-  --direction "Repair the proof using the reviewer comments." \
-  --submit
-
-autoprover repair REJECTED_DOC_ID --submit
-
-autoprover review TARGET_DOC_ID
-
-autoprover task \
-  --direction "Explore whether this lemma generalizes to finite lattices."
-
-autoprover review-queue --limit 3
-
-autoprover cycle \
-  --direction "Write and review a small proof of the sum of odd integers."
-
-autoprover workstream start \
-  --direction "Explore whether this lemma generalizes to finite lattices."
-
-autoprover workstream step TASK_DOC_ID --submit
-
-autoprover benchmark opc \
-  --input opc-export.jsonl \
-  --output .autoprover/benchmarks/opc.jsonl \
-  --mode review
-
-autoprover benchmark brokenmath \
-  --input brokenmath-export.jsonl \
-  --output .autoprover/benchmarks/brokenmath.jsonl \
-  --mode review
-
-autoprover benchmark opc \
-  --input opc-export.jsonl \
-  --output .autoprover/benchmarks/opc-generate.jsonl \
-  --mode generate \
-  --limit 10 \
-  --seed 1
-```
-
-The default explorer command is read from `AUTOPROVER_AGENT_CMD`. Verifier
-commands use `AUTOPROVER_VERIFIER_CMD` when set, then fall back to
-`AUTOPROVER_AGENT_CMD`. You can override them per call with `--agent-cmd` and
-`--verifier-cmd`.
-
-The included `scripts/codex-agent.sh` wrapper runs `codex exec` and returns only
-Codex's final message, which keeps Cosheaf pages and review documents free of
-event-stream noise.
-
-For offline development without Codex calls:
-
-```bash
-export AUTOPROVER_AGENT_CMD='./scripts/fake-agent'
-```
-
-Benchmark commands are local by default. They read JSON, JSONL, or CSV exports
-and do not require Cosheaf credentials. `review` mode grades existing
-candidate proofs. `generate` mode asks the explorer to write a proof, then asks
-the verifier to review that generated proof.
-
-Prepare the currently runnable public benchmark data with:
-
-```bash
-./scripts/prepare-benchmarks
-```
-
-This writes runnable BrokenMath and OPC JSONL files under
-`.autoprover/benchmarks/datasets/`. By default it prepares all available OPC
-splits and all selected BrokenMath rows. OPC is downloaded from the Hugging Face
-Parquet export; if `pyarrow` is unavailable, the script re-runs itself through
-`uv --with pyarrow`.
-
-Generated Cosheaf documents are linted before submission. The linter requires a
-non-empty Coflat Markdown body with exactly one H1 heading and no triple-backtick
-proof fences. Use `--no-lint` only for emergency bypasses.
-
-## Boundary
-
-Autoprover is not a replacement for Cosheaf. It is a worker layer.
-
-Cosheaf remains useful without agents. Autoprover uses the same API a human
-uses: it creates pages, proposals, review documents, approvals, and rejections.
-
-## Roadmap Note
-
-The proof-writing harness should eventually produce structured traces that can
-be used for reinforcement learning. See [`docs/future-rl.md`](docs/future-rl.md).
-Current gaps against the paper are tracked in
-[`docs/paper-gap.md`](docs/paper-gap.md).
-
-## Design Reference
-
-Autoprover uses the agentic-workspace lessons from
-[`AI Co-Mathematician: Accelerating Mathematicians with Agentic AI`](https://arxiv.org/abs/2605.06651):
-persistent workspace state, native mathematical documents, asynchronous
-exploration/review, preserved failed attempts, and auditable reviewer reasoning.
-
-## Development
-
-```bash
-./scripts/check
-./scripts/smoke-cosheaf
-```
-
-The Cosheaf endpoints autoprover relies on are listed in
-[`docs/cosheaf-api-used.md`](docs/cosheaf-api-used.md).
+There is no runnable package, CLI, test suite, or scripts in this repository.
+That is deliberate. The next step is design review, not implementation.

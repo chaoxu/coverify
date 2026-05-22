@@ -11,7 +11,7 @@ operational subset that explorer and verifier agents need on every run.
   for JSON.
 - Do not include YAML frontmatter. Cosheaf injects `id`, `type`, `status`,
   `target`, and `title`.
-- Start page/proposal bodies with exactly one meaningful H1 heading:
+- Start page/replacement bodies with exactly one meaningful H1 heading:
   `# Meaningful Title`.
 - Do not literally write `# Title`.
 
@@ -75,4 +75,4 @@ Proof.
   remarks.
 - Do not use raw HTML comments.
 - Do not include frontmatter unless explicitly asked.
-- Do not treat unreviewed or rejected context as established truth.
+- Do not treat non-golden context as established truth.
