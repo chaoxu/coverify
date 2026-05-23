@@ -1,10 +1,9 @@
 # autoprover
 
-This repository is intentionally design-only for now.
-
-The previous Python proof harness has been removed. The project is being
-restarted as a Codex tool harness for Cosheaf, and implementation should wait
-until the design is nailed down.
+This repository is being rebuilt as a CLI-first Codex tool harness for
+Cosheaf. The previous proof harness was removed; v1 now contains a small
+Cosheaf HTTP client, backend runner wrappers, and one end-to-end proof
+workflow.
 
 ## Direction
 
@@ -37,5 +36,37 @@ The design target:
 
 ## Current State
 
-There is no runnable package, CLI, test suite, or scripts in this repository.
-That is deliberate. The next step is design review, not implementation.
+The first runnable surface is a Python CLI package under `src/autoprover`.
+Use `PYTHONPATH=src python3 -m autoprover --help` from this checkout.
+
+Implemented commands:
+
+- `login`: exchange Cosheaf username/password for an API token.
+- `create-workspace`: create a new Cosheaf workspace/project; defaults to
+  `--default-md-format coflat`.
+- Primitive Cosheaf operations for Codex-as-operator runs: `set-member`,
+  `tree`, `read-file`, `create-branch`, `write-file`, `open-pr`, `review-pr`,
+  and `merge-pr`.
+- `prove-infinite-primes`: build a context pack, call a backend oracle, write
+  `infinite-primes.md` on a branch, open a PR, optionally review and merge it,
+  then verify the proof through Cosheaf.
+
+Common environment variables:
+
+```bash
+COSHEAF_API_URL=http://localhost:3030/api/v1
+COSHEAF_TOKEN=...
+COSHEAF_USERNAME=...
+COSHEAF_PASSWORD=...
+COSHEAF_REVIEW_TOKEN=...
+AUTOPROVER_BACKEND=codex
+AUTOPROVER_CODEX_MODEL=gpt-5.5
+AUTOPROVER_CODEX_REASONING_EFFORT=xhigh
+```
+
+Local checks:
+
+```bash
+PYTHONPATH=src python3 -m unittest discover -s tests
+PYTHONPATH=src python3 -m autoprover --help
+```

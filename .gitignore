@@ -1,0 +1,3 @@
+.autoprover/
+__pycache__/
+*.py[cod]
