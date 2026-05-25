@@ -37,12 +37,10 @@ def ensure_artifact_dir(root: Path, provider: str) -> Path:
     return Path(tempfile.mkdtemp(prefix=f"{utc_stamp()}-{provider}-", dir=root))
 
 
-def write_prompt_files(artifact_dir: Path, context: str) -> tuple[Path, Path]:
+def write_prompt_file(artifact_dir: Path, prompt: str) -> Path:
     prompt_path = artifact_dir / "prompt.md"
-    context_path = artifact_dir / "context.md"
-    prompt_path.write_text(context, encoding="utf-8")
-    context_path.write_text(context, encoding="utf-8")
-    return prompt_path, context_path
+    prompt_path.write_text(prompt, encoding="utf-8")
+    return prompt_path
 
 
 def write_audit_metadata(
@@ -92,7 +90,7 @@ def audit_summary(result: BackendResult) -> str:
     return "\n".join(lines)
 
 
-def run_fixture_backend(context: str, *, artifact_root: Path) -> BackendResult:
+def run_fixture_backend(prompt: str, *, artifact_root: Path) -> BackendResult:
     artifact_dir = ensure_artifact_dir(artifact_root, "fixture")
     oracle_call_id = artifact_dir.name
     started_at = datetime.now(timezone.utc).isoformat()
@@ -124,7 +122,7 @@ def run_fixture_backend(context: str, *, artifact_root: Path) -> BackendResult:
             "",
         ],
     )
-    prompt_path, context_path = write_prompt_files(artifact_dir, context)
+    prompt_path = write_prompt_file(artifact_dir, prompt)
     answer_path = artifact_dir / "answer.md"
     metadata_path = artifact_dir / "metadata.json"
     answer_path.write_text(answer, encoding="utf-8")
@@ -142,7 +140,6 @@ def run_fixture_backend(context: str, *, artifact_root: Path) -> BackendResult:
         },
         {
             "prompt": prompt_path,
-            "context": context_path,
             "answer": answer_path,
         },
     )
@@ -167,7 +164,7 @@ def terminate_process_group(pid: int, sig: int = signal.SIGTERM) -> None:
 
 
 def run_codex_backend(
-    context: str,
+    prompt: str,
     *,
     artifact_root: Path,
     model: str = "gpt-5.5",
@@ -180,7 +177,7 @@ def run_codex_backend(
     oracle_call_id = artifact_dir.name
     workdir = artifact_dir / "workdir"
     workdir.mkdir()
-    prompt_path, context_path = write_prompt_files(artifact_dir, context)
+    prompt_path = write_prompt_file(artifact_dir, prompt)
     output_path = artifact_dir / "answer.md"
     stdout_path = artifact_dir / "stdout.jsonl"
     stderr_path = artifact_dir / "stderr.log"
@@ -218,7 +215,6 @@ def run_codex_backend(
     }
     artifacts = {
         "prompt": prompt_path,
-        "context": context_path,
         "answer": output_path,
         "stdout": stdout_path,
         "stderr": stderr_path,
@@ -239,7 +235,7 @@ def run_codex_backend(
             start_new_session=True,
         )
         try:
-            process.communicate(input=context, timeout=timeout_seconds)
+            process.communicate(input=prompt, timeout=timeout_seconds)
         except subprocess.TimeoutExpired as exc:
             terminate_process_group(process.pid, signal.SIGKILL)
             process.communicate()
@@ -269,7 +265,7 @@ def run_codex_backend(
 
 
 def run_script_backend(
-    context: str,
+    prompt: str,
     *,
     command: str,
     artifact_root: Path,
@@ -277,7 +273,7 @@ def run_script_backend(
 ) -> BackendResult:
     artifact_dir = ensure_artifact_dir(artifact_root, "script")
     oracle_call_id = artifact_dir.name
-    prompt_path, context_path = write_prompt_files(artifact_dir, context)
+    prompt_path = write_prompt_file(artifact_dir, prompt)
     output_path = artifact_dir / "answer.md"
     stderr_path = artifact_dir / "stderr.log"
     metadata_path = artifact_dir / "metadata.json"
@@ -291,7 +287,6 @@ def run_script_backend(
     }
     artifacts = {
         "prompt": prompt_path,
-        "context": context_path,
         "answer": output_path,
         "stderr": stderr_path,
     }
@@ -312,7 +307,7 @@ def run_script_backend(
             start_new_session=True,
         )
         try:
-            process.communicate(input=context, timeout=timeout_seconds)
+            process.communicate(input=prompt, timeout=timeout_seconds)
         except subprocess.TimeoutExpired as exc:
             terminate_process_group(process.pid, signal.SIGKILL)
             process.communicate()

@@ -12,7 +12,7 @@ The core invariant:
 
 Cosheaf is the durable workspace. Codex or another tool-using runner is the
 active operator. Model backends are pluggable helpers that usually accept one
-context string and return one answer string. Useful output becomes reviewed
+prompt string and return one answer string. Useful output becomes reviewed
 knowledge, normally by branch, PR, review, and merge.
 
 ## Doc Map
@@ -47,7 +47,7 @@ knowledge, normally by branch, PR, review, and merge.
 - **Autoprover harness** provides Cosheaf adapters, context packing, and
   backend-script invocation. It must not become a second workflow database.
 - **Model backend** means a script, CLI, API wrapper, remote job, or future
-  stronger system. The minimum contract is stdin context in, stdout answer out.
+  stronger system. The minimum contract is stdin prompt in, stdout answer out.
 - **Oracle call** is a backend invocation for a clean reasoning or correctness
   task prepared by a tool-using runner. Mathematical proof attempts,
   obstruction analysis, theorem-choice decisions, and correctness review should
@@ -95,14 +95,17 @@ before merge", "oracle-generated" as evidence, "candidate lemma" as a theorem,
 or unsupported placeholders such as "forgot" is not ready for accepted context.
 
 Local scratch is operational only, but oracle calls need an audit bundle so a
-runner can prove what was asked and what came back. Every backend invocation
-must write `prompt.md`, `answer.md`, `metadata.json`, and `manifest.json`;
-wrappers should also preserve stdout/stderr when available. Metadata must
-include a stable `oracle_call_id`, provider, model or command, timing, exit
-status, timeout state, artifact paths, and content hashes for prompt and
-answer. If the result should matter tomorrow, the runner must link or distill
-that audit bundle into Cosheaf as PR evidence, a review comment, or accepted
-knowledge. The local bundle alone is not durable project memory.
+runner can prove what was asked and what came back. Every backend invocation is
+one oracle call and gets one local artifact directory keyed by
+`oracle_call_id`. It must write `prompt.md`, `answer.md`, `metadata.json`, and
+`manifest.json`; wrappers should also preserve stdout/stderr when available.
+Metadata must include the provider, model or command, timing, exit status,
+timeout state, artifact paths, and content hashes for prompt and answer. A
+single runner run may make zero, one, or many oracle calls; each call gets a
+different `prompt.md` in its own artifact directory. If the result should
+matter tomorrow, the runner must link or distill that audit bundle into
+Cosheaf as PR evidence, a review comment, or accepted knowledge. The local
+bundle alone is not durable project memory.
 
 Add a local active-job store only after detached or parallel jobs exist. That
 store should remain operational: status, heartbeat, cancellation, log pointer,
@@ -362,7 +365,7 @@ it into a knowledge-file change or a normal issue/PR comment.
 The minimum backend contract:
 
 ```text
-stdin:  context pack string
+stdin:  prompt string
 stdout: answer string
 exit 0: completed
 exit nonzero: failed, with stderr/logs preserved
@@ -389,12 +392,11 @@ codex exec \
   -
 ```
 
-The wrapper sends the context pack on stdin and returns the final message from
+The wrapper sends the prompt on stdin and returns the final message from
 `answer.md`. It must also preserve a complete local audit bundle:
 
 ```text
 prompt.md       exact oracle input
-context.md      compatibility alias for the same input
 answer.md       final oracle output
 stdout.jsonl    provider event stream, when available
 stderr.log      provider diagnostics, when available
@@ -412,7 +414,7 @@ provider/model, prompt hash, answer hash, and a short statement of what context
 was included. This is still the same backend contract:
 
 ```text
-context pack string -> codex wrapper -> answer string
+prompt string -> backend wrapper -> answer string
 ```
 
 Oracle use is the default for mathematical reasoning. The runner should call an
@@ -432,7 +434,7 @@ Other providers can implement the same contract:
   `claude --print` or equivalent non-interactive mode.
 - **Antigravity CLI**: plausible future backend through `agy --print`, but it
   should stay experimental until it can be tested in this workflow.
-- **Custom script**: any executable satisfying `backend < context.md >
+- **Custom script**: any executable satisfying `backend < prompt.md >
   answer.md`.
 
 Backend calls may run for a long time. In v1, preserve a simple operational
@@ -569,7 +571,7 @@ sequenceDiagram
 
     alt Oracle is useful
         Runner->>Tools: run_backend_script(context)
-        Tools->>Backend: backend < context.md > answer.md
+        Tools->>Backend: backend < prompt.md > answer.md
         Backend-->>Runner: answer as evidence
     end
 
@@ -603,7 +605,11 @@ No changed Cosheaf artifact means no durable progress.
 ## Runs, Jobs, Progress, And Claiming
 
 A **run** is one bounded execution attempt by a runner. The runner owns it.
-Autoprover does not create a durable run object.
+Autoprover does not create a durable run object. A run can contain multiple
+oracle calls, for example one exploration call, one proof-attempt call, and one
+review call. Those calls are represented by separate local artifact
+directories and by whatever Cosheaf PR/comment/knowledge artifacts the runner
+creates from them.
 
 A **job** is a child execution launched during a run, usually a backend script,
 CLI subprocess, API wrapper, or remote model invocation. Foreground logs are

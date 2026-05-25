@@ -56,19 +56,19 @@ def backend_runner(args: argparse.Namespace) -> Callable[[str], BackendResult]:
     artifact_root = Path(args.run_dir)
     timeout = args.backend_timeout if args.backend_timeout > 0 else None
     if args.backend == "fixture":
-        return lambda context: run_fixture_backend(context, artifact_root=artifact_root)
+        return lambda prompt: run_fixture_backend(prompt, artifact_root=artifact_root)
     if args.backend == "script":
         if not args.backend_command:
             raise SystemExit("--backend-command is required when --backend=script")
-        return lambda context: run_script_backend(
-            context,
+        return lambda prompt: run_script_backend(
+            prompt,
             command=args.backend_command,
             artifact_root=artifact_root,
             timeout_seconds=timeout,
         )
     if args.backend == "codex":
-        return lambda context: run_codex_backend(
-            context,
+        return lambda prompt: run_codex_backend(
+            prompt,
             artifact_root=artifact_root,
             model=args.model,
             reasoning_effort=args.reasoning_effort,

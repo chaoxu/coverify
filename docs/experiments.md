@@ -34,7 +34,7 @@ The core hypotheses:
 Use the same problem set, model budget, wall-clock budget, and reviewer policy
 for all baselines.
 
-1. **One-shot oracle**: one context string in, one answer string out, no durable
+1. **One-shot oracle**: one prompt string in, one answer string out, no durable
    intermediate artifacts.
 2. **Codex-only operator**: Codex uses primitive Cosheaf tools without a
    separate oracle backend.

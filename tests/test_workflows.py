@@ -72,7 +72,8 @@ class WorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = run_fixture_backend("context", artifact_root=Path(tmpdir))
             validate_infinite_primes_page(result.answer)
-            self.assertTrue((result.artifact_dir / "context.md").exists())
+            self.assertTrue((result.artifact_dir / "prompt.md").exists())
+            self.assertFalse((result.artifact_dir / "context.md").exists())
             self.assertTrue((result.artifact_dir / "answer.md").exists())
 
     def test_normalize_strips_markdown_fence(self) -> None:
