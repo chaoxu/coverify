@@ -163,5 +163,10 @@ VERDICT:
   are available.
 - `COMMENT` maps to a non-blocking PR review comment.
 
+The runner must not upgrade the oracle's decision. `REQUEST_CHANGES` and
+`COMMENT` are non-approving events even if the runner believes the proposed
+artifact is probably correct. Missing or ambiguous decisions are non-approving
+until a reviewer oracle returns a clear `APPROVE`.
+
 Do not merge from the reviewer prompt. Merging remains a maintainer/admin
 operation after the review gate passes.

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from autoprover.backend import run_fixture_backend
+from autoprover.backend import run_fixture_backend, run_script_backend
 from autoprover.workflows import (
     InfinitePrimesRunOptions,
     build_infinite_primes_context,
@@ -86,6 +86,30 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("knowledge.md", context)
         self.assertIn("#thm:infinitely-many-primes", context)
 
+    def approve_review_backend(self, tmpdir: str):
+        return lambda prompt: run_script_backend(
+            prompt,
+            command=(
+                "python3 -c 'print(\"DECISION: APPROVE\\n\\n"
+                "FINDINGS:\\nI do not see a logical gap.\\n\\n"
+                "BLOCKING_CHANGES:\\nNone\\n\\n"
+                "VERDICT:\\nThe proposed Euclid proof is correct.\")'"
+            ),
+            artifact_root=Path(tmpdir),
+        )
+
+    def request_changes_review_backend(self, tmpdir: str):
+        return lambda prompt: run_script_backend(
+            prompt,
+            command=(
+                "python3 -c 'print(\"DECISION: REQUEST_CHANGES\\n\\n"
+                "FINDINGS:\\n- The proof is not decidable from the supplied PR.\\n\\n"
+                "BLOCKING_CHANGES:\\nAdd the missing argument.\\n\\n"
+                "VERDICT:\\nDo not merge yet.\")'"
+            ),
+            artifact_root=Path(tmpdir),
+        )
+
     def test_workflow_writes_reviews_merges_and_verifies(self) -> None:
         author = FakeCosheaf()
         reviewer = FakeCosheaf()
@@ -106,15 +130,75 @@ class WorkflowTests(unittest.TestCase):
                 client=author,
                 reviewer_client=reviewer,
                 backend=lambda context: run_fixture_backend(context, artifact_root=Path(tmpdir)),
+                review_backend=self.approve_review_backend(tmpdir),
                 options=options,
             )
         self.assertTrue(result["ok"])
         self.assertTrue(result["reviewed"])
+        self.assertEqual(result["review_event"], "APPROVE")
+        self.assertTrue(result["review_approved"])
         self.assertTrue(result["merged"])
         self.assertIn(("create_workspace", ("prime-demo", "coflat")), author.calls)
         self.assertTrue(any(call[0] == "write_branch_file" for call in author.calls))
         self.assertTrue(any(call[0] == "review_pull_request" for call in reviewer.calls))
         self.assertTrue(any(call[0] == "merge_pull_request" for call in author.calls))
+
+    def test_workflow_refuses_merge_without_review(self) -> None:
+        author = FakeCosheaf()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            options = InfinitePrimesRunOptions(
+                workspace="prime-demo",
+                workspace_name="Prime Demo",
+                default_md_format="coflat",
+                create_workspace=True,
+                allow_existing_workspace=False,
+                branch="agent/infinite-primes-test",
+                path="infinite-primes.md",
+                title="Proof",
+                merge=True,
+                force_merge=False,
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "refusing to merge without oracle reviewer approval"):
+                run_infinite_primes_workflow(
+                    client=author,
+                    reviewer_client=None,
+                    backend=lambda prompt: run_fixture_backend(prompt, artifact_root=Path(tmpdir)),
+                    options=options,
+                )
+
+        self.assertFalse(any(call[0] == "merge_pull_request" for call in author.calls))
+
+    def test_workflow_does_not_upgrade_request_changes(self) -> None:
+        author = FakeCosheaf()
+        reviewer = FakeCosheaf()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            options = InfinitePrimesRunOptions(
+                workspace="prime-demo",
+                workspace_name="Prime Demo",
+                default_md_format="coflat",
+                create_workspace=True,
+                allow_existing_workspace=False,
+                branch="agent/infinite-primes-test",
+                path="infinite-primes.md",
+                title="Proof",
+                merge=True,
+                force_merge=False,
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "refusing to merge without oracle reviewer approval"):
+                run_infinite_primes_workflow(
+                    client=author,
+                    reviewer_client=reviewer,
+                    backend=lambda prompt: run_fixture_backend(prompt, artifact_root=Path(tmpdir)),
+                    review_backend=self.request_changes_review_backend(tmpdir),
+                    options=options,
+                )
+
+        self.assertTrue(
+            any(call[0] == "review_pull_request" and call[1][2] == "REQUEST_CHANGES" for call in reviewer.calls),
+        )
+        self.assertFalse(any(call[0] == "merge_pull_request" for call in author.calls))
 
 
 if __name__ == "__main__":

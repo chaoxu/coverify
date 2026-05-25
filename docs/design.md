@@ -263,6 +263,15 @@ changes/comment decision should be produced by the correctness-review oracle.
 If an oracle cannot be called, the runner should leave a `needs-review` style
 comment or label instead of approving knowledge on its own.
 
+The oracle review verdict is binding. The runner must map the oracle's
+`DECISION: APPROVE | REQUEST_CHANGES | COMMENT` line directly to the Cosheaf
+review event. It may not upgrade `REQUEST_CHANGES` or `COMMENT` to `APPROVE`
+because runner-local reasoning thinks the artifact is good enough. If the
+verdict is missing, ambiguous, or inconsistent with the body, the safe event is
+`REQUEST_CHANGES` or a non-approving comment, never approval. A maintainer merge
+is allowed only after a valid reviewer identity has recorded approval for the
+current PR state.
+
 The review gate is about correctness, not document type. A literature note can
 be wrong by citing a theorem outside its hypotheses; an example note can be
 wrong by miscomputing a cost or missing a profitable deviation; a status note

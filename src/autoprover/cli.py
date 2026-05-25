@@ -257,10 +257,12 @@ def cmd_prove_infinite_primes(args: argparse.Namespace) -> int:
         merge=args.merge,
         force_merge=args.force_merge,
     )
+    runner = backend_runner(args)
     result = run_infinite_primes_workflow(
         client=client,
         reviewer_client=reviewer_client,
-        backend=backend_runner(args),
+        backend=runner,
+        review_backend=runner if reviewer_client is not None else None,
         options=options,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
