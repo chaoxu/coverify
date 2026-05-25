@@ -256,6 +256,12 @@ def run_codex_backend(
             f"codex backend failed with code {process.returncode}; "
             f"artifacts={artifact_dir}; stderr={detail[-2000:]}",
         )
+    if not output_path.exists():
+        detail = stderr_path.read_text(encoding="utf-8") if stderr_path.exists() else ""
+        raise RuntimeError(
+            "codex backend finished without writing answer.md; "
+            f"artifacts={artifact_dir}; stderr={detail[-2000:]}",
+        )
     return BackendResult(
         answer=output_path.read_text(encoding="utf-8"),
         artifact_dir=artifact_dir,

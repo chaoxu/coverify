@@ -65,6 +65,42 @@ class BackendTests(unittest.TestCase):
             self.assertTrue((result.artifact_dir / "stderr.log").exists())
             self.assertIn(result.oracle_call_id, audit_summary(result))
 
+    def test_codex_backend_fails_clearly_when_answer_file_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fake_codex = root / "fake-codex"
+            fake_codex.write_text(
+                textwrap.dedent(
+                    """\
+                    #!/usr/bin/env python3
+                    import sys
+
+                    sys.stdin.read()
+                    print("{\\"event\\":\\"done-without-answer\\"}")
+                    """
+                ),
+                encoding="utf-8",
+            )
+            fake_codex.chmod(fake_codex.stat().st_mode | stat.S_IXUSR)
+
+            with self.assertRaisesRegex(RuntimeError, "without writing answer.md"):
+                run_codex_backend(
+                    "context body",
+                    artifact_root=root / "runs",
+                    model="gpt-5.5",
+                    reasoning_effort="xhigh",
+                    timeout_seconds=30,
+                    codex_bin=str(fake_codex),
+                )
+
+            [artifact_dir] = (root / "runs").iterdir()
+            metadata = json.loads((artifact_dir / "metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["returncode"], 0)
+            self.assertEqual(metadata["timed_out"], False)
+            self.assertTrue(metadata["prompt_sha256"])
+            self.assertNotIn("answer", metadata["artifacts"])
+            self.assertFalse((artifact_dir / "answer.md").exists())
+
     def test_script_backend_records_prompt_answer_and_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
