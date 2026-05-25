@@ -1,0 +1,105 @@
+# Rethlas Prompt Reference
+
+Source: https://github.com/frenzymath/Rethlas
+
+Writeup: https://frenzymath.com/blog/conjecture
+
+Rethlas is a natural-language mathematical reasoning system built around a
+generation agent and a verification agent. The generation agent writes and
+repairs proof blueprints. The verification agent checks those blueprints and
+returns structured feedback.
+
+No license file was visible at the repository root when this digest was
+created, so this file records links and design notes rather than copying full
+upstream prompts.
+
+## Core Control Prompt
+
+Source:
+https://raw.githubusercontent.com/frenzymath/Rethlas/main/agents/generation/AGENTS.md
+
+Important patterns:
+
+- Start by resolving a problem markdown file inside the workspace.
+- Read problem-specific references before external search.
+- Initialize memory before reasoning.
+- Persist intermediate artifacts in typed append-only channels.
+- Choose tactics adaptively rather than following a fixed sequence.
+- Treat search as support for reasoning, not a substitute for reasoning.
+- Use verifier feedback to repair, backtrack, or change strategy.
+- Stop only after a verified proof blueprint exists.
+
+## Skill Inventory
+
+Upstream skill links:
+
+- Obtain immediate conclusions:
+  https://raw.githubusercontent.com/frenzymath/Rethlas/main/agents/generation/.agents/skills/obtain-immediate-conclusions/SKILL.md
+- Search math results:
+  https://raw.githubusercontent.com/frenzymath/Rethlas/main/agents/generation/.agents/skills/search-math-results/SKILL.md
+- Construct toy examples:
+  https://raw.githubusercontent.com/frenzymath/Rethlas/main/agents/generation/.agents/skills/construct-toy-examples/SKILL.md
+- Construct counterexamples:
+  https://raw.githubusercontent.com/frenzymath/Rethlas/main/agents/generation/.agents/skills/construct-counterexamples/SKILL.md
+- Propose subgoal decomposition plans:
+  https://raw.githubusercontent.com/frenzymath/Rethlas/main/agents/generation/.agents/skills/propose-subgoal-decomposition-plans/SKILL.md
+- Direct proving:
+  https://raw.githubusercontent.com/frenzymath/Rethlas/main/agents/generation/.agents/skills/direct-proving/SKILL.md
+- Recursive proving:
+  https://raw.githubusercontent.com/frenzymath/Rethlas/main/agents/generation/.agents/skills/recursive-proving/SKILL.md
+- Identify key failures:
+  https://raw.githubusercontent.com/frenzymath/Rethlas/main/agents/generation/.agents/skills/identify-key-failures/SKILL.md
+- Query memory:
+  https://raw.githubusercontent.com/frenzymath/Rethlas/main/agents/generation/.agents/skills/query-memory/SKILL.md
+- Verify proof:
+  https://raw.githubusercontent.com/frenzymath/Rethlas/main/agents/generation/.agents/skills/verify-proof/SKILL.md
+
+## Useful Patterns
+
+### Typed Memory
+
+Rethlas stores intermediate state in channels such as immediate conclusions,
+toy examples, counterexamples, big decisions, subgoals, proof steps, failed
+paths, verification reports, branch states, and events.
+
+Autoprover use: map these to Cosheaf artifacts. Examples:
+
+- immediate conclusions -> issue comment or planning page
+- counterexamples -> accepted obstruction page or PR comment
+- subgoals -> issues
+- proof steps -> branch commits and PR body
+- failed paths -> closed PR, closed issue, or obstruction page
+- verification reports -> PR review
+
+### Adaptive Tactics
+
+Rethlas chooses tactics based on current state. This is the main idea worth
+keeping. The tactics themselves do not need to become Autoprover skills.
+
+Autoprover use: an Explore prompt can ask the runner to consider these tactics
+while producing issue-ready approaches. An Attempt prompt can ask for examples,
+counterexamples, decomposition, or literature checks only when relevant.
+
+### Counterexample Discipline
+
+Counterexample construction is treated as first-class. If a candidate
+counterexample refutes a branch, Rethlas records its assumptions, failed
+conclusion, and impact.
+
+Autoprover use: when an Attempt output disproves a claim or kills a direction,
+turn it into a reviewable obstruction artifact rather than losing it in logs.
+
+### Verification Repair
+
+Rethlas treats verifier `wrong`, critical errors, or gaps as failure. It then
+repairs the proof, changes strategy, or records failed paths.
+
+Autoprover use: PR review is the gate. If review requests changes, the runner
+repairs the branch or records the obstruction in Cosheaf.
+
+## What Not To Copy
+
+- Do not copy all Rethlas skills as mandatory Autoprover skills.
+- Do not create a separate local memory hierarchy as durable project state.
+- Do not require recursive proving or parallel subagents in v1.
+- Do not treat search results as accepted knowledge before review.

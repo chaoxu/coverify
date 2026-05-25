@@ -20,16 +20,36 @@ The design target:
 - model backends are pluggable: scripts, CLIs, API wrappers, or remote jobs
 - the first oracle backend is a Codex `gpt-5.5` / `xhigh` text-in/text-out
   wrapper, with Claude and Antigravity-style wrappers possible later
+- every oracle/backend call records an audit bundle with the exact prompt,
+  answer, metadata, manifest, logs, timing, exit status, and content hashes
 - backend calls may run as simple scripts with logs and timeout wrappers; add
   job state only when detached or parallel execution exists
 - useful backend/oracle/Codex outputs become reviewed knowledge PRs
 - each bounded or long-running run leaves durable progress in Cosheaf so later
   runs start from what was learned
+- mathematical reasoning and correctness decisions should be delegated to
+  oracle calls whenever possible; Codex-as-runner mainly prepares context,
+  operates tools, records artifacts, and maps oracle outputs to Cosheaf state
 
 ## Documents
 
 - [Design](docs/design.md): canonical tool-harness design, including Cosheaf
   mapping, context packs, review, runs, jobs, progress, and build order.
+- [Experiments](docs/experiments.md): evaluation plan for comparing the
+  Cosheaf-backed loop against one-shot oracles, fixed pipelines, and QED-style
+  strategies.
+- [Correctness Review Prompt](docs/prompts/proof-review.md): reviewer prompt
+  template for PR correctness gates over proofs, notes, examples, and
+  literature claims.
+- [Proof Attempt Oracle Prompt](docs/prompts/proof-attempt-oracle.md): first
+  strong-oracle template for a clean standalone proof or disproof attempt.
+- [Exploration Planner Prompt](docs/prompts/exploration-planner.md): template
+  for turning current knowledge and failed attempts into issue-ready next
+  approaches.
+- [Prompt Templates](docs/prompts/README.md): the three-prompt taxonomy and
+  how reference prompts differ from required workflow primitives.
+- [Reference Prompt Collection](docs/prompts/reference/README.md): local index
+  of prompt patterns from QED, Rethlas, and future external systems.
 - [Coflat Primer](docs/coflat-primer.md): markdown/document-format context.
 - [References And Future Notes](docs/references.md): paper-inspired design
   lessons and future learning notes.

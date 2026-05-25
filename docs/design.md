@@ -19,6 +19,17 @@ knowledge, normally by branch, PR, review, and merge.
 
 - [README](../README.md) is the repository entry point and status summary.
 - This file is the canonical architecture and workflow contract.
+- [Experiments](experiments.md) defines how to compare the Cosheaf-backed loop
+  against one-shot oracles, fixed pipelines, and QED-style strategies.
+- [Correctness Review Prompt](prompts/proof-review.md) is the first concrete
+  prompt template for mathematical PR review. It applies to proofs, examples,
+  obstructions, literature notes, and status summaries.
+- [Proof Attempt Oracle Prompt](prompts/proof-attempt-oracle.md) is the first
+  strong-oracle template for clean standalone proof/disproof attempts.
+- [Exploration Planner Prompt](prompts/exploration-planner.md) turns current
+  knowledge, failed attempts, and open work into issue-ready approaches.
+- [Prompt Templates](prompts/README.md) explains the three-prompt taxonomy and
+  the difference between canonical prompts and reference patterns.
 - [Coflat Context Primer](coflat-primer.md) is the Markdown format guide used
   when context packs ask a backend to write or review Cosheaf pages.
 - [References And Future Notes](references.md) records paper-inspired design
@@ -30,16 +41,20 @@ knowledge, normally by branch, PR, review, and merge.
   milestones, comments, notifications, and merge state. It is the source of
   truth for humans and agents.
 - **Runner** means Codex, another agent, or a future orchestrator. It owns the
-  run lifecycle: context selection, tool use, stop conditions, retry policy,
-  and final response.
+  run lifecycle, context selection, tool use, stop conditions, retry policy,
+  artifact writing, and final response. It should not be trusted as the source
+  of mathematical reasoning when an oracle call is possible.
 - **Autoprover harness** provides Cosheaf adapters, context packing, and
   backend-script invocation. It must not become a second workflow database.
 - **Model backend** means a script, CLI, API wrapper, remote job, or future
   stronger system. The minimum contract is stdin context in, stdout answer out.
-- **Oracle call** is a backend invocation for a clean reasoning task prepared
-  by a tool-using runner.
-- **Reviewer** is a distinct Cosheaf identity plus review policy and optional
-  backend. A reviewer is not just a prompt.
+- **Oracle call** is a backend invocation for a clean reasoning or correctness
+  task prepared by a tool-using runner. Mathematical proof attempts,
+  obstruction analysis, theorem-choice decisions, and correctness review should
+  be delegated to oracle calls whenever possible.
+- **Reviewer** is a distinct Cosheaf identity plus an oracle-backed review
+  policy. A reviewer identity submits the review result to Cosheaf; the
+  correctness judgment should come from the review oracle, not from the runner.
 
 ## State Model
 
@@ -60,10 +75,34 @@ Durable state should map to Cosheaf primitives:
 | Backend/oracle result | Knowledge PR if useful; comment only for transient discussion |
 | Run progress | Issue/PR comment, branch commit, review, label, or page update |
 
-Local scratch is operational only. A run may keep context files, raw backend
-output, stderr/logs, timeout wrapper output, and linked artifact ids while a
-command is active. If the result should matter tomorrow, it belongs in
-Cosheaf.
+Durable state still needs trust classes. A merged page is not automatically an
+accepted theorem. The minimum context channels are:
+
+| Channel | Meaning | Default use in context packs |
+| --- | --- | --- |
+| `definition` | active problem statement, conventions, model scope | include when relevant |
+| `accepted` | reviewed theorem, example, obstruction, or source-backed bound | include as established context |
+| `frontier` | open direction, conjecture, candidate route, or scoped uncertainty | include as hypothesis, not fact |
+| `index` | navigation over source notes | include for discovery, not as evidence |
+| `process` | provenance, issue history, dogfood lessons, workflow policy | exclude unless the task is workflow design |
+| `oracle-output` | raw backend answer or transcript | evidence only; never accepted knowledge by itself |
+| `retired` | superseded or out-of-scope material | exclude unless auditing history |
+
+Promotion to `accepted` requires a PR whose changed claims are explicitly
+scoped and whose reviewer checks model match, source match, proof details, and
+evidence durability. A document containing phrases such as "requires review
+before merge", "oracle-generated" as evidence, "candidate lemma" as a theorem,
+or unsupported placeholders such as "forgot" is not ready for accepted context.
+
+Local scratch is operational only, but oracle calls need an audit bundle so a
+runner can prove what was asked and what came back. Every backend invocation
+must write `prompt.md`, `answer.md`, `metadata.json`, and `manifest.json`;
+wrappers should also preserve stdout/stderr when available. Metadata must
+include a stable `oracle_call_id`, provider, model or command, timing, exit
+status, timeout state, artifact paths, and content hashes for prompt and
+answer. If the result should matter tomorrow, the runner must link or distill
+that audit bundle into Cosheaf as PR evidence, a review comment, or accepted
+knowledge. The local bundle alone is not durable project memory.
 
 Add a local active-job store only after detached or parallel jobs exist. That
 store should remain operational: status, heartbeat, cancellation, log pointer,
@@ -215,6 +254,32 @@ evidence, and submitted artifacts. They should not rely on the author's
 private scratch files or reasoning transcript unless that transcript is itself
 submitted as evidence.
 
+Reviewer runs are oracle calls. The runner may collect files, citations, issue
+context, rendered diffs, and computation outputs, but the approve/request
+changes/comment decision should be produced by the correctness-review oracle.
+If an oracle cannot be called, the runner should leave a `needs-review` style
+comment or label instead of approving knowledge on its own.
+
+The review gate is about correctness, not document type. A literature note can
+be wrong by citing a theorem outside its hypotheses; an example note can be
+wrong by miscomputing a cost or missing a profitable deviation; a status note
+can be wrong by promoting a conjectural obstruction to accepted knowledge. The
+same skeptical review policy applies to all knowledge-changing PRs, with
+reference and computation checks included when relevant.
+
+The review gate must also check promotion hygiene:
+
+- source-backed bounds restate model scope: player type, weights, objective,
+  graph class, symmetry/asymmetry, latency class, and quantitative bound;
+- frontier notes do not contain theorem-shaped claims without proof;
+- state maps are indexes over source notes, not independent sources of truth;
+- process/provenance notes are marked as process context and excluded from
+  mathematical golden context by default;
+- raw oracle output, offline runs, terminal output, and local audit bundles are
+  not cited as durable evidence unless linked or distilled into reviewed
+  Cosheaf artifacts;
+- stale pre-review text is removed before merge.
+
 Review decisions:
 
 - `APPROVE`: safe to merge into accepted knowledge.
@@ -224,6 +289,11 @@ Review decisions:
 
 If a reviewer cannot decide correctness, it should request changes and state
 what would make the PR decidable.
+
+Runner-local checks are allowed only as preflight and packaging: make sure the
+context pack is complete, references are attached, computations are reproducible
+or summarized, and the oracle output can be mapped to Cosheaf review events.
+They are not a substitute for an oracle correctness decision.
 
 ## Context Packs
 
@@ -271,10 +341,21 @@ counterexample
 obstruction
 open-question
 attempt
+frontier
+index
+process
+retired
+oracle-output
 ```
 
-The pack is not private memory. If a context summary is useful after a run,
-turn it into a knowledge-file change or a normal issue/PR comment.
+Context packs must not flatten these statuses. In particular, process notes,
+issue histories, and provenance are not accepted mathematical context; include
+them only for workflow-design or audit tasks. State-index pages may help find
+source notes, but the source note must be included for any claim used as
+evidence.
+
+The pack is not private memory. If a context summary is useful after a run, turn
+it into a knowledge-file change or a normal issue/PR comment.
 
 ## Backends And Oracles
 
@@ -309,16 +390,41 @@ codex exec \
 ```
 
 The wrapper sends the context pack on stdin and returns the final message from
-`answer.md`. It should also preserve stdout JSONL, stderr, the prompt, model,
-reasoning effort, start/end time, exit code, and linked Cosheaf artifact ids.
+`answer.md`. It must also preserve a complete local audit bundle:
+
+```text
+prompt.md       exact oracle input
+context.md      compatibility alias for the same input
+answer.md       final oracle output
+stdout.jsonl    provider event stream, when available
+stderr.log      provider diagnostics, when available
+metadata.json   oracle_call_id, provider, model/command, timing, status, hashes
+manifest.json   paths, byte sizes, and hashes for all recorded artifacts
+workdir/        isolated provider working directory, when applicable
+```
+
 The prompt should contain all task context. For ordinary oracle calls, run in a
 scratch or controlled read-only working directory and do not rely on Codex
 session memory, project files outside the context pack, or hidden user config.
-This is still the same backend contract:
+When an oracle result is used to approve, request changes, write knowledge, or
+justify a claim, the Cosheaf PR/comment should include the `oracle_call_id`,
+provider/model, prompt hash, answer hash, and a short statement of what context
+was included. This is still the same backend contract:
 
 ```text
 context pack string -> codex wrapper -> answer string
 ```
+
+Oracle use is the default for mathematical reasoning. The runner should call an
+oracle whenever it is asking a question whose answer depends on proof search,
+nontrivial mathematical judgment, theorem applicability, obstruction analysis,
+or correctness verification. The runner may decide that an oracle call is not
+needed only for mechanical actions such as reading Cosheaf state, packaging a
+context pack, running an enumerator, transcribing a cited theorem, opening a
+PR, or recording an oracle's answer.
+
+When budget or availability prevents an oracle call, the artifact must say so.
+Do not silently turn runner reasoning into accepted knowledge.
 
 Other providers can implement the same contract:
 
@@ -336,7 +442,7 @@ trail:
 - stdout/stderr or log path while the job runs
 - timeout/cancellation wrapper when practical
 - failure or timeout comment when it affects the work
-- raw successful output while Codex evaluates it
+- raw successful output while Codex evaluates it, with prompt/output hashes
 - reviewed knowledge PR, review evidence, or transient comment if useful
 
 An oracle is not an agent. Good oracle tasks:
@@ -383,6 +489,26 @@ or obstruction-like entry should include, when applicable:
 - examples or counterexamples checked
 - source PR/review or provenance note
 - caveats and remaining open points
+
+Before a runner opens a knowledge PR, it should run a promotion audit over the
+changed text:
+
+```text
+1. What exact claim is being promoted?
+2. Is the claim a definition, theorem, example, obstruction, frontier note,
+   process note, index entry, raw oracle output, or retired evidence?
+3. What model scope does it use: weighted/unweighted, atomic/non-atomic,
+   symmetric/asymmetric, graph class, objective, latency class?
+4. What evidence supports it: proof, source theorem, checked example,
+   durable computation, or reviewed obstruction?
+5. Does any sentence preserve scratch provenance, pre-review language, or a
+   broader claim than the evidence proves?
+6. Should this go into an issue/comment/frontier note instead of accepted
+   context?
+```
+
+The reviewer should repeat this audit independently. A request-changes result is
+progress when it prevents contaminated context from entering `main`.
 
 Dead ends are knowledge when precise:
 
@@ -498,23 +624,41 @@ or in-progress label. If multiple workers are added later, use a tiny
 operational lease with fields such as `run_id`, `runner_name`, `issue_number`,
 `heartbeat_at`, and `expires_at`; it should only prevent duplicate live work.
 
-## Prompt Templates To Design
+## Prompt Taxonomy
 
-The first templates should be small and task-specific:
+The core prompt surface should stay small. V1 has three canonical prompt
+families:
 
-- context builder
-- proof attempt
-- proof review
-- structural review
-- detailed review
-- dead-end distiller
-- PR writer
-- doc tightener
+1. **Explore**: inspect current accepted knowledge, failed attempts, open
+   issues, and PRs; propose issue-ready next directions.
+2. **Attempt**: given one well-defined direction or statement, try to prove or
+   disprove it, or produce a precise obstruction.
+3. **Review**: given proposed mathematical knowledge, decide whether it passes
+   the PR correctness gate.
+
+The attempt and review prompts are oracle prompts. The runner prepares their
+inputs and records their outputs; it should not replace them with its own
+mathematical judgment when an oracle is available. Explore can be runner-driven
+when it is only indexing state, but any exploration step that requires
+mathematical prioritization or correctness judgment should also become an
+oracle call.
+
+Tactics such as constructing counterexamples, toy examples, decompositions,
+literature checks, recursive proving, failure analysis, PR writing, and
+document tightening are usually choices made by the runner while preparing
+context or by an oracle inside one of these prompts. They should not become
+separate skills or durable workflow states unless repeated use shows that code
+support is needed.
+
+The concrete v1 templates are:
+
+- [Exploration Planner Prompt](prompts/exploration-planner.md)
+- [Proof Attempt Oracle Prompt](prompts/proof-attempt-oracle.md)
+- [Correctness Review Prompt](prompts/proof-review.md)
 
 Each template should define required inputs, required outputs, refusal
-behavior, trust handling, and allowed artifact effects.
-The review-oriented requirements are informed by the systems summarized in
-[References And Future Notes](references.md).
+behavior, trust handling, and allowed artifact effects. Larger QED/Rethlas
+prompt families are reference patterns, not a target architecture.
 
 Oracle prompts should prefer actionable uncertainty fields:
 
@@ -549,13 +693,18 @@ NON_BLOCKING_NOTES:
 3. Implement context-pack construction for issues and PRs.
 4. Add pluggable backend invocation with the stdin/stdout script contract,
    starting with the Codex `gpt-5.5` + `xhigh` wrapper.
-5. Add `ask_oracle` as a backend-backed workflow whose useful outputs become
+5. Add promotion-audit checks for trust class, model scope, stale pre-review
+   language, and durable evidence before any PR can be treated as accepted
+   knowledge.
+6. Add `ask_oracle` as a backend-backed workflow whose useful outputs become
    knowledge PRs.
-6. Move repeatable policy into skills: explore issue, review PR, repair PR,
-   abandon path, continue from artifact, doc tightener.
-7. Add a lease table only when more than one runner can work in parallel.
-8. Only then reintroduce proof-specific benchmarks, verifier calibration, or
+7. Add thin command/skill wrappers only for repeatable glue around the three
+   canonical prompts: explore, attempt, and review.
+8. Add a lease table only when more than one runner can work in parallel.
+9. Only then reintroduce proof-specific benchmarks, verifier calibration, or
    learning/evaluation work.
+10. Use [Experiments](experiments.md) to compare proof strategies once the
+   issue/PR/review loop is stable.
 
 ## Non-Goals
 

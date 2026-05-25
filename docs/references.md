@@ -9,6 +9,17 @@ architecture.
 - [README](../README.md) is the repository entry point.
 - [Autoprover Design](design.md) is the canonical contract these references
   feed into.
+- [Experiments](experiments.md) turns these design lessons into measurable
+  comparisons.
+- [Correctness Review Prompt](prompts/proof-review.md) applies the review-gate
+  lessons to concrete mathematical knowledge review.
+- [Proof Attempt Oracle Prompt](prompts/proof-attempt-oracle.md) records the
+  clean standalone proof/disproof oracle template.
+- [Exploration Planner Prompt](prompts/exploration-planner.md) records the
+  prompt for turning current workspace state into issue-ready approaches.
+- [Prompt Templates](prompts/README.md) records the three-prompt taxonomy.
+- [Reference Prompt Collection](prompts/reference/README.md) indexes external
+  prompt systems and their reusable patterns.
 - [Coflat Context Primer](coflat-primer.md) is the local page-format guide for
   any design lesson that affects mathematical document structure.
 
@@ -53,6 +64,9 @@ Design lessons:
 - Retry feedback should distinguish execution errors, plan errors, and
   strategy errors.
 - Do not copy QED's fixed multi-agent pipeline into v1.
+- Treat QED's structural review, detailed review, and regulator prompts as
+  reference checklists that can enrich the single review prompt or runner
+  policy, not as mandatory separate workflow stages.
 
 ## AI Co-Mathematician
 
@@ -82,12 +96,46 @@ Design lessons:
   workspace.
 - Context packs should preserve the original problem, accepted background,
   relevant failed attempts, and exact requested output shape.
-- Oracle calls are best used for clean subproblems after an agent gathers and
-  filters context.
+- Oracle calls are the default path for mathematical reasoning once an agent
+  gathers and filters context. The runner should not substitute its own proof
+  judgment when a strong oracle call is available.
 - Review should reward refusal and precise obstruction reports as real
   progress, not only completed proofs.
 - Do not add a scheduler, learned prioritizer, or multi-agent allocator until
   the single-runner issue/PR loop is proven.
+
+## Rethlas
+
+**Rethlas**, FrenzyMath, 2026.
+
+Links:
+
+- Code: https://github.com/frenzymath/Rethlas
+- Writeup: https://frenzymath.com/blog/conjecture
+
+What matters:
+
+- Rethlas uses a generation agent and a verification agent, with the generator
+  repairing proof blueprints until verification passes.
+- Its control loop is adaptive: search, toy examples, counterexamples,
+  subgoal plans, direct proving, recursive proving, key-failure synthesis, and
+  proof verification are chosen based on current state.
+- It persists typed intermediate memory: conclusions, examples,
+  counterexamples, subgoals, proof steps, failed paths, verification reports,
+  and branch states.
+- It treats failed paths as mandatory reusable memory.
+- It treats search as support for reasoning, not a substitute for reasoning.
+
+Design lessons:
+
+- Keep the useful habit of preserving failed paths and counterexamples.
+- Do not copy the full skill taxonomy into v1. Most Rethlas skills are tactics
+  a runner can choose inside the three canonical prompts: explore, attempt,
+  and review.
+- If a tactic becomes repetitive and brittle, add a thin wrapper later. Until
+  then, keep it as prompt guidance or a reference pattern.
+- Map Rethlas-style typed memory to Cosheaf artifacts instead of creating a
+  private memory store.
 
 ## Aletheia And Open-Problem Agents
 
