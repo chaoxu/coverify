@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import signal
 import subprocess
@@ -16,6 +17,15 @@ class BackendResult:
     answer: str
     artifact_dir: Path
     provider: str
+    oracle_call_id: str
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def utc_stamp() -> str:
@@ -27,8 +37,66 @@ def ensure_artifact_dir(root: Path, provider: str) -> Path:
     return Path(tempfile.mkdtemp(prefix=f"{utc_stamp()}-{provider}-", dir=root))
 
 
+def write_prompt_files(artifact_dir: Path, context: str) -> tuple[Path, Path]:
+    prompt_path = artifact_dir / "prompt.md"
+    context_path = artifact_dir / "context.md"
+    prompt_path.write_text(context, encoding="utf-8")
+    context_path.write_text(context, encoding="utf-8")
+    return prompt_path, context_path
+
+
+def write_audit_metadata(
+    metadata_path: Path,
+    metadata: dict[str, object],
+    artifacts: dict[str, Path],
+) -> None:
+    manifest: dict[str, dict[str, object]] = {}
+    for name, path in artifacts.items():
+        if path.exists():
+            manifest[name] = {
+                "path": str(path),
+                "sha256": sha256_file(path),
+                "bytes": path.stat().st_size,
+            }
+
+    metadata["artifacts"] = manifest
+    for name, entry in manifest.items():
+        metadata[f"{name}_path"] = entry["path"]
+        metadata[f"{name}_sha256"] = entry["sha256"]
+
+    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
+    (metadata_path.parent / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+def audit_summary(result: BackendResult) -> str:
+    metadata_path = result.artifact_dir / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    lines = [
+        "Oracle audit:",
+        f"- id: {metadata['oracle_call_id']}",
+        f"- provider: {metadata['provider']}",
+        f"- artifacts: {metadata['artifact_dir']}",
+    ]
+    model = metadata.get("model")
+    if model:
+        lines.append(f"- model: {model}")
+    prompt_sha256 = metadata.get("prompt_sha256")
+    if prompt_sha256:
+        lines.append(f"- prompt_sha256: {prompt_sha256}")
+    answer_sha256 = metadata.get("answer_sha256")
+    if answer_sha256:
+        lines.append(f"- answer_sha256: {answer_sha256}")
+    return "\n".join(lines)
+
+
 def run_fixture_backend(context: str, *, artifact_root: Path) -> BackendResult:
     artifact_dir = ensure_artifact_dir(artifact_root, "fixture")
+    oracle_call_id = artifact_dir.name
+    started_at = datetime.now(timezone.utc).isoformat()
+    started = time.monotonic()
     answer = "\n".join(
         [
             "# Infinitely Many Primes",
@@ -56,20 +124,34 @@ def run_fixture_backend(context: str, *, artifact_root: Path) -> BackendResult:
             "",
         ],
     )
-    (artifact_dir / "context.md").write_text(context, encoding="utf-8")
-    (artifact_dir / "answer.md").write_text(answer, encoding="utf-8")
-    (artifact_dir / "metadata.json").write_text(
-        json.dumps(
-            {
-                "provider": "fixture",
-                "started_at": datetime.now(timezone.utc).isoformat(),
-                "finished_at": datetime.now(timezone.utc).isoformat(),
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
+    prompt_path, context_path = write_prompt_files(artifact_dir, context)
+    answer_path = artifact_dir / "answer.md"
+    metadata_path = artifact_dir / "metadata.json"
+    answer_path.write_text(answer, encoding="utf-8")
+    write_audit_metadata(
+        metadata_path,
+        {
+            "oracle_call_id": oracle_call_id,
+            "provider": "fixture",
+            "started_at": started_at,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "duration_seconds": round(time.monotonic() - started, 3),
+            "artifact_dir": str(artifact_dir),
+            "returncode": 0,
+            "timed_out": False,
+        },
+        {
+            "prompt": prompt_path,
+            "context": context_path,
+            "answer": answer_path,
+        },
     )
-    return BackendResult(answer=answer, artifact_dir=artifact_dir, provider="fixture")
+    return BackendResult(
+        answer=answer,
+        artifact_dir=artifact_dir,
+        provider="fixture",
+        oracle_call_id=oracle_call_id,
+    )
 
 
 def terminate_process_group(pid: int, sig: int = signal.SIGTERM) -> None:
@@ -95,14 +177,14 @@ def run_codex_backend(
     sandbox: str = "read-only",
 ) -> BackendResult:
     artifact_dir = ensure_artifact_dir(artifact_root, "codex")
+    oracle_call_id = artifact_dir.name
     workdir = artifact_dir / "workdir"
     workdir.mkdir()
-    context_path = artifact_dir / "context.md"
+    prompt_path, context_path = write_prompt_files(artifact_dir, context)
     output_path = artifact_dir / "answer.md"
     stdout_path = artifact_dir / "stdout.jsonl"
     stderr_path = artifact_dir / "stderr.log"
     metadata_path = artifact_dir / "metadata.json"
-    context_path.write_text(context, encoding="utf-8")
     cmd = [
         codex_bin,
         "exec",
@@ -123,16 +205,25 @@ def run_codex_backend(
         "-",
     ]
     metadata: dict[str, object] = {
+        "oracle_call_id": oracle_call_id,
         "provider": "codex",
         "started_at": datetime.now(timezone.utc).isoformat(),
         "artifact_dir": str(artifact_dir),
         "workdir": str(workdir),
         "model": model,
         "reasoning_effort": reasoning_effort,
+        "sandbox": sandbox,
         "timeout_seconds": timeout_seconds,
         "command": cmd,
     }
-    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    artifacts = {
+        "prompt": prompt_path,
+        "context": context_path,
+        "answer": output_path,
+        "stdout": stdout_path,
+        "stderr": stderr_path,
+    }
+    write_audit_metadata(metadata_path, metadata, artifacts)
     started = time.monotonic()
     with stdout_path.open("w", encoding="utf-8") as stdout_file, stderr_path.open(
         "w",
@@ -156,12 +247,13 @@ def run_codex_backend(
             metadata["duration_seconds"] = round(time.monotonic() - started, 3)
             metadata["returncode"] = process.returncode
             metadata["timed_out"] = True
-            metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+            write_audit_metadata(metadata_path, metadata, artifacts)
             raise RuntimeError(f"codex backend timed out; artifacts={artifact_dir}") from exc
     metadata["finished_at"] = datetime.now(timezone.utc).isoformat()
     metadata["duration_seconds"] = round(time.monotonic() - started, 3)
     metadata["returncode"] = process.returncode
-    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    metadata["timed_out"] = False
+    write_audit_metadata(metadata_path, metadata, artifacts)
     if process.returncode != 0:
         detail = stderr_path.read_text(encoding="utf-8") if stderr_path.exists() else ""
         raise RuntimeError(
@@ -172,6 +264,7 @@ def run_codex_backend(
         answer=output_path.read_text(encoding="utf-8"),
         artifact_dir=artifact_dir,
         provider="codex",
+        oracle_call_id=oracle_call_id,
     )
 
 
@@ -183,38 +276,57 @@ def run_script_backend(
     timeout_seconds: int | None = None,
 ) -> BackendResult:
     artifact_dir = ensure_artifact_dir(artifact_root, "script")
-    context_path = artifact_dir / "context.md"
+    oracle_call_id = artifact_dir.name
+    prompt_path, context_path = write_prompt_files(artifact_dir, context)
     output_path = artifact_dir / "answer.md"
     stderr_path = artifact_dir / "stderr.log"
     metadata_path = artifact_dir / "metadata.json"
-    context_path.write_text(context, encoding="utf-8")
-    metadata = {
+    metadata: dict[str, object] = {
+        "oracle_call_id": oracle_call_id,
         "provider": "script",
         "started_at": datetime.now(timezone.utc).isoformat(),
         "command": command,
         "artifact_dir": str(artifact_dir),
         "timeout_seconds": timeout_seconds,
     }
-    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    artifacts = {
+        "prompt": prompt_path,
+        "context": context_path,
+        "answer": output_path,
+        "stderr": stderr_path,
+    }
+    write_audit_metadata(metadata_path, metadata, artifacts)
     started = time.monotonic()
     with output_path.open("w", encoding="utf-8") as stdout_file, stderr_path.open(
         "w",
         encoding="utf-8",
     ) as stderr_file:
-        process = subprocess.run(
+        process = subprocess.Popen(
             command,
-            input=context,
             shell=True,
             text=True,
+            stdin=subprocess.PIPE,
             stdout=stdout_file,
             stderr=stderr_file,
-            timeout=timeout_seconds,
             cwd=artifact_dir,
+            start_new_session=True,
         )
+        try:
+            process.communicate(input=context, timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            terminate_process_group(process.pid, signal.SIGKILL)
+            process.communicate()
+            metadata["finished_at"] = datetime.now(timezone.utc).isoformat()
+            metadata["duration_seconds"] = round(time.monotonic() - started, 3)
+            metadata["returncode"] = process.returncode
+            metadata["timed_out"] = True
+            write_audit_metadata(metadata_path, metadata, artifacts)
+            raise RuntimeError(f"script backend timed out; artifacts={artifact_dir}") from exc
     metadata["finished_at"] = datetime.now(timezone.utc).isoformat()
     metadata["duration_seconds"] = round(time.monotonic() - started, 3)
     metadata["returncode"] = process.returncode
-    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    metadata["timed_out"] = False
+    write_audit_metadata(metadata_path, metadata, artifacts)
     if process.returncode != 0:
         detail = stderr_path.read_text(encoding="utf-8")
         raise RuntimeError(
@@ -225,4 +337,5 @@ def run_script_backend(
         answer=output_path.read_text(encoding="utf-8"),
         artifact_dir=artifact_dir,
         provider="script",
+        oracle_call_id=oracle_call_id,
     )

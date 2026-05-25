@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -37,9 +38,10 @@ class CosheafError(RuntimeError):
 class CosheafConfig:
     api_url: str
     token: str | None = None
+    tls_verify: bool = True
 
     def with_token(self, token: str) -> "CosheafConfig":
-        return CosheafConfig(api_url=self.api_url, token=token)
+        return CosheafConfig(api_url=self.api_url, token=token, tls_verify=self.tls_verify)
 
 
 class CosheafClient:
@@ -71,8 +73,12 @@ class CosheafClient:
             headers=headers,
             method=method,
         )
+        context = None if self.config.tls_verify else ssl._create_unverified_context()
         try:
-            with urlopen(req, timeout=60) as response:
+            urlopen_kwargs: dict[str, Any] = {"timeout": 60}
+            if context is not None:
+                urlopen_kwargs["context"] = context
+            with urlopen(req, **urlopen_kwargs) as response:
                 return self._parse_response(response.read())
         except HTTPError as err:
             payload = self._parse_response(err.read())
@@ -134,6 +140,51 @@ class CosheafClient:
 
     def list_workspace_files(self, workspace: str, *, branch: str = "main") -> Any:
         return self.request("GET", f"/w/{workspace}/tree?{self.query(branch=branch)}")
+
+    def search(self, workspace: str, query: str) -> Any:
+        return self.request("GET", f"/w/{workspace}/search?{self.query(q=query)}")
+
+    def list_issues(
+        self,
+        workspace: str,
+        *,
+        state: str = "open",
+        query: str | None = None,
+    ) -> Any:
+        return self.request(
+            "GET",
+            f"/w/{workspace}/issues?{self.query(state=state, filter='all', q=query)}",
+        )
+
+    def read_issue(self, workspace: str, number: int) -> Any:
+        return self.request("GET", f"/w/{workspace}/issues/{number}")
+
+    def create_issue(
+        self,
+        workspace: str,
+        *,
+        title: str,
+        body: str,
+    ) -> Any:
+        return self.request(
+            "POST",
+            f"/w/{workspace}/issues",
+            body={"title": title, "body": body},
+        )
+
+    def comment_issue(self, workspace: str, number: int, body: str) -> Any:
+        return self.request(
+            "POST",
+            f"/w/{workspace}/issues/{number}/comments",
+            body={"body": body},
+        )
+
+    def close_issue(self, workspace: str, number: int) -> Any:
+        return self.request(
+            "PATCH",
+            f"/w/{workspace}/issues/{number}/state",
+            body={"state": "closed"},
+        )
 
     def read_file(self, workspace: str, path: str, *, branch: str = "main") -> Any:
         return self.request(

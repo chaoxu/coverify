@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
-from .backend import BackendResult
+from .backend import BackendResult, audit_summary
 
 
 class BackendRunner(Protocol):
@@ -162,6 +162,7 @@ def run_infinite_primes_workflow(
     existing_files = _files_from_tree(tree)
     context = build_infinite_primes_context(options.workspace, existing_files)
     backend_result = backend(context)
+    backend_audit = audit_summary(backend_result)
     page = normalize_proof_page(backend_result.answer)
     validate_infinite_primes_page(page)
 
@@ -181,8 +182,13 @@ def run_infinite_primes_workflow(
                 "Autoprover v1 wrote a Coflat proof page for Euclid's theorem.",
                 "",
                 f"- Backend: `{backend_result.provider}`",
+                f"- Oracle call id: `{backend_result.oracle_call_id}`",
                 f"- Backend artifacts: `{backend_result.artifact_dir}`",
                 f"- Proposed page: `{options.path}`",
+                "",
+                "```text",
+                backend_audit,
+                "```",
             ],
         ),
     )
@@ -225,6 +231,7 @@ def run_infinite_primes_workflow(
         "merged": merged,
         "verified_branch": verify_branch,
         "backend_provider": backend_result.provider,
+        "oracle_call_id": backend_result.oracle_call_id,
         "backend_artifact_dir": str(backend_result.artifact_dir),
         "write_result": write_result,
     }

@@ -83,6 +83,40 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(captured["method"], "PUT")
         self.assertEqual(captured["body"], {"role": "write"})
 
+    def test_create_issue_uses_cosheaf_issue_endpoint(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def fake_urlopen(req: Any, timeout: int) -> FakeResponse:
+            captured["url"] = req.full_url
+            captured["method"] = req.get_method()
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            return FakeResponse({"number": 3, "title": "Try lower bound", "state": "open"})
+
+        client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
+        with patch("autoprover.client.urlopen", fake_urlopen):
+            response = client.create_issue("w", title="Try lower bound", body="body")
+
+        self.assertEqual(response["number"], 3)
+        self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/w/w/issues")
+        self.assertEqual(captured["method"], "POST")
+        self.assertEqual(captured["body"], {"title": "Try lower bound", "body": "body"})
+
+    def test_search_uses_cosheaf_search_endpoint(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def fake_urlopen(req: Any, timeout: int) -> FakeResponse:
+            captured["url"] = req.full_url
+            captured["method"] = req.get_method()
+            return FakeResponse({"results": []})
+
+        client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
+        with patch("autoprover.client.urlopen", fake_urlopen):
+            response = client.search("w", "series parallel")
+
+        self.assertEqual(response["results"], [])
+        self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/w/w/search?q=series+parallel")
+        self.assertEqual(captured["method"], "GET")
+
 
 if __name__ == "__main__":
     unittest.main()
