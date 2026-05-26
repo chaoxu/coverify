@@ -172,6 +172,27 @@ class CosheafClient:
             body={"title": title, "body": body},
         )
 
+    def edit_issue(
+        self,
+        workspace: str,
+        number: int,
+        *,
+        title: str | None = None,
+        body: str | None = None,
+    ) -> Any:
+        patch: dict[str, Any] = {}
+        if title is not None:
+            patch["title"] = title
+        if body is not None:
+            patch["body"] = body
+        if not patch:
+            raise ValueError("title or body is required")
+        return self.request(
+            "PATCH",
+            f"/w/{workspace}/issues/{number}",
+            body=patch,
+        )
+
     def comment_issue(self, workspace: str, number: int, body: str) -> Any:
         return self.request(
             "POST",
@@ -206,6 +227,17 @@ class CosheafClient:
             "PUT",
             f"/w/{workspace}/file?{self.query(path=path, branch=branch)}",
             body={"content": content},
+        )
+
+    def delete_branch_file(
+        self,
+        workspace: str,
+        path: str,
+        branch: str,
+    ) -> Any:
+        return self.request(
+            "DELETE",
+            f"/w/{workspace}/file?{self.query(path=path, branch=branch)}",
         )
 
     def open_pull_request(

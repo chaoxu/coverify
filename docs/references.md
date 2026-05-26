@@ -17,7 +17,10 @@ architecture.
   clean standalone proof/disproof oracle template.
 - [Exploration Planner Prompt](prompts/exploration-planner.md) records the
   prompt for turning current workspace state into issue-ready approaches.
-- [Prompt Templates](prompts/README.md) records the three-prompt taxonomy.
+- [Knowledge-Base Manager Prompt](prompts/knowledge-base-manager.md) records
+  the maintenance prompt for consolidating, indexing, and reducing accepted
+  workspace documents.
+- [Prompt Templates](prompts/README.md) records the core prompt taxonomy.
 - [Reference Prompt Collection](prompts/reference/README.md) indexes external
   prompt systems and their reusable patterns.
 - [Coflat Context Primer](coflat-primer.md) is the local page-format guide for

@@ -162,6 +162,20 @@ def cmd_create_issue(args: argparse.Namespace) -> int:
     )
 
 
+def cmd_edit_issue(args: argparse.Namespace) -> int:
+    body = args.body
+    if args.body_file:
+        body = Path(args.body_file).read_text(encoding="utf-8")
+    return print_json(
+        authed_client_from_args(args).edit_issue(
+            args.workspace,
+            args.issue,
+            title=args.title,
+            body=body,
+        ),
+    )
+
+
 def cmd_comment_issue(args: argparse.Namespace) -> int:
     body = args.body
     if args.body_file:
@@ -192,6 +206,16 @@ def cmd_write_file(args: argparse.Namespace) -> int:
             args.path,
             args.branch,
             content,
+        ),
+    )
+
+
+def cmd_delete_file(args: argparse.Namespace) -> int:
+    return print_json(
+        authed_client_from_args(args).delete_branch_file(
+            args.workspace,
+            args.path,
+            args.branch,
         ),
     )
 
@@ -339,6 +363,15 @@ def build_parser() -> argparse.ArgumentParser:
     create_issue.add_argument("--body-file", default="")
     create_issue.set_defaults(func=cmd_create_issue)
 
+    edit_issue = sub.add_parser("edit-issue", help="edit a workspace issue title or body")
+    add_common_auth(edit_issue)
+    add_workspace_arg(edit_issue)
+    edit_issue.add_argument("--issue", type=int, required=True)
+    edit_issue.add_argument("--title", default=None)
+    edit_issue.add_argument("--body", default=None)
+    edit_issue.add_argument("--body-file", default=None)
+    edit_issue.set_defaults(func=cmd_edit_issue)
+
     comment_issue = sub.add_parser("comment-issue", help="add a comment to a workspace issue")
     add_common_auth(comment_issue)
     add_workspace_arg(comment_issue)
@@ -373,6 +406,13 @@ def build_parser() -> argparse.ArgumentParser:
     write_file.add_argument("--branch", required=True)
     write_file.add_argument("--content-file", required=True, help="file to write, or '-' for stdin")
     write_file.set_defaults(func=cmd_write_file)
+
+    delete_file = sub.add_parser("delete-file", help="delete a markdown file on a branch")
+    add_common_auth(delete_file)
+    add_workspace_arg(delete_file)
+    delete_file.add_argument("--path", required=True)
+    delete_file.add_argument("--branch", required=True)
+    delete_file.set_defaults(func=cmd_delete_file)
 
     open_pr = sub.add_parser("open-pr", help="open a pull request")
     add_common_auth(open_pr)

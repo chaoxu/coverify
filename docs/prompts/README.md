@@ -22,6 +22,15 @@ different channels. A context pack or prompt that flattens them into one
 "knowledge" block can reproduce false progress by letting unreviewed or stale
 material look accepted.
 
+There is also one maintenance prompt:
+
+- [Knowledge-Base Manager](knowledge-base-manager.md): improve the accepted
+  Cosheaf workspace by consolidating notes, deleting superseded documents,
+  creating a reader-facing index, removing duplication, and repairing scope
+  drift. This can produce large PRs or complete rewrites when the user asks for
+  a cleanup pass, but it is not a new mathematical proof role and
+  correctness-relevant changes still go through review.
+
 Reference prompts may still be collected later when they capture a useful
 style or checklist. Reference prompts should not imply new mandatory skills,
 queues, or workflow states unless repeated use proves they need code support.

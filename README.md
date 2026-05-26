@@ -46,8 +46,12 @@ The design target:
 - [Exploration Planner Prompt](docs/prompts/exploration-planner.md): template
   for turning current knowledge and failed attempts into issue-ready next
   approaches.
-- [Prompt Templates](docs/prompts/README.md): the three-prompt taxonomy and
-  how reference prompts differ from required workflow primitives.
+- [Knowledge-Base Manager Prompt](docs/prompts/knowledge-base-manager.md):
+  maintenance prompt for consolidating accepted docs, deleting superseded
+  notes, creating an index, and making large cleanup PRs reviewable.
+- [Prompt Templates](docs/prompts/README.md): the core prompt taxonomy and how
+  the maintenance prompt and reference prompts differ from required workflow
+  primitives.
 - [Reference Prompt Collection](docs/prompts/reference/README.md): local index
   of prompt patterns from QED, Rethlas, and future external systems.
 - [Coflat Primer](docs/coflat-primer.md): markdown/document-format context.
@@ -65,8 +69,8 @@ Implemented commands:
 - `create-workspace`: create a new Cosheaf workspace/project; defaults to
   `--default-md-format coflat`.
 - Primitive Cosheaf operations for Codex-as-operator runs: `set-member`,
-  `tree`, `read-file`, `create-branch`, `write-file`, `open-pr`, `review-pr`,
-  and `merge-pr`.
+  `tree`, `read-file`, `create-branch`, `write-file`, `delete-file`,
+  `edit-issue`, `open-pr`, `review-pr`, and `merge-pr`.
 - `prove-infinite-primes`: build a context pack, call a backend oracle, write
   `infinite-primes.md` on a branch, open a PR, optionally review and merge it,
   then verify the proof through Cosheaf.
