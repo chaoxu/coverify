@@ -195,6 +195,60 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["kind"], "directed_ttsp_bounded_search")
         self.assertEqual(payload["graph_count"], 1)
         self.assertEqual(payload["parameters"]["max_edges"], 2)
+        self.assertEqual(payload["parameters"]["terminal_scope"], "all")
+        self.assertTrue(
+            any(pair["is_global_pair"] for graph in payload["graphs"] for pair in graph["terminal_pairs"]),
+        )
+
+    def test_ttsp_queue_cli_emits_reduced_search_queue(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "ttsp-queue",
+                "--min-edges",
+                "4",
+                "--max-edges",
+                "8",
+                "--queue-min-edges",
+                "8",
+                "--queue-limit",
+                "1",
+            ],
+        )
+        stdout = io.StringIO()
+        with patch("sys.stdout", stdout):
+            self.assertEqual(args.func(args), 0)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["kind"], "directed_ttsp_bounded_queue")
+        self.assertEqual(payload["queued_graph_count_returned"], 1)
+        self.assertEqual(len(payload["queued_graphs"][0]["best_terminal_quads"][0]["terminal_pair_ids"]), 4)
+
+    def test_ttsp_queue_cli_uses_player_count_as_queue_width(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "ttsp-queue",
+                "--players",
+                "3",
+                "--min-edges",
+                "4",
+                "--max-edges",
+                "8",
+                "--queue-min-edges",
+                "8",
+                "--queue-limit",
+                "1",
+            ],
+        )
+        stdout = io.StringIO()
+        with patch("sys.stdout", stdout):
+            self.assertEqual(args.func(args), 0)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["source_parameters"]["terminal_scope"], "internal")
+        self.assertEqual(payload["queue_parameters"]["players"], 3)
+        self.assertEqual(len(payload["queued_graphs"][0]["best_terminal_quads"][0]["terminal_pair_ids"]), 3)
 
 
 if __name__ == "__main__":

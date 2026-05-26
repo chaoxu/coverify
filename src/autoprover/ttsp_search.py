@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Any, Iterable, Literal
 
@@ -343,6 +344,141 @@ def build_search_payload(config: SearchConfig) -> dict[str, Any]:
     }
 
 
+@dataclass(frozen=True)
+class QueueConfig:
+    min_edges: int = 1
+    players: int = 4
+    quad_limit: int = 5
+    queue_limit: int | None = None
+
+
+def _path_count(pair: dict[str, Any]) -> int:
+    return int(pair["path_count"])
+
+
+def _ordered_path_pair_count(pair: dict[str, Any]) -> int:
+    count = _path_count(pair)
+    return count * (count - 1)
+
+
+def _product(values: Iterable[int]) -> int:
+    out = 1
+    for value in values:
+        out *= value
+    return out
+
+
+def terminal_quads(graph: dict[str, Any], *, players: int, limit: int) -> list[dict[str, Any]]:
+    if players < 1:
+        raise ValueError("players must be positive")
+    if limit < 1:
+        raise ValueError("quad limit must be positive")
+    multi_pairs = [
+        pair
+        for pair in graph["terminal_pairs"]
+        if _path_count(pair) >= 2 and not bool(pair.get("is_global_pair"))
+    ]
+    quads: list[dict[str, Any]] = []
+    for combo in itertools.combinations(multi_pairs, players):
+        path_counts = [_path_count(pair) for pair in combo]
+        option_counts = [_ordered_path_pair_count(pair) for pair in combo]
+        quads.append(
+            {
+                "terminal_pair_ids": [pair["id"] for pair in combo],
+                "endpoints": [[pair["source"], pair["sink"]] for pair in combo],
+                "path_counts": path_counts,
+                "social_profile_count": _product(path_counts),
+                "candidate_option_count": _product(option_counts),
+            },
+        )
+    quads.sort(
+        key=lambda item: (
+            item["candidate_option_count"],
+            item["social_profile_count"],
+            item["terminal_pair_ids"],
+        ),
+    )
+    return quads[:limit]
+
+
+def graph_queue_record(graph: dict[str, Any], *, players: int, quad_limit: int) -> dict[str, Any]:
+    multi_pairs = [
+        pair
+        for pair in graph["terminal_pairs"]
+        if _path_count(pair) >= 2 and not bool(pair.get("is_global_pair"))
+    ]
+    path_histogram = Counter(_path_count(pair) for pair in graph["terminal_pairs"])
+    quads = terminal_quads(graph, players=players, limit=quad_limit)
+    return {
+        "id": graph["id"],
+        "edge_count": graph["edge_count"],
+        "expression": graph["expression"],
+        "vertex_count": len(graph["vertices"]),
+        "terminal_pair_count": graph["terminal_pair_count"],
+        "path_count": graph["path_count"],
+        "multi_path_terminal_pair_count": len(multi_pairs),
+        "ordered_path_pair_options": sum(_ordered_path_pair_count(pair) for pair in multi_pairs),
+        "terminal_pair_path_count_histogram": dict(sorted(path_histogram.items())),
+        "best_terminal_quads": quads,
+    }
+
+
+def build_queue_payload(search_payload: dict[str, Any], config: QueueConfig) -> dict[str, Any]:
+    if config.min_edges < 1:
+        raise ValueError("queue min_edges must be positive")
+    if config.players < 1:
+        raise ValueError("players must be positive")
+    if config.quad_limit < 1:
+        raise ValueError("quad_limit must be positive")
+    if config.queue_limit is not None and config.queue_limit < 1:
+        raise ValueError("queue_limit must be positive when provided")
+
+    records = [
+        graph_queue_record(graph, players=config.players, quad_limit=config.quad_limit)
+        for graph in search_payload["graphs"]
+        if int(graph["edge_count"]) >= config.min_edges
+    ]
+
+    counts_by_edge_count: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for record in records:
+        edge_count = int(record["edge_count"])
+        counts_by_edge_count[edge_count]["graphs"] += 1
+        if record["multi_path_terminal_pair_count"] >= config.players:
+            counts_by_edge_count[edge_count]["with_enough_multi_path_pairs"] += 1
+        if record["best_terminal_quads"]:
+            counts_by_edge_count[edge_count]["queued"] += 1
+
+    queued = [record for record in records if record["best_terminal_quads"]]
+    queued.sort(
+        key=lambda record: (
+            record["edge_count"],
+            record["best_terminal_quads"][0]["candidate_option_count"],
+            record["best_terminal_quads"][0]["social_profile_count"],
+            record["id"],
+        ),
+    )
+    if config.queue_limit is not None:
+        queued = queued[: config.queue_limit]
+
+    return {
+        "schema_version": 1,
+        "kind": "directed_ttsp_bounded_queue",
+        "description": "Reduced queue of directed TTSP graphs with distinct multi-path internal terminal pairs.",
+        "source_parameters": search_payload["parameters"],
+        "queue_parameters": {
+            "min_edges": config.min_edges,
+            "players": config.players,
+            "quad_limit": config.quad_limit,
+            "queue_limit": config.queue_limit,
+        },
+        "counts_by_edge_count": {str(key): dict(value) for key, value in sorted(counts_by_edge_count.items())},
+        "graph_count_considered": len(records),
+        "queued_graph_count_total": sum(value.get("queued", 0) for value in counts_by_edge_count.values()),
+        "queued_graph_count_returned": len(queued),
+        "queued_graphs": queued,
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m autoprover.ttsp_search",
@@ -354,6 +490,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--terminal-scope", choices=("internal", "all"), default="internal")
     parser.add_argument("--max-paths-per-pair", type=int, default=0)
     parser.add_argument("--limit-graphs", type=int, default=0)
+    parser.add_argument("--queue", action="store_true", help="emit a reduced bounded-search queue")
+    parser.add_argument("--queue-min-edges", type=int, default=1)
+    parser.add_argument("--quad-limit", type=int, default=5)
+    parser.add_argument("--queue-limit", type=int, default=0)
     parser.add_argument("--pretty", action="store_true")
     return parser
 
@@ -369,6 +509,16 @@ def main(argv: list[str] | None = None) -> int:
         limit_graphs=args.limit_graphs or None,
     )
     payload = build_search_payload(config)
+    if args.queue:
+        payload = build_queue_payload(
+            payload,
+            QueueConfig(
+                min_edges=args.queue_min_edges,
+                players=args.players,
+                quad_limit=args.quad_limit,
+                queue_limit=args.queue_limit or None,
+            ),
+        )
     json.dump(payload, sys.stdout, indent=2 if args.pretty else None, sort_keys=True)
     print()
     return 0

@@ -78,6 +78,8 @@ Implemented commands:
   the standard prompt/answer/metadata audit bundle.
 - `ttsp-search`: emit bounded directed-TTSP graphs, terminal pairs, simple
   paths, and edge vectors as JSON for downstream LP/certificate searches.
+- `ttsp-queue`: reduce a bounded directed-TTSP payload to candidate
+  internal-terminal search tuples for downstream LP/certificate work.
 - `prove-infinite-primes`: build a context pack, call a backend oracle, write
   `infinite-primes.md` through the local KB-writer step, open a PR, optionally
   review and merge it, then verify the proof through Cosheaf.
@@ -110,6 +112,17 @@ PYTHONPATH=src python3 -m autoprover ttsp-search \
   --min-edges 2 \
   --max-edges 4 \
   --terminal-scope internal \
+  --pretty
+```
+
+Directed TTSP issue-queue payload:
+
+```bash
+PYTHONPATH=src python3 -m autoprover ttsp-queue \
+  --min-edges 4 \
+  --max-edges 8 \
+  --queue-min-edges 8 \
+  --queue-limit 25 \
   --pretty
 ```
 

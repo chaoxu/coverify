@@ -14,7 +14,7 @@ from .backend import (
     run_script_backend,
 )
 from .client import CosheafClient, CosheafConfig
-from .ttsp_search import SearchConfig, build_search_payload
+from .ttsp_search import QueueConfig, SearchConfig, build_queue_payload, build_search_payload
 from .workflows import (
     InfinitePrimesRunOptions,
     default_branch_name,
@@ -336,6 +336,30 @@ def cmd_ttsp_search(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ttsp_queue(args: argparse.Namespace) -> int:
+    search_payload = build_search_payload(
+        SearchConfig(
+            max_edges=args.max_edges,
+            min_edges=args.min_edges,
+            players=args.players,
+            terminal_scope="internal",
+            max_paths_per_pair=args.max_paths_per_pair or None,
+            limit_graphs=args.limit_graphs or None,
+        ),
+    )
+    queue_payload = build_queue_payload(
+        search_payload,
+        QueueConfig(
+            min_edges=args.queue_min_edges,
+            players=args.players,
+            quad_limit=args.quad_limit,
+            queue_limit=args.queue_limit or None,
+        ),
+    )
+    print(json.dumps(queue_payload, indent=2 if args.pretty else None, sort_keys=True))
+    return 0
+
+
 def add_common_auth(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--api-url", default=env("COSHEAF_API_URL", "http://localhost:3030/api/v1"))
     parser.add_argument("--token", default=env("COSHEAF_TOKEN"))
@@ -512,6 +536,18 @@ def build_parser() -> argparse.ArgumentParser:
     ttsp.add_argument("--limit-graphs", type=int, default=0)
     ttsp.add_argument("--pretty", action="store_true")
     ttsp.set_defaults(func=cmd_ttsp_search)
+
+    ttsp_queue = sub.add_parser("ttsp-queue", help="emit bounded directed-TTSP LP search queue JSON")
+    ttsp_queue.add_argument("--max-edges", type=int, default=8)
+    ttsp_queue.add_argument("--min-edges", type=int, default=4)
+    ttsp_queue.add_argument("--players", type=int, default=4)
+    ttsp_queue.add_argument("--max-paths-per-pair", type=int, default=0)
+    ttsp_queue.add_argument("--limit-graphs", type=int, default=0)
+    ttsp_queue.add_argument("--queue-min-edges", type=int, default=8)
+    ttsp_queue.add_argument("--quad-limit", type=int, default=5)
+    ttsp_queue.add_argument("--queue-limit", type=int, default=25)
+    ttsp_queue.add_argument("--pretty", action="store_true")
+    ttsp_queue.set_defaults(func=cmd_ttsp_queue)
 
     prove = sub.add_parser("prove-infinite-primes", help="run the v1 infinite-primes proof workflow")
     add_common_auth(prove)
