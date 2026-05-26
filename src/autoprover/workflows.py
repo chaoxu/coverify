@@ -28,6 +28,12 @@ class InfinitePrimesRunOptions:
     force_merge: bool
 
 
+@dataclass(frozen=True)
+class KbWriteResult:
+    page: str
+    report: str
+
+
 def default_branch_name() -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     return f"agent/infinite-primes-{stamp}"
@@ -37,14 +43,13 @@ def build_infinite_primes_context(workspace: str, existing_files: list[str]) -> 
     files_text = "\n".join(f"- {path}" for path in existing_files) or "- none"
     return "\n".join(
         [
-            "# Oracle Task: Infinitely Many Primes",
+            "# Mathematical Oracle Task: Infinitely Many Primes",
             "",
             "You are given a Cosheaf workspace context pack.",
             "",
             "## Objective",
             "",
-            "Write a concise, correct Coflat-compatible Markdown page proving",
-            "that there are infinitely many prime numbers.",
+            "Prove that there are infinitely many prime numbers.",
             "",
             "## Workspace",
             "",
@@ -54,25 +59,11 @@ def build_infinite_primes_context(workspace: str, existing_files: list[str]) -> 
             "",
             "## Required Output",
             "",
-            "- Output only Markdown page body text.",
-            "- Start with `# Infinitely Many Primes`.",
-            "- Include one theorem block with stable id `#thm:infinitely-many-primes`.",
-            "- Include one proof block.",
+            "- Output a concise mathematical proof, not a repository document.",
+            "- Do not optimize for Coflat or Markdown formatting; a KB writer",
+            "  will turn useful proof text into a math document later.",
             "- Use the standard Euclid argument: assume finitely many primes,",
             "  form `N = p_1 p_2 ... p_n + 1`, and derive a new prime divisor.",
-            "- Do not include YAML frontmatter, code fences, or workflow commentary.",
-            "",
-            "## Coflat Shape",
-            "",
-            "Use Pandoc fenced divs for theorem/proof blocks, for example:",
-            "",
-            "::: {.theorem #thm:infinitely-many-primes title=\"Infinitely many primes\"}",
-            "Statement.",
-            ":::",
-            "",
-            "::: {.proof}",
-            "Proof.",
-            ":::",
             "",
         ],
     )
@@ -90,11 +81,108 @@ def strip_markdown_fence(text: str) -> str:
     return "\n".join(lines).strip()
 
 
-def normalize_proof_page(answer: str) -> str:
-    page = strip_markdown_fence(answer)
-    if not page.startswith("# "):
-        page = "# Infinitely Many Primes\n\n" + page
-    return page.rstrip() + "\n"
+def validate_infinite_primes_oracle_answer(answer: str) -> str:
+    proof = strip_markdown_fence(answer).strip()
+    lowered = proof.lower()
+    if not proof:
+        raise ValueError("oracle proof text is empty")
+    if "```" in proof or ":::" in proof or ".theorem" in lowered or ".proof" in lowered:
+        raise ValueError("oracle output looks like a formatted document, not raw proof text")
+
+    product_plus_one_pattern = re.compile(
+        r"p_1\s*(?:p_2|\\cdots|\\ldots|\.\.\.|\*)[\s\S]*?p_n\s*\+\s*1",
+        re.IGNORECASE,
+    )
+    required_checks = [
+        (re.search(r"\b(finitely|finite)\b", lowered) is not None, "finite-prime contradiction setup"),
+        ("p_1" in lowered, "listed primes"),
+        (re.search(r"\+\s*1", proof) is not None, "Euclid plus-one construction"),
+        ("divis" in lowered, "new prime divisor argument"),
+        ("contradict" in lowered, "explicit contradiction"),
+    ]
+    missing = [label for ok, label in required_checks if not ok]
+    if missing or not product_plus_one_pattern.search(proof):
+        if not product_plus_one_pattern.search(proof):
+            missing.append("product-plus-one construction")
+        raise ValueError(f"oracle proof text is too weak for the KB writer; missing {missing}")
+    return proof
+
+
+def kb_write_infinite_primes_from_oracle(answer: str) -> KbWriteResult:
+    proof = validate_infinite_primes_oracle_answer(answer)
+    report = "\n".join(
+        [
+            "KB writer report:",
+            "",
+            "CLAIM_MAP:",
+            "- The source proof claims infinitely many primes -> `@thm:infinitely-many-primes`.",
+            "",
+            "TRUST_LABELS:",
+            "- Proposed theorem and proof: correctness-relevant PR content pending review.",
+            "- Raw oracle answer: source material only, not accepted knowledge.",
+            "",
+            "INTERNAL_LINKS:",
+            "- None; no accepted in-workspace dependency is needed for Euclid's proof.",
+            "",
+            "WORKFLOW_LINKS:",
+            "- None.",
+            "",
+            "DROPPED_OR_UNCERTAIN_MATERIAL:",
+            "- None.",
+            "",
+            "REVIEWER_CHECKLIST:",
+            "- Verify the finite-prime contradiction setup.",
+            "- Verify the construction $N = p_1 p_2 \\cdots p_n + 1$.",
+            "- Verify that no listed prime divides $N$.",
+            "- Verify that $N > 1$ has a prime divisor not in the finite list.",
+        ],
+    )
+    page = "\n".join(
+        [
+            "# Infinitely Many Primes",
+            "",
+            "::: {.theorem #thm:infinitely-many-primes title=\"Infinitely many primes\"}",
+            "There are infinitely many prime numbers.",
+            ":::",
+            "",
+            "::: {.proof}",
+            proof,
+            ":::",
+            "",
+        ],
+    )
+    return KbWriteResult(page=page, report=report)
+
+
+def write_infinite_primes_page_from_oracle(answer: str) -> str:
+    return kb_write_infinite_primes_from_oracle(answer).page
+
+
+def build_infinite_primes_pr_body(
+    *,
+    backend_result: BackendResult,
+    backend_audit: str,
+    path: str,
+    writer_report: str,
+) -> str:
+    return "\n".join(
+        [
+            "Autoprover v1 wrote a Coflat proof page for Euclid's theorem.",
+            "The backend produced mathematical proof text; the local KB writer",
+            "step shaped it into a Coflat theorem/proof document.",
+            "",
+            f"- Backend: `{backend_result.provider}`",
+            f"- Oracle call id: `{backend_result.oracle_call_id}`",
+            f"- Backend artifacts: `{backend_result.artifact_dir}`",
+            f"- Proposed page: `{path}`",
+            "",
+            writer_report,
+            "",
+            "```text",
+            backend_audit,
+            "```",
+        ],
+    )
 
 
 def validate_infinite_primes_page(page: str) -> None:
@@ -115,7 +203,7 @@ def validate_infinite_primes_page(page: str) -> None:
         raise ValueError("backend output does not contain the expected Euclid contradiction structure")
 
 
-def build_infinite_primes_review_prompt(page: str, proposal_audit: str) -> str:
+def build_infinite_primes_review_prompt(page: str, proposal_audit: str, writer_report: str) -> str:
     return "\n".join(
         [
             "# Oracle Task: Review Infinitely Many Primes PR",
@@ -139,6 +227,10 @@ def build_infinite_primes_review_prompt(page: str, proposal_audit: str) -> str:
             "## Proposal Audit",
             "",
             proposal_audit,
+            "",
+            "## KB Writer Report",
+            "",
+            writer_report,
             "",
             "## Proposed Page",
             "",
@@ -198,7 +290,8 @@ def run_infinite_primes_workflow(
     context = build_infinite_primes_context(options.workspace, existing_files)
     backend_result = backend(context)
     backend_audit = audit_summary(backend_result)
-    page = normalize_proof_page(backend_result.answer)
+    writer_result = kb_write_infinite_primes_from_oracle(backend_result.answer)
+    page = writer_result.page
     validate_infinite_primes_page(page)
 
     client.create_branch(options.workspace, options.branch)
@@ -212,19 +305,11 @@ def run_infinite_primes_workflow(
         options.workspace,
         head=options.branch,
         title=options.title,
-        body="\n".join(
-            [
-                "Autoprover v1 wrote a Coflat proof page for Euclid's theorem.",
-                "",
-                f"- Backend: `{backend_result.provider}`",
-                f"- Oracle call id: `{backend_result.oracle_call_id}`",
-                f"- Backend artifacts: `{backend_result.artifact_dir}`",
-                f"- Proposed page: `{options.path}`",
-                "",
-                "```text",
-                backend_audit,
-                "```",
-            ],
+        body=build_infinite_primes_pr_body(
+            backend_result=backend_result,
+            backend_audit=backend_audit,
+            path=options.path,
+            writer_report=writer_result.report,
         ),
     )
     pr_number = _pr_number(pr)
@@ -236,7 +321,7 @@ def run_infinite_primes_workflow(
     if reviewer_client is not None:
         if review_backend is None:
             raise RuntimeError("reviewer client requires an oracle review backend")
-        review_result = review_backend(build_infinite_primes_review_prompt(page, backend_audit))
+        review_result = review_backend(build_infinite_primes_review_prompt(page, backend_audit, writer_result.report))
         review_event = review_event_from_oracle(review_result.answer)
         review_oracle_call_id = review_result.oracle_call_id
         review_audit = audit_summary(review_result)

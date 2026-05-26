@@ -9,9 +9,11 @@ from autoprover.backend import run_fixture_backend, run_script_backend
 from autoprover.workflows import (
     InfinitePrimesRunOptions,
     build_infinite_primes_context,
-    normalize_proof_page,
+    kb_write_infinite_primes_from_oracle,
     run_infinite_primes_workflow,
+    validate_infinite_primes_oracle_answer,
     validate_infinite_primes_page,
+    write_infinite_primes_page_from_oracle,
 )
 
 
@@ -71,20 +73,46 @@ class WorkflowTests(unittest.TestCase):
     def test_fixture_backend_output_is_valid(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             result = run_fixture_backend("context", artifact_root=Path(tmpdir))
-            validate_infinite_primes_page(result.answer)
+            self.assertIn("p_1", result.answer)
+            self.assertNotIn(".theorem", result.answer)
+            validate_infinite_primes_page(write_infinite_primes_page_from_oracle(result.answer))
             self.assertTrue((result.artifact_dir / "prompt.md").exists())
             self.assertFalse((result.artifact_dir / "context.md").exists())
             self.assertTrue((result.artifact_dir / "answer.md").exists())
 
-    def test_normalize_strips_markdown_fence(self) -> None:
-        page = normalize_proof_page("```markdown\n# Infinitely Many Primes\n\nbody\n```")
-        self.assertEqual(page, "# Infinitely Many Primes\n\nbody\n")
+    def test_kb_writer_rejects_weak_or_formatted_oracle_output(self) -> None:
+        with self.assertRaisesRegex(ValueError, "too weak"):
+            validate_infinite_primes_oracle_answer("p_1 p_2 contradict")
+        with self.assertRaisesRegex(ValueError, "product-plus-one"):
+            validate_infinite_primes_oracle_answer(
+                "\n".join(
+                    [
+                        "Assume there are finitely many primes listed as $p_1, p_2, \\ldots, p_n$.",
+                        "Let $N = p_1 + 1$.",
+                        "Then a divisor gives a contradiction.",
+                    ],
+                ),
+            )
+        with self.assertRaisesRegex(ValueError, "formatted document"):
+            kb_write_infinite_primes_from_oracle(
+                "\n".join(
+                    [
+                        "# Infinitely Many Primes",
+                        "",
+                        "::: {.theorem}",
+                        "There are infinitely many prime numbers.",
+                        ":::",
+                    ],
+                ),
+            )
 
     def test_context_mentions_existing_files(self) -> None:
         context = build_infinite_primes_context("demo", ["knowledge.md"])
         self.assertIn("`demo`", context)
         self.assertIn("knowledge.md", context)
-        self.assertIn("#thm:infinitely-many-primes", context)
+        self.assertIn("mathematical proof", context)
+        self.assertIn("not a repository document", context)
+        self.assertNotIn("#thm:infinitely-many-primes", context)
 
     def approve_review_backend(self, tmpdir: str):
         return lambda prompt: run_script_backend(
@@ -140,6 +168,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(result["merged"])
         self.assertIn(("create_workspace", ("prime-demo", "coflat")), author.calls)
         self.assertTrue(any(call[0] == "write_branch_file" for call in author.calls))
+        [open_pr_call] = [call for call in author.calls if call[0] == "open_pull_request"]
+        self.assertIn("KB writer report", open_pr_call[1][4])
+        self.assertIn("CLAIM_MAP", open_pr_call[1][4])
+        self.assertIn("REVIEWER_CHECKLIST", open_pr_call[1][4])
         self.assertTrue(any(call[0] == "review_pull_request" for call in reviewer.calls))
         self.assertTrue(any(call[0] == "merge_pull_request" for call in author.calls))
 

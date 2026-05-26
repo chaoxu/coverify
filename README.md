@@ -75,8 +75,8 @@ Implemented commands:
   `tree`, `read-file`, `create-branch`, `write-file`, `delete-file`,
   `edit-issue`, `open-pr`, `review-pr`, and `merge-pr`.
 - `prove-infinite-primes`: build a context pack, call a backend oracle, write
-  `infinite-primes.md` on a branch, open a PR, optionally review and merge it,
-  then verify the proof through Cosheaf.
+  `infinite-primes.md` through the local KB-writer step, open a PR, optionally
+  review and merge it, then verify the proof through Cosheaf.
 
 Common environment variables:
 

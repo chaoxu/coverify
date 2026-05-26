@@ -683,6 +683,11 @@ writer is not a fourth mathematical reasoning role: it does not add claims and
 does not approve correctness. Open issues and PRs may be linked as workflow
 pointers, but not cited as mathematical evidence.
 
+Every durable math-document write should pass through this writer step. Direct
+oracle-output-to-file is allowed only for raw artifacts, comments, or audit
+records; accepted pages should be math documents, not transcripts or code-style
+blocks.
+
 The concrete v1 templates are:
 
 - [Exploration Planner Prompt](prompts/exploration-planner.md)

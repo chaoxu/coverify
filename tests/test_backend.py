@@ -146,7 +146,8 @@ class BackendTests(unittest.TestCase):
             self.assertEqual(metadata["returncode"], 0)
             self.assertTrue(metadata["prompt_sha256"])
             self.assertTrue(metadata["answer_sha256"])
-            self.assertIn("Infinitely many prime", result.answer)
+            self.assertIn("infinitely many prime", result.answer)
+            self.assertNotIn(".theorem", result.answer)
 
 
 if __name__ == "__main__":

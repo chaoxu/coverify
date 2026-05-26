@@ -4,6 +4,10 @@ Use this prompt after a runner has useful source material, such as oracle
 output, verified calculations, accepted source notes, or issue conclusions, and
 wants to turn that material into a Cosheaf PR.
 
+Use this writer for every durable mathematical document write. Math pages
+should be structured mathematical documents, not raw transcripts or code-style
+blocks.
+
 This is not a mathematical oracle and not a correctness gate. It should format,
 distill, organize, and label knowledge. It must not invent new mathematical
 claims or silently repair gaps. Correctness-relevant output still goes through

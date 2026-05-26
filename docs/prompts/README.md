@@ -28,7 +28,8 @@ There is also one artifact-writing prompt:
   material, such as oracle output or checked calculations, into concise Coflat
   Markdown for a PR. This is not a mathematical oracle and not a review gate;
   it owns formatting, theorem/proof environments, stable block ids, trust
-  labels, and reviewer checklists.
+  labels, and reviewer checklists. Use it for every durable math-document write
+  before opening a knowledge PR.
 
 There is also one maintenance prompt:
 
