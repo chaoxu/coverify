@@ -43,6 +43,11 @@ Requirements:
 - Use only the problem statement and allowed context.
 - Do not assume extra hypotheses.
 - Do not change the problem.
+- Write mathematical formulas in math mode, not as code, unless the text is a
+  literal artifact such as raw data, pseudocode, or a certificate format.
+- When the output is suitable for a durable Cosheaf note, use Coflat semantic
+  blocks for definitions, lemmas, theorems, examples, remarks, obstructions,
+  and proofs.
 - If proving the statement, give a complete argument.
 - If disproving the statement, give a complete counterexample or contradiction
   to the claimed statement.
@@ -74,6 +79,26 @@ UNRESOLVED_GAPS:
 
 CHECKS_FOR_REVIEWER:
 ```
+
+For output that is likely to be proposed as an accepted Cosheaf page, prefer
+Coflat Markdown inside the relevant sections:
+
+```markdown
+::: {.definition #def:...}
+...
+:::
+
+::: {.theorem #thm:...}
+...
+:::
+
+::: {.proof}
+...
+:::
+```
+
+Use `.lemma`, `.proposition`, `.corollary`, `.example`, `.remark`, or
+`.conjecture` when those classes state the mathematical status more accurately.
 
 ## Artifact Effects
 

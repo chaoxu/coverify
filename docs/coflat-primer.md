@@ -29,6 +29,9 @@ to write or review Coflat Markdown.
 ## Math
 
 - Inline math: `$x^2$` or `\(x^2\)`.
+- Use math mode for mathematical formulas in accepted documents. Do not put
+  ordinary inequalities, definitions, or displayed calculations in backtick code
+  merely to preserve spacing.
 - Display math:
 
   ```markdown
@@ -45,11 +48,21 @@ to write or review Coflat Markdown.
   $$ {#eq:einstein}
   ```
 
+- Reserve code fences for literal artifacts: command output, raw data,
+  pseudocode, LP/certificate input, or path/profile tables whose exact text is
+  itself the object being reviewed.
+
 ## Theorem-Like Blocks
 
-Use Pandoc fenced divs, not code fences:
+Accepted mathematical documents should normally use Pandoc fenced divs for
+definitions, theorem-like statements, examples, remarks, obstructions, and
+proofs. Use these blocks, not code fences:
 
 ```markdown
+::: {.definition #def:atomic-affine-routing title="Atomic affine routing game"}
+Definition text with $math$.
+:::
+
 ::: {.theorem #thm:main title="Main theorem"}
 Statement with $math$.
 :::
@@ -65,6 +78,26 @@ Common classes: `.theorem`, `.lemma`, `.proposition`, `.corollary`,
 For durable mathematical knowledge, theorem-like and obstruction-like blocks
 should have stable ids. PR bodies and review notes should refer to those ids
 when discussing dependencies, proof obligations, or failed routes.
+
+If a note contains a result and its argument, prefer this shape:
+
+```markdown
+::: {.definition #def:...}
+...
+:::
+
+::: {.lemma #lem:...}
+...
+:::
+
+::: {.proof}
+...
+:::
+```
+
+Narrative summaries, status ledgers, and source notes can use ordinary
+headings, but any claim that future agents may cite as a mathematical object
+should be promoted into a semantic block with an id.
 
 Use the block class to communicate mathematical status where possible:
 
@@ -105,6 +138,7 @@ Proof.
 
 - Do not use triple-backtick code fences for proofs, theorems, definitions, or
   remarks.
+- Do not use triple-backtick code fences as a substitute for math display mode.
 - Do not use raw HTML comments.
 - Do not include frontmatter unless explicitly asked.
 - Treat branch/PR/review/issue context according to the context pack's trust

@@ -63,6 +63,11 @@ Your task:
 - Check promotion hygiene: raw oracle output, local scratch, issue history,
   process provenance, and state indexes must not be presented as mathematical
   evidence.
+- Check document hygiene: ordinary mathematical formulas should use math mode,
+  and citeable mathematical objects should use Coflat semantic blocks such as
+  `.definition`, `.theorem`, `.lemma`, `.example`, `.remark`, and `.proof`.
+  Treat this as an exposition issue unless the formatting hides scope,
+  dependencies, or correctness-relevant status.
 - Check that every theorem-like or bound-like claim states the model scope
   needed to make it true: weighted or unweighted, atomic or nonatomic,
   objective, latency class, graph class, terminals, and symmetry assumptions.
@@ -97,6 +102,10 @@ Instructions:
    - whether the submitted knowledge silently changes the original statement,
    - whether status labels such as "known", "candidate", "conjectural",
      "oracle-assisted", or "not yet verified" are accurate,
+   - whether definitions, theorem-like statements, examples, and obstructions
+     that future agents may cite are represented as semantic Coflat blocks with
+     stable ids, and whether proofs use `.proof` blocks unless there is a
+     specific reason to cite the proof block itself,
    - whether phrases such as "requires review before merge", "oracle-generated",
      "candidate lemma", "likely", or placeholders like "forgot" would leave
      unaccepted or stale material inside accepted context,
