@@ -106,6 +106,11 @@ When making or proposing edits:
   `.conjecture`, and `.proof`.
 - Give durable theorem-like, definition-like, obstruction-like, and example-like
   blocks stable ids so issues, PRs, and later documents can refer to them.
+- Add or repair internal links among accepted pages, section anchors, block ids,
+  and accepted source notes when those links clarify model scope, dependencies,
+  source provenance, or prior obstructions.
+- Link active issues or PRs only as follow-up or workflow pointers, never as
+  mathematical evidence.
 - Prefer fewer documents when several files are only fragments of one topic.
 - Create or update an `index.md`, `README.md`, or equivalent workspace index
   when that would make the repo easier to navigate.

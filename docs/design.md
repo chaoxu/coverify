@@ -678,8 +678,10 @@ One exception is artifact writing. The math oracle should not be burdened with
 Coflat formatting instructions. A knowledge-base writer can distill useful
 oracle output, calculations, and issue conclusions into Coflat Markdown with
 math mode, semantic definition/theorem/proof blocks, stable ids, trust labels,
-and a reviewer checklist. This writer is not a fourth mathematical reasoning
-role: it does not add claims and does not approve correctness.
+internal links to accepted pages or block ids, and a reviewer checklist. This
+writer is not a fourth mathematical reasoning role: it does not add claims and
+does not approve correctness. Open issues and PRs may be linked as workflow
+pointers, but not cited as mathematical evidence.
 
 The concrete v1 templates are:
 

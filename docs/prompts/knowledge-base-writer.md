@@ -18,6 +18,12 @@ TARGET:
 ACCEPTED_CONTEXT:
 <accepted definitions, notation, prior results, source notes, and trust labels>
 
+AVAILABLE_LINK_TARGETS:
+<accepted pages, section anchors, block ids, source notes, and ledger entries>
+
+WORKFLOW_LINK_TARGETS:
+<open issues/PRs that may be linked only as follow-up or workflow pointers>
+
 SOURCE_MATERIAL:
 <oracle output, runner notes, calculations, cited source excerpts, issue text>
 
@@ -53,6 +59,16 @@ Your job is artifact preparation, not new reasoning:
   obstructions, and source-backed facts that future issues or PRs may cite.
 - Use `.proof` blocks for actual proofs, usually without an id unless the proof
   itself needs to be referenced.
+- Connect the new or edited document to accepted knowledge. Use narrative
+  `@id`/`[@id]` block references for accepted definitions, lemmas, examples,
+  and obstructions, and Markdown links for accepted pages or source notes.
+- Separately link open issues or PRs only as follow-up or workflow pointers.
+- Prefer mathematical links that clarify model scope, dependencies, source
+  provenance, or prior obstructions. Prefer workflow links only when they make
+  active follow-up work easier to find. Do not add decorative links.
+- Do not cite open issues, open PRs, comments, raw oracle output, or local
+  artifacts as mathematical evidence. They may be linked only as workflow
+  pointers or follow-up context with the correct trust label.
 - Keep process provenance, local artifact paths, and raw oracle transcript
   details out of accepted mathematical prose unless the document is explicitly
   a workflow note.
@@ -70,6 +86,12 @@ CLAIM_MAP:
 
 TRUST_LABELS:
 <which parts are accepted, proposed, obstruction, frontier, retired, or source-backed>
+
+INTERNAL_LINKS:
+<accepted page links, block references, and source links added, with purpose>
+
+WORKFLOW_LINKS:
+<issue/PR links added as follow-up pointers, with trust label and purpose>
 
 DROPPED_OR_UNCERTAIN_MATERIAL:
 <source material not included, with reason>

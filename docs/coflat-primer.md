@@ -151,6 +151,8 @@ Proof.
 
 - Reference document or block ids with `[@id]` or narrative `@id`.
 - Markdown links to other pages are allowed.
+- Link accepted block ids for mathematical dependencies. Link open issues or
+  PRs only as workflow pointers, not as mathematical evidence.
 - Do not assume wiki-link syntax unless Cosheaf's current format contract says
   it is indexed.
 
