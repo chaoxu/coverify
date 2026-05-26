@@ -158,6 +158,20 @@ def write_infinite_primes_page_from_oracle(answer: str) -> str:
     return kb_write_infinite_primes_from_oracle(answer).page
 
 
+def run_ask_oracle(*, prompt: str, backend: BackendRunner) -> dict[str, Any]:
+    if not prompt.strip():
+        raise ValueError("oracle prompt is empty")
+    backend_result = backend(prompt)
+    return {
+        "ok": True,
+        "answer": backend_result.answer,
+        "backend_provider": backend_result.provider,
+        "oracle_call_id": backend_result.oracle_call_id,
+        "backend_artifact_dir": str(backend_result.artifact_dir),
+        "backend_audit": audit_summary(backend_result),
+    }
+
+
 def build_infinite_primes_pr_body(
     *,
     backend_result: BackendResult,

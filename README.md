@@ -74,6 +74,10 @@ Implemented commands:
 - Primitive Cosheaf operations for Codex-as-operator runs: `set-member`,
   `tree`, `read-file`, `create-branch`, `write-file`, `delete-file`,
   `edit-issue`, `open-pr`, `review-pr`, and `merge-pr`.
+- `ask-oracle`: send one prompt to the configured backend oracle and record
+  the standard prompt/answer/metadata audit bundle.
+- `ttsp-search`: emit bounded directed-TTSP graphs, terminal pairs, simple
+  paths, and edge vectors as JSON for downstream LP/certificate searches.
 - `prove-infinite-primes`: build a context pack, call a backend oracle, write
   `infinite-primes.md` through the local KB-writer step, open a PR, optionally
   review and merge it, then verify the proof through Cosheaf.
@@ -89,6 +93,24 @@ COSHEAF_REVIEW_TOKEN=...
 AUTOPROVER_BACKEND=codex
 AUTOPROVER_CODEX_MODEL=gpt-5.5
 AUTOPROVER_CODEX_REASONING_EFFORT=xhigh
+```
+
+Direct oracle call:
+
+```bash
+PYTHONPATH=src python3 -m autoprover ask-oracle \
+  --prompt "Give a concise proof attempt for the current lemma." \
+  --json
+```
+
+Directed TTSP search payload:
+
+```bash
+PYTHONPATH=src python3 -m autoprover ttsp-search \
+  --min-edges 2 \
+  --max-edges 4 \
+  --terminal-scope internal \
+  --pretty
 ```
 
 Local checks:

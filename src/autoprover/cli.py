@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -13,9 +14,11 @@ from .backend import (
     run_script_backend,
 )
 from .client import CosheafClient, CosheafConfig
+from .ttsp_search import SearchConfig, build_search_payload
 from .workflows import (
     InfinitePrimesRunOptions,
     default_branch_name,
+    run_ask_oracle,
     run_infinite_primes_workflow,
 )
 
@@ -293,6 +296,46 @@ def cmd_prove_infinite_primes(args: argparse.Namespace) -> int:
     return 0
 
 
+def read_oracle_prompt(args: argparse.Namespace) -> str:
+    sources = sum(bool(source) for source in (args.message, args.prompt, args.prompt_file))
+    if sources > 1:
+        raise SystemExit("provide only one oracle prompt source: message args, --prompt, or --prompt-file")
+    if args.prompt_file:
+        if args.prompt_file == "-":
+            return sys.stdin.read()
+        return Path(args.prompt_file).read_text(encoding="utf-8")
+    if args.prompt:
+        return args.prompt
+    if args.message:
+        return " ".join(args.message)
+    return sys.stdin.read()
+
+
+def cmd_ask_oracle(args: argparse.Namespace) -> int:
+    result = run_ask_oracle(prompt=read_oracle_prompt(args), backend=backend_runner(args))
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
+    answer = str(result["answer"])
+    print(answer, end="" if answer.endswith("\n") else "\n")
+    return 0
+
+
+def cmd_ttsp_search(args: argparse.Namespace) -> int:
+    payload = build_search_payload(
+        SearchConfig(
+            max_edges=args.max_edges,
+            min_edges=args.min_edges,
+            players=args.players,
+            terminal_scope=args.terminal_scope,
+            max_paths_per_pair=args.max_paths_per_pair or None,
+            limit_graphs=args.limit_graphs or None,
+        ),
+    )
+    print(json.dumps(payload, indent=2 if args.pretty else None, sort_keys=True))
+    return 0
+
+
 def add_common_auth(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--api-url", default=env("COSHEAF_API_URL", "http://localhost:3030/api/v1"))
     parser.add_argument("--token", default=env("COSHEAF_TOKEN"))
@@ -303,6 +346,17 @@ def add_common_auth(parser: argparse.ArgumentParser) -> None:
 
 def add_workspace_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workspace", default=env("COSHEAF_WORKSPACE"), required=not bool(env("COSHEAF_WORKSPACE")))
+
+
+def add_backend_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--backend", choices=("codex", "fixture", "script"), default=env("AUTOPROVER_BACKEND", "codex"))
+    parser.add_argument("--backend-command", default=env("AUTOPROVER_BACKEND_COMMAND"))
+    parser.add_argument("--backend-timeout", type=int, default=int(env("AUTOPROVER_BACKEND_TIMEOUT_SECONDS", "0") or "0"))
+    parser.add_argument("--run-dir", default=env("AUTOPROVER_RUN_DIR", ".autoprover/runs"))
+    parser.add_argument("--model", default=env("AUTOPROVER_CODEX_MODEL", "gpt-5.5"))
+    parser.add_argument("--reasoning-effort", default=env("AUTOPROVER_CODEX_REASONING_EFFORT", "xhigh"))
+    parser.add_argument("--codex-bin", default=env("AUTOPROVER_CODEX_BIN", "codex"))
+    parser.add_argument("--codex-sandbox", default=env("AUTOPROVER_CODEX_SANDBOX", "read-only"))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -441,6 +495,24 @@ def build_parser() -> argparse.ArgumentParser:
     merge_pr.add_argument("--force", action="store_true")
     merge_pr.set_defaults(func=cmd_merge_pr)
 
+    ask = sub.add_parser("ask-oracle", help="send one prompt to a backend oracle")
+    ask.add_argument("message", nargs="*", help="prompt text; stdin is used when omitted")
+    ask.add_argument("--prompt", default="", help="prompt text")
+    ask.add_argument("--prompt-file", default="", help="prompt file, or '-' for stdin")
+    ask.add_argument("--json", action="store_true", help="print answer plus audit metadata as JSON")
+    add_backend_args(ask)
+    ask.set_defaults(func=cmd_ask_oracle)
+
+    ttsp = sub.add_parser("ttsp-search", help="emit bounded directed-TTSP search JSON")
+    ttsp.add_argument("--max-edges", type=int, default=4)
+    ttsp.add_argument("--min-edges", type=int, default=1)
+    ttsp.add_argument("--players", type=int, default=4)
+    ttsp.add_argument("--terminal-scope", choices=("internal", "all"), default="internal")
+    ttsp.add_argument("--max-paths-per-pair", type=int, default=0)
+    ttsp.add_argument("--limit-graphs", type=int, default=0)
+    ttsp.add_argument("--pretty", action="store_true")
+    ttsp.set_defaults(func=cmd_ttsp_search)
+
     prove = sub.add_parser("prove-infinite-primes", help="run the v1 infinite-primes proof workflow")
     add_common_auth(prove)
     prove.add_argument("--workspace", default=env("COSHEAF_WORKSPACE"), required=not bool(env("COSHEAF_WORKSPACE")))
@@ -456,14 +528,7 @@ def build_parser() -> argparse.ArgumentParser:
     prove.add_argument("--review-token", default=env("COSHEAF_REVIEW_TOKEN"))
     prove.add_argument("--review-username", default=env("COSHEAF_REVIEW_USERNAME"))
     prove.add_argument("--review-password", default=env("COSHEAF_REVIEW_PASSWORD"))
-    prove.add_argument("--backend", choices=("codex", "fixture", "script"), default=env("AUTOPROVER_BACKEND", "codex"))
-    prove.add_argument("--backend-command", default=env("AUTOPROVER_BACKEND_COMMAND"))
-    prove.add_argument("--backend-timeout", type=int, default=int(env("AUTOPROVER_BACKEND_TIMEOUT_SECONDS", "0") or "0"))
-    prove.add_argument("--run-dir", default=env("AUTOPROVER_RUN_DIR", ".autoprover/runs"))
-    prove.add_argument("--model", default=env("AUTOPROVER_CODEX_MODEL", "gpt-5.5"))
-    prove.add_argument("--reasoning-effort", default=env("AUTOPROVER_CODEX_REASONING_EFFORT", "xhigh"))
-    prove.add_argument("--codex-bin", default=env("AUTOPROVER_CODEX_BIN", "codex"))
-    prove.add_argument("--codex-sandbox", default=env("AUTOPROVER_CODEX_SANDBOX", "read-only"))
+    add_backend_args(prove)
     prove.set_defaults(func=cmd_prove_infinite_primes)
 
     return parser
