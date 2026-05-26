@@ -22,6 +22,14 @@ different channels. A context pack or prompt that flattens them into one
 "knowledge" block can reproduce false progress by letting unreviewed or stale
 material look accepted.
 
+There is also one artifact-writing prompt:
+
+- [Knowledge-Base Writer](knowledge-base-writer.md): convert useful source
+  material, such as oracle output or checked calculations, into concise Coflat
+  Markdown for a PR. This is not a mathematical oracle and not a review gate;
+  it owns formatting, theorem/proof environments, stable block ids, trust
+  labels, and reviewer checklists.
+
 There is also one maintenance prompt:
 
 - [Knowledge-Base Manager](knowledge-base-manager.md): improve the accepted

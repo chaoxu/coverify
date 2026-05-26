@@ -28,11 +28,14 @@ knowledge, normally by branch, PR, review, and merge.
   strong-oracle template for clean standalone proof/disproof attempts.
 - [Exploration Planner Prompt](prompts/exploration-planner.md) turns current
   knowledge, failed attempts, and open work into issue-ready approaches.
+- [Knowledge-Base Writer Prompt](prompts/knowledge-base-writer.md) turns useful
+  oracle output or checked notes into Coflat PR content without adding new
+  mathematics.
 - [Knowledge-Base Manager Prompt](prompts/knowledge-base-manager.md) keeps
   accepted workspace documents coherent without adding a new proof role.
 - [Prompt Templates](prompts/README.md) explains the core prompt taxonomy and
-  the difference between canonical prompts, maintenance prompts, and reference
-  patterns.
+  the difference between canonical prompts, artifact prompts, maintenance
+  prompts, and reference patterns.
 - [Coflat Context Primer](coflat-primer.md) is the Markdown format guide used
   when context packs ask a backend to write or review Cosheaf pages.
 - [References And Future Notes](references.md) records paper-inspired design
@@ -671,24 +674,33 @@ context or by an oracle inside one of these prompts. They should not become
 separate skills or durable workflow states unless repeated use shows that code
 support is needed.
 
+One exception is artifact writing. The math oracle should not be burdened with
+Coflat formatting instructions. A knowledge-base writer can distill useful
+oracle output, calculations, and issue conclusions into Coflat Markdown with
+math mode, semantic definition/theorem/proof blocks, stable ids, trust labels,
+and a reviewer checklist. This writer is not a fourth mathematical reasoning
+role: it does not add claims and does not approve correctness.
+
 The concrete v1 templates are:
 
 - [Exploration Planner Prompt](prompts/exploration-planner.md)
 - [Proof Attempt Oracle Prompt](prompts/proof-attempt-oracle.md)
 - [Correctness Review Prompt](prompts/proof-review.md)
 
-The maintenance template is:
+The artifact and maintenance templates are:
 
+- [Knowledge-Base Writer Prompt](prompts/knowledge-base-writer.md)
 - [Knowledge-Base Manager Prompt](prompts/knowledge-base-manager.md)
 
-It exists because accepted workspaces need periodic consolidation. It may
-create large PRs and complete rewrites when the user explicitly asks for a
-cleanup pass, but it is not a fourth mathematical reasoning role. It should
-classify, combine, delete, retire, index, and clarify accepted documents; any
-correctness-relevant change still uses the review prompt before merge. Narrow
-mathematical fixes should stay narrow instead of becoming opportunistic repo
-rewrites. Large cleanup passes should prefer a smaller, indexed knowledge base
-over preserving old file boundaries.
+The writer exists because useful oracle output still needs to become a durable
+Cosheaf document. The manager exists because accepted workspaces need periodic
+consolidation. The manager may create large PRs and complete rewrites when the
+user explicitly asks for a cleanup pass, but it is not a fourth mathematical
+reasoning role. It should classify, combine, delete, retire, index, and clarify
+accepted documents; any correctness-relevant change still uses the review
+prompt before merge. Narrow mathematical fixes should stay narrow instead of
+becoming opportunistic repo rewrites. Large cleanup passes should prefer a
+smaller, indexed knowledge base over preserving old file boundaries.
 
 Each template should define required inputs, required outputs, refusal
 behavior, trust handling, and allowed artifact effects. Larger QED/Rethlas

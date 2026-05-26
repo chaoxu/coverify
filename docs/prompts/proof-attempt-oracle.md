@@ -43,15 +43,9 @@ Requirements:
 - Use only the problem statement and allowed context.
 - Do not assume extra hypotheses.
 - Do not change the problem.
-- If the output may become a durable Cosheaf note, write Coflat Markdown, a
-  Pandoc Markdown flavor. The only conventions to note are: use `$...$` and
-  `$$...$$` for formulas; use code fences only for literal data, code, command
-  output, or certificates; use Pandoc fenced divs for citeable math objects
-  such as `::: {.definition #def:...}`, `::: {.theorem #thm:...}`,
-  `::: {.lemma #lem:...}`, `::: {.example #ex:...}`,
-  `::: {.remark #obs:... title="Obstruction"}`, and `::: {.proof}`; give
-  stable ids to citeable definitions, results, examples, and obstructions; when
-  writing a whole page, start with one H1 and do not add YAML frontmatter.
+- Write clear mathematical prose. Do not optimize for repository formatting;
+  a separate knowledge-base writer will convert useful output into Coflat
+  Markdown before it becomes a PR.
 - If proving the statement, give a complete argument.
 - If disproving the statement, give a complete counterexample or contradiction
   to the claimed statement.
@@ -83,10 +77,6 @@ UNRESOLVED_GAPS:
 
 CHECKS_FOR_REVIEWER:
 ```
-
-For output that is likely to be proposed as an accepted Cosheaf page, use the
-short Coflat formatting capsule in [Coflat Context Primer](../coflat-primer.md)
-rather than a longer formatting tutorial.
 
 ## Artifact Effects
 

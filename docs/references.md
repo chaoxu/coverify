@@ -17,6 +17,9 @@ architecture.
   clean standalone proof/disproof oracle template.
 - [Exploration Planner Prompt](prompts/exploration-planner.md) records the
   prompt for turning current workspace state into issue-ready approaches.
+- [Knowledge-Base Writer Prompt](prompts/knowledge-base-writer.md) records the
+  artifact-writing prompt that turns useful source material into Coflat PR
+  content without doing new mathematical reasoning.
 - [Knowledge-Base Manager Prompt](prompts/knowledge-base-manager.md) records
   the maintenance prompt for consolidating, indexing, and reducing accepted
   workspace documents.

@@ -96,8 +96,8 @@ When making or proposing edits:
 
 - Keep canonical facts in the smallest number of clear documents.
 - Use the short Coflat formatting capsule from `docs/coflat-primer.md` when
-  preparing oracle inputs or rewriting durable math pages. Coflat is a Pandoc
-  Markdown flavor; do not give the oracle a long Markdown tutorial.
+  rewriting durable math pages. Coflat is a Pandoc Markdown flavor; do not give
+  mathematical oracle calls a Markdown-formatting tutorial.
 - Convert code-formatted formulas into inline or display math unless the fenced
   text is a literal artifact such as raw data, pseudocode, command output, or a
   certificate.

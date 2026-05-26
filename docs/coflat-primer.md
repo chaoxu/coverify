@@ -16,10 +16,11 @@ The full format lives in Cosheaf/Coflat `FORMAT.md`. A future context packer
 or workflow skill may include parts of this primer when it asks a model backend
 to write or review Coflat Markdown.
 
-## Oracle Formatting Capsule
+## Coflat Formatting Capsule
 
-Use this short guideline in oracle calls that may produce durable Cosheaf
-knowledge:
+Use this short guideline in knowledge-base writer calls, cleanup passes, or
+context packers that produce durable Cosheaf knowledge. It is not needed for
+pure mathematical oracle calls.
 
 ```text
 Write Coflat Markdown, a Pandoc Markdown flavor. The only conventions to note:

@@ -46,11 +46,14 @@ The design target:
 - [Exploration Planner Prompt](docs/prompts/exploration-planner.md): template
   for turning current knowledge and failed attempts into issue-ready next
   approaches.
+- [Knowledge-Base Writer Prompt](docs/prompts/knowledge-base-writer.md):
+  artifact prompt for converting useful oracle output or checked notes into
+  Coflat Markdown PR content without adding new mathematics.
 - [Knowledge-Base Manager Prompt](docs/prompts/knowledge-base-manager.md):
   maintenance prompt for consolidating accepted docs, deleting superseded
   notes, creating an index, and making large cleanup PRs reviewable.
 - [Prompt Templates](docs/prompts/README.md): the core prompt taxonomy and how
-  the maintenance prompt and reference prompts differ from required workflow
+  artifact, maintenance, and reference prompts differ from required workflow
   primitives.
 - [Reference Prompt Collection](docs/prompts/reference/README.md): local index
   of prompt patterns from QED, Rethlas, and future external systems.
