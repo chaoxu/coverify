@@ -172,7 +172,7 @@ Use Cosheaf as the experiment ledger:
 - One PR per proposed durable update.
 - One review per correctness decision.
 - One reviewed or merged page per result, obstruction, or calibration lesson,
-  with explicit trust class. Reserve accepted mathematical pages for reviewed
+  with explicit trust wording. Reserve accepted mathematical pages for reviewed
   mathematical claims.
 
 Local files may store temporary logs and backend outputs during a run. If a log
@@ -183,9 +183,11 @@ into a reviewed page.
 
 Do not start hard comparisons until these exist:
 
-- context-pack builder for issues and PRs
-- proof-attempt prompt
-- proof-review prompt
+- `autoprover-context-builder` linked and passing completeness checks
+- `autoprover-proof-attempt` linked and passing completeness checks
+- `autoprover-proof-review` linked and passing completeness checks
+- CLI support for PR review context, including PR files/diff plus accepted KB
+  dependencies gathered by the runner
 - reviewer calibration set
 - QED/script backend wrapper
 - smoke harness that verifies Cosheaf artifacts after each run

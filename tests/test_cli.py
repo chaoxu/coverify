@@ -26,8 +26,36 @@ class FakeClient:
         self.calls.append(("edit_issue", (workspace, issue), {"title": title, "body": body}))
         return {"ok": True, "body": body}
 
+    def read_issue_timeline(self, workspace: str, issue: int) -> dict[str, Any]:
+        self.calls.append(("read_issue_timeline", (workspace, issue), {}))
+        return {"events": [{"type": "close"}]}
+
+    def reopen_issue(self, workspace: str, issue: int) -> dict[str, Any]:
+        self.calls.append(("reopen_issue", (workspace, issue), {}))
+        return {"ok": True, "state": "open"}
+
+    def set_issue_state(self, workspace: str, issue: int, state: str) -> dict[str, Any]:
+        self.calls.append(("set_issue_state", (workspace, issue), {"state": state}))
+        return {"ok": True, "state": state}
+
     def delete_branch_file(self, workspace: str, path: str, branch: str) -> dict[str, Any]:
         self.calls.append(("delete_branch_file", (workspace, path, branch), {}))
+        return {"ok": True}
+
+    def list_pull_requests(self, workspace: str, *, state: str = "open") -> dict[str, Any]:
+        self.calls.append(("list_pull_requests", (workspace,), {"state": state}))
+        return {"pulls": [{"number": 7}]}
+
+    def read_pull_request(self, workspace: str, pr_number: int) -> dict[str, Any]:
+        self.calls.append(("read_pull_request", (workspace, pr_number), {}))
+        return {"pull": {"number": pr_number}}
+
+    def read_pull_request_context(self, workspace: str, pr_number: int) -> dict[str, Any]:
+        self.calls.append(("read_pull_request_context", (workspace, pr_number), {}))
+        return {"pull_request": {"number": pr_number}, "files": {"files": []}}
+
+    def close_pull_request(self, workspace: str, pr_number: int) -> dict[str, Any]:
+        self.calls.append(("close_pull_request", (workspace, pr_number), {}))
         return {"ok": True}
 
 
@@ -84,6 +112,99 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(result, {"ok": True})
         self.assertEqual(client.calls, [("delete_branch_file", ("w", "old.md", "agent/cleanup"), {})])
+
+    def test_read_issue_timeline_dispatches_to_client(self) -> None:
+        client = FakeClient()
+
+        result = self.run_cli(
+            [
+                "read-issue-timeline",
+                "--token",
+                "tok",
+                "--workspace",
+                "w",
+                "--issue",
+                "23",
+            ],
+            client,
+        )
+
+        self.assertEqual(result, {"events": [{"type": "close"}]})
+        self.assertEqual(client.calls, [("read_issue_timeline", ("w", 23), {})])
+
+    def test_reopen_issue_dispatches_to_client(self) -> None:
+        client = FakeClient()
+
+        result = self.run_cli(
+            [
+                "reopen-issue",
+                "--token",
+                "tok",
+                "--workspace",
+                "w",
+                "--issue",
+                "23",
+            ],
+            client,
+        )
+
+        self.assertEqual(result, {"ok": True, "state": "open"})
+        self.assertEqual(client.calls, [("reopen_issue", ("w", 23), {})])
+
+    def test_set_issue_state_dispatches_to_client(self) -> None:
+        client = FakeClient()
+
+        result = self.run_cli(
+            [
+                "set-issue-state",
+                "--token",
+                "tok",
+                "--workspace",
+                "w",
+                "--issue",
+                "23",
+                "--state",
+                "closed",
+            ],
+            client,
+        )
+
+        self.assertEqual(result, {"ok": True, "state": "closed"})
+        self.assertEqual(client.calls, [("set_issue_state", ("w", 23), {"state": "closed"})])
+
+    def test_pr_read_list_and_close_dispatch_to_client(self) -> None:
+        client = FakeClient()
+
+        list_result = self.run_cli(
+            ["list-prs", "--token", "tok", "--workspace", "w", "--state", "all"],
+            client,
+        )
+        read_result = self.run_cli(
+            ["read-pr", "--token", "tok", "--workspace", "w", "--pr", "7"],
+            client,
+        )
+        close_result = self.run_cli(
+            ["close-pr", "--token", "tok", "--workspace", "w", "--pr", "7"],
+            client,
+        )
+        context_result = self.run_cli(
+            ["read-pr-context", "--token", "tok", "--workspace", "w", "--pr", "7"],
+            client,
+        )
+
+        self.assertEqual(list_result, {"pulls": [{"number": 7}]})
+        self.assertEqual(read_result, {"pull": {"number": 7}})
+        self.assertEqual(close_result, {"ok": True})
+        self.assertEqual(context_result, {"pull_request": {"number": 7}, "files": {"files": []}})
+        self.assertEqual(
+            client.calls,
+            [
+                ("list_pull_requests", ("w",), {"state": "all"}),
+                ("read_pull_request", ("w", 7), {}),
+                ("close_pull_request", ("w", 7), {}),
+                ("read_pull_request_context", ("w", 7), {}),
+            ],
+        )
 
     def test_ask_oracle_prints_raw_answer(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -249,7 +370,6 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["source_parameters"]["terminal_scope"], "internal")
         self.assertEqual(payload["queue_parameters"]["players"], 3)
         self.assertEqual(len(payload["queued_graphs"][0]["best_terminal_quads"][0]["terminal_pair_ids"]), 3)
-
 
 if __name__ == "__main__":
     unittest.main()

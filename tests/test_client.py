@@ -124,6 +124,45 @@ class ClientTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             client.edit_issue("w", 3)
 
+    def test_read_issue_timeline_uses_cosheaf_timeline_endpoint(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def fake_urlopen(req: Any, timeout: int) -> FakeResponse:
+            captured["url"] = req.full_url
+            captured["method"] = req.get_method()
+            return FakeResponse({"events": [{"type": "close"}]})
+
+        client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
+        with patch("autoprover.client.urlopen", fake_urlopen):
+            response = client.read_issue_timeline("w", 23)
+
+        self.assertEqual(response["events"], [{"type": "close"}])
+        self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/w/w/issues/23/timeline")
+        self.assertEqual(captured["method"], "GET")
+
+    def test_set_issue_state_uses_cosheaf_state_endpoint(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def fake_urlopen(req: Any, timeout: int) -> FakeResponse:
+            captured["url"] = req.full_url
+            captured["method"] = req.get_method()
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            return FakeResponse({"ok": True, "state": "open"})
+
+        client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
+        with patch("autoprover.client.urlopen", fake_urlopen):
+            response = client.reopen_issue("w", 23)
+
+        self.assertEqual(response["state"], "open")
+        self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/w/w/issues/23/state")
+        self.assertEqual(captured["method"], "PATCH")
+        self.assertEqual(captured["body"], {"state": "open"})
+
+    def test_set_issue_state_rejects_unknown_state(self) -> None:
+        client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
+        with self.assertRaises(ValueError):
+            client.set_issue_state("w", 23, "triaged")
+
     def test_search_uses_cosheaf_search_endpoint(self) -> None:
         captured: dict[str, Any] = {}
 
@@ -160,6 +199,56 @@ class ClientTests(unittest.TestCase):
         )
         self.assertEqual(captured["method"], "DELETE")
         self.assertIsNone(captured["data"])
+
+    def test_pull_request_read_list_and_close_use_cosheaf_endpoints(self) -> None:
+        captured: list[tuple[str, str, Any]] = []
+
+        def fake_urlopen(req: Any, timeout: int) -> FakeResponse:
+            captured.append((
+                req.get_method(),
+                req.full_url,
+                None if req.data is None else json.loads(req.data.decode("utf-8")),
+            ))
+            return FakeResponse({"ok": True})
+
+        client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
+        with patch("autoprover.client.urlopen", fake_urlopen):
+            client.list_pull_requests("w", state="all")
+            client.read_pull_request("w", 7)
+            client.close_pull_request("w", 7)
+
+        self.assertEqual(
+            captured,
+            [
+                ("GET", "http://cosheaf.test/api/v1/w/w/pulls?state=all", None),
+                ("GET", "http://cosheaf.test/api/v1/w/w/pulls/7", None),
+                ("POST", "http://cosheaf.test/api/v1/w/w/pulls/7/close", {}),
+            ],
+        )
+
+    def test_read_pull_request_context_includes_files_and_dependency_note(self) -> None:
+        captured: list[tuple[str, str]] = []
+
+        def fake_urlopen(req: Any, timeout: int) -> FakeResponse:
+            captured.append((req.get_method(), req.full_url))
+            if req.full_url.endswith("/files"):
+                return FakeResponse({"files": [{"filename": "proof.md", "patch": "@@"}]})
+            return FakeResponse({"number": 7, "title": "Proof update"})
+
+        client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
+        with patch("autoprover.client.urlopen", fake_urlopen):
+            response = client.read_pull_request_context("w", 7)
+
+        self.assertEqual(
+            captured,
+            [
+                ("GET", "http://cosheaf.test/api/v1/w/w/pulls/7"),
+                ("GET", "http://cosheaf.test/api/v1/w/w/pulls/7/files"),
+            ],
+        )
+        self.assertEqual(response["pull_request"]["number"], 7)
+        self.assertEqual(response["files"]["files"][0]["filename"], "proof.md")
+        self.assertIn("accepted KB definitions", response["review_context_note"])
 
 
 if __name__ == "__main__":

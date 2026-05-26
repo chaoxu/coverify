@@ -152,6 +152,10 @@ def cmd_read_issue(args: argparse.Namespace) -> int:
     return print_json(authed_client_from_args(args).read_issue(args.workspace, args.issue))
 
 
+def cmd_read_issue_timeline(args: argparse.Namespace) -> int:
+    return print_json(authed_client_from_args(args).read_issue_timeline(args.workspace, args.issue))
+
+
 def cmd_create_issue(args: argparse.Namespace) -> int:
     body = args.body
     if args.body_file:
@@ -188,6 +192,14 @@ def cmd_comment_issue(args: argparse.Namespace) -> int:
 
 def cmd_close_issue(args: argparse.Namespace) -> int:
     return print_json(authed_client_from_args(args).close_issue(args.workspace, args.issue))
+
+
+def cmd_reopen_issue(args: argparse.Namespace) -> int:
+    return print_json(authed_client_from_args(args).reopen_issue(args.workspace, args.issue))
+
+
+def cmd_set_issue_state(args: argparse.Namespace) -> int:
+    return print_json(authed_client_from_args(args).set_issue_state(args.workspace, args.issue, args.state))
 
 
 def cmd_read_file(args: argparse.Namespace) -> int:
@@ -238,6 +250,18 @@ def cmd_open_pr(args: argparse.Namespace) -> int:
     )
 
 
+def cmd_list_prs(args: argparse.Namespace) -> int:
+    return print_json(authed_client_from_args(args).list_pull_requests(args.workspace, state=args.state))
+
+
+def cmd_read_pr(args: argparse.Namespace) -> int:
+    return print_json(authed_client_from_args(args).read_pull_request(args.workspace, args.pr))
+
+
+def cmd_read_pr_context(args: argparse.Namespace) -> int:
+    return print_json(authed_client_from_args(args).read_pull_request_context(args.workspace, args.pr))
+
+
 def cmd_review_pr(args: argparse.Namespace) -> int:
     body = args.body
     if args.body_file:
@@ -261,6 +285,10 @@ def cmd_merge_pr(args: argparse.Namespace) -> int:
             force=args.force,
         ),
     )
+
+
+def cmd_close_pr(args: argparse.Namespace) -> int:
+    return print_json(authed_client_from_args(args).close_pull_request(args.workspace, args.pr))
 
 
 def cmd_prove_infinite_primes(args: argparse.Namespace) -> int:
@@ -312,7 +340,11 @@ def read_oracle_prompt(args: argparse.Namespace) -> str:
 
 
 def cmd_ask_oracle(args: argparse.Namespace) -> int:
-    result = run_ask_oracle(prompt=read_oracle_prompt(args), backend=backend_runner(args))
+    result = run_ask_oracle(
+        prompt=read_oracle_prompt(args),
+        backend=backend_runner(args),
+        retries=args.backend_retries,
+    )
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
@@ -376,6 +408,7 @@ def add_backend_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--backend", choices=("codex", "fixture", "script"), default=env("AUTOPROVER_BACKEND", "codex"))
     parser.add_argument("--backend-command", default=env("AUTOPROVER_BACKEND_COMMAND"))
     parser.add_argument("--backend-timeout", type=int, default=int(env("AUTOPROVER_BACKEND_TIMEOUT_SECONDS", "0") or "0"))
+    parser.add_argument("--backend-retries", type=int, default=int(env("AUTOPROVER_BACKEND_RETRIES", "1") or "0"))
     parser.add_argument("--run-dir", default=env("AUTOPROVER_RUN_DIR", ".autoprover/runs"))
     parser.add_argument("--model", default=env("AUTOPROVER_CODEX_MODEL", "gpt-5.5"))
     parser.add_argument("--reasoning-effort", default=env("AUTOPROVER_CODEX_REASONING_EFFORT", "xhigh"))
@@ -433,6 +466,12 @@ def build_parser() -> argparse.ArgumentParser:
     read_issue.add_argument("--issue", type=int, required=True)
     read_issue.set_defaults(func=cmd_read_issue)
 
+    read_issue_timeline = sub.add_parser("read-issue-timeline", help="read one workspace issue timeline")
+    add_common_auth(read_issue_timeline)
+    add_workspace_arg(read_issue_timeline)
+    read_issue_timeline.add_argument("--issue", type=int, required=True)
+    read_issue_timeline.set_defaults(func=cmd_read_issue_timeline)
+
     create_issue = sub.add_parser("create-issue", help="create a workspace issue")
     add_common_auth(create_issue)
     add_workspace_arg(create_issue)
@@ -463,6 +502,19 @@ def build_parser() -> argparse.ArgumentParser:
     add_workspace_arg(close_issue)
     close_issue.add_argument("--issue", type=int, required=True)
     close_issue.set_defaults(func=cmd_close_issue)
+
+    reopen_issue = sub.add_parser("reopen-issue", help="reopen a workspace issue")
+    add_common_auth(reopen_issue)
+    add_workspace_arg(reopen_issue)
+    reopen_issue.add_argument("--issue", type=int, required=True)
+    reopen_issue.set_defaults(func=cmd_reopen_issue)
+
+    set_issue_state = sub.add_parser("set-issue-state", help="set a workspace issue state")
+    add_common_auth(set_issue_state)
+    add_workspace_arg(set_issue_state)
+    set_issue_state.add_argument("--issue", type=int, required=True)
+    set_issue_state.add_argument("--state", choices=("open", "closed"), required=True)
+    set_issue_state.set_defaults(func=cmd_set_issue_state)
 
     read_file = sub.add_parser("read-file", help="read one file from a workspace branch")
     add_common_auth(read_file)
@@ -502,6 +554,24 @@ def build_parser() -> argparse.ArgumentParser:
     open_pr.add_argument("--body-file", default="")
     open_pr.set_defaults(func=cmd_open_pr)
 
+    list_prs = sub.add_parser("list-prs", help="list workspace pull requests")
+    add_common_auth(list_prs)
+    add_workspace_arg(list_prs)
+    list_prs.add_argument("--state", choices=("open", "closed", "all"), default="open")
+    list_prs.set_defaults(func=cmd_list_prs)
+
+    read_pr = sub.add_parser("read-pr", help="read one workspace pull request")
+    add_common_auth(read_pr)
+    add_workspace_arg(read_pr)
+    read_pr.add_argument("--pr", type=int, required=True)
+    read_pr.set_defaults(func=cmd_read_pr)
+
+    read_pr_context = sub.add_parser("read-pr-context", help="read pull request files and review context")
+    add_common_auth(read_pr_context)
+    add_workspace_arg(read_pr_context)
+    read_pr_context.add_argument("--pr", type=int, required=True)
+    read_pr_context.set_defaults(func=cmd_read_pr_context)
+
     review_pr = sub.add_parser("review-pr", help="submit a pull request review")
     add_common_auth(review_pr)
     add_workspace_arg(review_pr)
@@ -518,6 +588,12 @@ def build_parser() -> argparse.ArgumentParser:
     merge_pr.add_argument("--method", choices=("squash", "merge", "rebase"), default="squash")
     merge_pr.add_argument("--force", action="store_true")
     merge_pr.set_defaults(func=cmd_merge_pr)
+
+    close_pr = sub.add_parser("close-pr", help="close a pull request without merging")
+    add_common_auth(close_pr)
+    add_workspace_arg(close_pr)
+    close_pr.add_argument("--pr", type=int, required=True)
+    close_pr.set_defaults(func=cmd_close_pr)
 
     ask = sub.add_parser("ask-oracle", help="send one prompt to a backend oracle")
     ask.add_argument("message", nargs="*", help="prompt text; stdin is used when omitted")

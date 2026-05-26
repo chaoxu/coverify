@@ -18,24 +18,22 @@ knowledge, normally by branch, PR, review, and merge.
 ## Doc Map
 
 - [README](../README.md) is the repository entry point and status summary.
+- [Skills](../skills) are the durable operational interface for orchestrators.
+  They cover context building, exploration planning, proof attempts, KB
+  writing, PR review, KB management, and the lightweight run loop.
+- [Philosophy](philosophy.md) records the stable principles that explain why
+  Autoprover uses Cosheaf for durable state, topic-shaped knowledge pages,
+  reviewed promotion, negative knowledge, and retry gates.
 - This file is the canonical architecture and workflow contract.
+- The Cosheaf workspace is the tracked mathematical state: topic-first wiki
+  pages for durable definitions, results, computations, and failed routes.
+  This repository should contain tools, prompts, and reproducibility scripts,
+  not the accepted PoA wiki itself.
 - [Experiments](experiments.md) defines how to compare the Cosheaf-backed loop
   against one-shot oracles, fixed pipelines, and QED-style strategies.
-- [Correctness Review Prompt](prompts/proof-review.md) is the first concrete
-  prompt template for mathematical PR review. It applies to proofs, examples,
-  obstructions, literature notes, and status summaries.
-- [Proof Attempt Oracle Prompt](prompts/proof-attempt-oracle.md) is the first
-  strong-oracle template for clean standalone proof/disproof attempts.
-- [Exploration Planner Prompt](prompts/exploration-planner.md) turns current
-  knowledge, failed attempts, and open work into issue-ready approaches.
-- [Knowledge-Base Writer Prompt](prompts/knowledge-base-writer.md) turns useful
-  oracle output or checked notes into Coflat PR content without adding new
-  mathematics.
-- [Knowledge-Base Manager Prompt](prompts/knowledge-base-manager.md) keeps
-  accepted workspace documents coherent without adding a new proof role.
-- [Prompt Templates](prompts/README.md) explains the core prompt taxonomy and
-  the difference between canonical prompts, artifact prompts, maintenance
-  prompts, and reference patterns.
+- Prompt docs are compatibility shims for older docs and PRs, not the
+  preferred operational entry point.
+- [Prompt Templates](prompts/README.md) indexes those compatibility shims.
 - [Coflat Context Primer](coflat-primer.md) is the Markdown format guide used
   when context packs ask a backend to write or review Cosheaf pages.
 - [References And Future Notes](references.md) records paper-inspired design
@@ -50,8 +48,8 @@ knowledge, normally by branch, PR, review, and merge.
   run lifecycle, context selection, tool use, stop conditions, retry policy,
   artifact writing, and final response. It should not be trusted as the source
   of mathematical reasoning when an oracle call is possible.
-- **Autoprover harness** provides Cosheaf adapters, context packing, and
-  backend-script invocation. It must not become a second workflow database.
+- **Autoprover harness** provides Cosheaf adapters, context-building helpers,
+  and backend-script invocation. It must not become a second workflow database.
 - **Model backend** means a script, CLI, API wrapper, remote job, or future
   stronger system. The minimum contract is stdin prompt in, stdout answer out.
 - **Oracle call** is a backend invocation for a clean reasoning or correctness
@@ -75,16 +73,19 @@ Durable state should map to Cosheaf primitives:
 | Localized objection | PR line comment |
 | Backlog item | Issue, when useful |
 | Research program | Milestone |
-| State classification | Labels on issues or PRs |
+| Lightweight state flags | Labels on issues or PRs |
 | Agent inbox | Notifications |
 | Failed attempt memory | Closed PR, closed issue, request-changes review, or merged obstruction |
 | Backend/oracle result | Knowledge PR if useful; comment only for transient discussion |
 | Run progress | Issue/PR comment, branch commit, review, label, or page update |
 
-Durable state still needs trust classes. A merged page is not automatically an
-accepted theorem. The minimum context channels are:
+Durable state still needs trust distinctions. A merged page is not
+automatically an accepted theorem, and an issue comment is not mathematical
+evidence by itself. These distinctions should normally be expressed in the
+wiki prose, PR body, review, or issue text rather than through a heavy formal
+taxonomy. Useful lightweight distinctions include:
 
-| Channel | Meaning | Default use in context packs |
+| Distinction | Meaning | Default use in context building |
 | --- | --- | --- |
 | `definition` | active problem statement, conventions, model scope | include when relevant |
 | `accepted` | reviewed theorem, example, obstruction, or source-backed bound | include as established context |
@@ -166,7 +167,7 @@ Key route mapping:
 | `open_pull_request` | `POST /pulls` |
 | `list_pull_requests` | `GET /pulls?state=...` |
 | `read_pull_request` | `GET /pulls/:number` |
-| `read_pull_request_context` | `GET /pulls/:n/files`, file base/head, reviews, comments |
+| `read_pull_request_context` | `GET /pulls/:number` plus `GET /pulls/:n/files`; runner adds accepted KB dependencies, cited evidence, and relevant review/issue history |
 | `review_pull_request` | `POST /pulls/:number/reviews` |
 | `comment_on_pull_request_line` | `POST /pulls/:number/comments` |
 | `label_pull_request` | `GET /labels`, `PUT /issues/:number/labels` |
@@ -232,9 +233,9 @@ Adapter primitives:
 - `merge_pull_request`
 - `list_notifications`
 - `run_backend_script`
-- `build_context_pack`
+- `build_context_pack` or an equivalent context-building skill
 
-Workflow recipes compose primitives and may stay as skills/prompts until they
+Workflow recipes compose primitives and should start as skills/prompts until they
 prove they need code:
 
 - `list_ready_issues`
@@ -261,10 +262,12 @@ The same identity should not review its own PR. If no valid reviewer identity
 is available, the durable outcome is a comment or label such as `needs-human`,
 not self-approval.
 
-Reviewer runs should rebuild context from the PR diff, accepted pages, cited
-evidence, and submitted artifacts. They should not rely on the author's
-private scratch files or reasoning transcript unless that transcript is itself
-submitted as evidence.
+Reviewer runs should rebuild context from the PR diff, full submitted changed
+text, accepted KB definitions/theorems/source notes used by the change, cited
+evidence, and submitted artifacts. A diff is necessary but not sufficient: the
+reviewer must also see the accepted statements that the proof invokes or
+modifies. Reviewer runs should not rely on the author's private scratch files
+or reasoning transcript unless that transcript is itself submitted as evidence.
 
 Reviewer runs are oracle calls. The runner may collect files, citations, issue
 context, rendered diffs, and computation outputs, but the approve/request
@@ -318,8 +321,13 @@ They are not a substitute for an oracle correctness decision.
 
 ## Context Packs
 
-Context management is the core problem. `build_context_pack` takes artifact
-references and a task:
+Context building is an orchestrator responsibility. A context pack is a
+temporary working excerpt for one task, not a durable artifact class and not a
+second knowledge base. The orchestrator may build it directly or use
+[`autoprover-context-builder`](../skills/autoprover-context-builder/SKILL.md).
+
+`build_context_pack`, if implemented as code, should take artifact references
+and a task:
 
 ```text
 workspace
@@ -328,7 +336,7 @@ question or task
 output purpose: Codex work, oracle call, PR review, doc tightening
 ```
 
-It returns Markdown/plain text with:
+It returns concise Markdown/plain text with whichever parts are relevant:
 
 ```text
 Objective
@@ -345,38 +353,20 @@ Question for this run
 Expected output shape
 ```
 
-The pack must preserve artifact ids, trust labels, and mathematical status.
-Accepted pages, proposed diffs, request-changes reviews, rejected attempts,
-uncertain claims, and raw oracle output are different kinds of context.
-When the pack asks a backend to produce or review page text, include the
-relevant parts of the [Coflat Context Primer](coflat-primer.md).
+The pack must preserve artifact ids and trust distinctions in normal language:
+accepted pages, proposed diffs, request-changes reviews, rejected attempts,
+uncertain claims, and raw oracle output are not interchangeable. It does not
+need to force every item into a fixed status vocabulary. When the pack asks a
+backend to produce or review page text, include the relevant parts of the
+[Coflat Context Primer](coflat-primer.md).
 
-Status vocabulary for mathematical blocks:
+In particular, process notes, issue histories, and provenance are not accepted
+mathematical context; include them only when they matter to the task. Index
+pages may help find source notes, but the source note must be included for any
+claim used as evidence.
 
-```text
-definition
-proved
-proof-sketch
-conjecture
-counterexample
-obstruction
-open-question
-attempt
-frontier
-index
-process
-retired
-oracle-output
-```
-
-Context packs must not flatten these statuses. In particular, process notes,
-issue histories, and provenance are not accepted mathematical context; include
-them only for workflow-design or audit tasks. State-index pages may help find
-source notes, but the source note must be included for any claim used as
-evidence.
-
-The pack is not private memory. If a context summary is useful after a run, turn
-it into a knowledge-file change or a normal issue/PR comment.
+The pack is not private memory. If a context summary is useful after a run,
+turn it into a normal wiki edit or issue/PR comment. Otherwise discard it.
 
 ## Backends And Oracles
 
@@ -583,6 +573,9 @@ sequenceDiagram
     Runner->>Tools: read_issue(3)
     Tools->>Cosheaf: issue, comments, dependencies, timeline
     Cosheaf-->>Runner: Issue context
+    Runner->>Tools: list open PRs and read related timelines
+    Tools->>Cosheaf: PR and issue state refresh
+    Cosheaf-->>Runner: Current coordination state
     Runner->>Tools: search/read related pages, branches, PRs
     Tools->>Cosheaf: typed workspace reads
     Cosheaf-->>Runner: Focused context material
@@ -598,14 +591,16 @@ sequenceDiagram
     Runner->>Tools: open_pull_request
     Tools->>Cosheaf: proposed PR
     Runner->>Tools: request review
-    Tools->>Reviewer: PR diff + accepted context + evidence
+    Tools->>Reviewer: PR diff + changed text + accepted KB dependencies + evidence
     Reviewer->>Cosheaf: APPROVE or REQUEST_CHANGES or COMMENT
 
     alt Request changes
         Runner->>Cosheaf: repair same branch and request review again
     else Approved
         Maintainer->>Cosheaf: merge PR
-        Runner->>Cosheaf: close or update issue
+        Runner->>Tools: refresh issue timeline
+        Tools->>Cosheaf: current issue state and recent events
+        Runner->>Cosheaf: close, reopen, or update issue with explanation
     end
 ```
 
@@ -619,6 +614,50 @@ Completion means a durable Cosheaf outcome exists:
 - useful backend/Codex/oracle output became proposed or accepted knowledge
 
 No changed Cosheaf artifact means no durable progress.
+
+### State-Transition Discipline
+
+Issue and PR state changes are coordination-sensitive. A runner must refresh
+the relevant Cosheaf state immediately before changing it:
+
+- before starting issue work: read the issue, its timeline, and open PRs;
+- before opening a PR: check whether another open PR already addresses the
+  same issue or file surface;
+- before merging: require an oracle-backed reviewer approval artifact and
+  refresh PR metadata;
+- before closing or reopening an issue: read the issue timeline and the PR
+  that most recently closed or referenced it;
+- after merge: read the open issue list again because Forgejo-style issue
+  references may have changed issue state automatically.
+
+State changes should leave an explanation as a Cosheaf comment when the reason
+is not already obvious from the merged PR. Reopening an issue is not just the
+inverse of closing it: the runner must explain which part of the issue remains
+unresolved after reading the timeline.
+
+Branch file writes should be serialized per branch. Multiple concurrent writes
+to the same branch head can race in the underlying repository. If the workflow
+needs multi-file changes, write files one at a time or use a future
+compare-and-set branch-head API.
+
+Search and computation artifacts should state their trust posture in ordinary
+language:
+
+- **lead**: scratch search, floating LP output, or unreviewed oracle idea;
+- **locally verified**: exact arithmetic or deterministic code checked by the
+  runner;
+- **oracle reviewed**: correctness review returned an approval verdict;
+- **accepted**: merged into Cosheaf knowledge after review.
+
+Only accepted artifacts are knowledge. Leads may guide the next run, but they
+must not be cited as mathematical evidence until promoted through exact
+verification, PR review, and merge.
+
+The philosophy behind these trust distinctions is in
+[Autoprover Philosophy](philosophy.md). In particular, negative knowledge is
+durable when it changes future behavior: a failed route should be promoted only
+after it has been distilled into a compact, reviewable topic-page note with a
+clear retry condition.
 
 ## Runs, Jobs, Progress, And Claiming
 
@@ -670,9 +709,9 @@ oracle call.
 Tactics such as constructing counterexamples, toy examples, decompositions,
 literature checks, recursive proving, failure analysis, PR writing, and
 document tightening are usually choices made by the runner while preparing
-context or by an oracle inside one of these prompts. They should not become
-separate skills or durable workflow states unless repeated use shows that code
-support is needed.
+context or by an oracle inside one of these prompts. Do not turn every tactic
+into a durable workflow state. A skill is appropriate when the orchestrator
+should reliably reuse the procedure across runs.
 
 One exception is artifact writing. The math oracle should not be burdened with
 Coflat formatting instructions. A knowledge-base writer can distill useful
@@ -688,23 +727,26 @@ oracle-output-to-file is allowed only for raw artifacts, comments, or audit
 records; accepted pages should be math documents, not transcripts or code-style
 blocks.
 
-The concrete v1 templates are:
+The concrete v1 operational skills are:
 
-- [Exploration Planner Prompt](prompts/exploration-planner.md)
-- [Proof Attempt Oracle Prompt](prompts/proof-attempt-oracle.md)
-- [Correctness Review Prompt](prompts/proof-review.md)
+- [`autoprover-run-loop`](../skills/autoprover-run-loop/SKILL.md)
+- [`autoprover-context-builder`](../skills/autoprover-context-builder/SKILL.md)
+- [`autoprover-exploration-planner`](../skills/autoprover-exploration-planner/SKILL.md)
+- [`autoprover-proof-attempt`](../skills/autoprover-proof-attempt/SKILL.md)
+- [`autoprover-kb-writer`](../skills/autoprover-kb-writer/SKILL.md)
+- [`autoprover-proof-review`](../skills/autoprover-proof-review/SKILL.md)
+- [`autoprover-kb-manager`](../skills/autoprover-kb-manager/SKILL.md)
 
-The artifact and maintenance templates are:
-
-- [Knowledge-Base Writer Prompt](prompts/knowledge-base-writer.md)
-- [Knowledge-Base Manager Prompt](prompts/knowledge-base-manager.md)
+The prompt files under [prompts](prompts/README.md) preserve longer source
+text and reference patterns. The skills are the orchestration interface.
 
 The writer exists because useful oracle output still needs to become a durable
 Cosheaf document. The manager exists because accepted workspaces need periodic
 consolidation. The manager may create large PRs and complete rewrites when the
 user explicitly asks for a cleanup pass, but it is not a fourth mathematical
-reasoning role. It should classify, combine, delete, retire, index, and clarify
-accepted documents; any correctness-relevant change still uses the review
+reasoning role. It should organize, combine, delete, retire, index, and clarify
+accepted documents using the topic structure that best fits the material; any
+correctness-relevant change still uses the review
 prompt before merge. Narrow mathematical fixes should stay narrow instead of
 becoming opportunistic repo rewrites. Large cleanup passes should prefer a
 smaller, indexed knowledge base over preserving old file boundaries.
@@ -743,12 +785,12 @@ NON_BLOCKING_NOTES:
 1. Implement minimal branch/PR/issue-native Cosheaf tools.
 2. Add a smoke harness that validates current Cosheaf API operations and
    leaves inspectable issues, branches, PRs, reviews, and pages.
-3. Implement context-pack construction for issues and PRs.
+3. Add and keep complete the Autoprover skills under `skills/`.
 4. Add pluggable backend invocation with the stdin/stdout script contract,
    starting with the Codex `gpt-5.5` + `xhigh` wrapper.
-5. Add promotion-audit checks for trust class, model scope, stale pre-review
-   language, and durable evidence before any PR can be treated as accepted
-   knowledge.
+5. Add promotion-audit checks for trust distinctions, model scope, stale
+   pre-review language, and durable evidence before any PR can be treated as
+   accepted knowledge.
 6. Add `ask_oracle` as a backend-backed workflow whose useful outputs become
    knowledge PRs.
 7. Add thin command/skill wrappers only for repeatable glue around the three

@@ -158,10 +158,23 @@ def write_infinite_primes_page_from_oracle(answer: str) -> str:
     return kb_write_infinite_primes_from_oracle(answer).page
 
 
-def run_ask_oracle(*, prompt: str, backend: BackendRunner) -> dict[str, Any]:
+def run_ask_oracle(*, prompt: str, backend: BackendRunner, retries: int = 0) -> dict[str, Any]:
     if not prompt.strip():
         raise ValueError("oracle prompt is empty")
-    backend_result = backend(prompt)
+    if retries < 0:
+        raise ValueError("oracle retries cannot be negative")
+    failures: list[Exception] = []
+    for _attempt in range(retries + 1):
+        try:
+            backend_result = backend(prompt)
+            break
+        except RuntimeError as exc:
+            failures.append(exc)
+    else:
+        raise RuntimeError(
+            "oracle backend failed after "
+            f"{retries + 1} attempt(s); last error: {failures[-1]}",
+        ) from failures[-1]
     return {
         "ok": True,
         "answer": backend_result.answer,

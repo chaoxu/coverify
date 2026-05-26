@@ -1,0 +1,4 @@
+interface:
+  display_name: "Autoprover KB Writer"
+  short_description: "Distill material into wiki content"
+  default_prompt: "Use $autoprover-kb-writer to turn useful source material into compact Cosheaf wiki or PR content without adding new mathematics."

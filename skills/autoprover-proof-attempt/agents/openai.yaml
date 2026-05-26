@@ -1,0 +1,4 @@
+interface:
+  display_name: "Autoprover Attempt"
+  short_description: "Prepare clean proof attempts"
+  default_prompt: "Use $autoprover-proof-attempt to prepare a clean proof or disproof attempt from accepted context and relevant tried routes."

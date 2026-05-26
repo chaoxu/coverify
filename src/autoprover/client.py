@@ -159,6 +159,9 @@ class CosheafClient:
     def read_issue(self, workspace: str, number: int) -> Any:
         return self.request("GET", f"/w/{workspace}/issues/{number}")
 
+    def read_issue_timeline(self, workspace: str, number: int) -> Any:
+        return self.request("GET", f"/w/{workspace}/issues/{number}/timeline")
+
     def create_issue(
         self,
         workspace: str,
@@ -201,10 +204,18 @@ class CosheafClient:
         )
 
     def close_issue(self, workspace: str, number: int) -> Any:
+        return self.set_issue_state(workspace, number, "closed")
+
+    def reopen_issue(self, workspace: str, number: int) -> Any:
+        return self.set_issue_state(workspace, number, "open")
+
+    def set_issue_state(self, workspace: str, number: int, state: str) -> Any:
+        if state not in {"open", "closed"}:
+            raise ValueError("issue state must be open or closed")
         return self.request(
             "PATCH",
             f"/w/{workspace}/issues/{number}/state",
-            body={"state": "closed"},
+            body={"state": state},
         )
 
     def read_file(self, workspace: str, path: str, *, branch: str = "main") -> Any:
@@ -255,6 +266,25 @@ class CosheafClient:
             body={"head": head, "base": base, "title": title, "body": body},
         )
 
+    def list_pull_requests(self, workspace: str, *, state: str = "open") -> Any:
+        return self.request("GET", f"/w/{workspace}/pulls?{self.query(state=state)}")
+
+    def read_pull_request(self, workspace: str, pr_number: int) -> Any:
+        return self.request("GET", f"/w/{workspace}/pulls/{pr_number}")
+
+    def read_pull_request_context(self, workspace: str, pr_number: int) -> Any:
+        pull_request = self.read_pull_request(workspace, pr_number)
+        files = self.request("GET", f"/w/{workspace}/pulls/{pr_number}/files")
+        return {
+            "pull_request": pull_request,
+            "files": files,
+            "review_context_note": (
+                "Review context must also include accepted KB definitions, "
+                "theorems, source notes, and evidence cited or used by the "
+                "changed text; PR files alone are not sufficient."
+            ),
+        }
+
     def review_pull_request(
         self,
         workspace: str,
@@ -282,3 +312,6 @@ class CosheafClient:
             f"/w/{workspace}/pulls/{pr_number}/merge",
             body={"Do": method, "force": force},
         )
+
+    def close_pull_request(self, workspace: str, pr_number: int) -> Any:
+        return self.request("POST", f"/w/{workspace}/pulls/{pr_number}/close", body={})

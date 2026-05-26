@@ -33,28 +33,25 @@ The design target:
 
 ## Documents
 
+- [Skills](skills): durable Autoprover operational skills. These are the
+  orchestration entry points for context building, exploration planning, proof
+  attempts, KB writing, PR review, KB management, and the lightweight run loop.
+  [skills/manifest.json](skills/manifest.json) is the completeness source of
+  truth checked by `scripts/check_skills.py`.
+- [Philosophy](docs/philosophy.md): stable principles behind the tool and
+  knowledge-base workflow, such as durable state, topic-shaped knowledge,
+  negative knowledge, review, and retry novelty.
 - [Design](docs/design.md): canonical tool-harness design, including Cosheaf
-  mapping, context packs, review, runs, jobs, progress, and build order.
+  mapping, lightweight context building, review, runs, jobs, progress, and
+  build order.
+- Cosheaf workspace `poa-network-game-clean`: durable mathematical knowledge
+  pages. Local files in this repository are tools, prompts, and scripts, not
+  the source of truth for the PoA wiki.
 - [Experiments](docs/experiments.md): evaluation plan for comparing the
   Cosheaf-backed loop against one-shot oracles, fixed pipelines, and QED-style
   strategies.
-- [Correctness Review Prompt](docs/prompts/proof-review.md): reviewer prompt
-  template for PR correctness gates over proofs, notes, examples, and
-  literature claims.
-- [Proof Attempt Oracle Prompt](docs/prompts/proof-attempt-oracle.md): first
-  strong-oracle template for a clean standalone proof or disproof attempt.
-- [Exploration Planner Prompt](docs/prompts/exploration-planner.md): template
-  for turning current knowledge and failed attempts into issue-ready next
-  approaches.
-- [Knowledge-Base Writer Prompt](docs/prompts/knowledge-base-writer.md):
-  artifact prompt for converting useful oracle output or checked notes into
-  Coflat Markdown PR content without adding new mathematics.
-- [Knowledge-Base Manager Prompt](docs/prompts/knowledge-base-manager.md):
-  maintenance prompt for consolidating accepted docs, deleting superseded
-  notes, creating an index, and making large cleanup PRs reviewable.
-- [Prompt Templates](docs/prompts/README.md): the core prompt taxonomy and how
-  artifact, maintenance, and reference prompts differ from required workflow
-  primitives.
+- [Prompt Templates](docs/prompts/README.md): compatibility shims for older
+  docs and PRs. Use skills first.
 - [Reference Prompt Collection](docs/prompts/reference/README.md): local index
   of prompt patterns from QED, Rethlas, and future external systems.
 - [Coflat Primer](docs/coflat-primer.md): markdown/document-format context.
@@ -66,6 +63,13 @@ The design target:
 The first runnable surface is a Python CLI package under `src/autoprover`.
 Use `PYTHONPATH=src python3 -m autoprover --help` from this checkout.
 
+Install repo-owned skills for Codex discovery:
+
+```bash
+python3 scripts/link_skills.py
+python3 scripts/link_skills.py --check
+```
+
 Implemented commands:
 
 - `login`: exchange Cosheaf username/password for an API token.
@@ -73,9 +77,13 @@ Implemented commands:
   `--default-md-format coflat`.
 - Primitive Cosheaf operations for Codex-as-operator runs: `set-member`,
   `tree`, `read-file`, `create-branch`, `write-file`, `delete-file`,
-  `edit-issue`, `open-pr`, `review-pr`, and `merge-pr`.
+  `list-issues`, `read-issue`, `read-issue-timeline`, `create-issue`,
+  `edit-issue`, `comment-issue`, `close-issue`, `reopen-issue`,
+  `set-issue-state`, `list-prs`, `read-pr`, `read-pr-context`, `open-pr`,
+  `close-pr`, `review-pr`, and `merge-pr`.
 - `ask-oracle`: send one prompt to the configured backend oracle and record
-  the standard prompt/answer/metadata audit bundle.
+  the standard prompt/answer/metadata audit bundle. Transient backend failures
+  can be retried with `--backend-retries`; the default is one retry.
 - `ttsp-search`: emit bounded directed-TTSP graphs, terminal pairs, simple
   paths, and edge vectors as JSON for downstream LP/certificate searches.
 - `ttsp-queue`: reduce a bounded directed-TTSP payload to candidate
@@ -126,9 +134,44 @@ PYTHONPATH=src python3 -m autoprover ttsp-queue \
   --pretty
 ```
 
+Issue state preflight:
+
+```bash
+PYTHONPATH=src python3 -m autoprover read-issue \
+  --workspace poa-network-game-clean \
+  --issue 23
+PYTHONPATH=src python3 -m autoprover read-issue-timeline \
+  --workspace poa-network-game-clean \
+  --issue 23
+PYTHONPATH=src python3 -m autoprover list-prs \
+  --workspace poa-network-game-clean \
+  --state open
+PYTHONPATH=src python3 -m autoprover read-pr-context \
+  --workspace poa-network-game-clean \
+  --pr 7
+```
+
+Real math-run skeleton:
+
+1. Run `python3 scripts/link_skills.py`.
+2. Use `$autoprover-run-loop` for the task.
+3. Refresh issue, PR, and topic-page state with `read-issue`,
+   `read-issue-timeline`, `list-prs`, `tree`, `read-file`, and when reviewing,
+   `read-pr-context`.
+4. Build context with `$autoprover-context-builder`, including accepted KB
+   dependencies and nearby "things tried" notes.
+5. Choose one action: plan, attempt, write KB content, clean the KB, or review
+   a PR.
+6. Leave durable state: issue, branch, PR, review, comment, or merged page.
+7. Record `PRIOR_ROUTE_CHECK`, `THINGS_TRIED_UPDATED`, verification, and
+   remaining blocker in the run summary.
+
 Local checks:
 
 ```bash
+python3 scripts/link_skills.py
+python3 scripts/check_skills.py
+python3 scripts/link_skills.py --check
 PYTHONPATH=src python3 -m unittest discover -s tests
 PYTHONPATH=src python3 -m autoprover --help
 ```

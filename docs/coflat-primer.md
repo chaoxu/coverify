@@ -7,20 +7,20 @@ tool-harness design has no fixed prompt pipeline yet.
 ## Doc Map
 
 - [README](../README.md) is the repository entry point.
-- [Autoprover Design](design.md) defines when this primer is used in context
-  packs, backend calls, and review workflows.
+- [Autoprover Design](design.md) defines when this primer is used by context
+  builders, backend calls, writer skills, and review workflows.
 - [References And Future Notes](references.md) explains the paper-inspired
   review and knowledge-format constraints that motivate stable block ids.
 
-The full format lives in Cosheaf/Coflat `FORMAT.md`. A future context packer
+The full format lives in Cosheaf/Coflat `FORMAT.md`. A context-building helper
 or workflow skill may include parts of this primer when it asks a model backend
 to write or review Coflat Markdown.
 
 ## Coflat Formatting Capsule
 
 Use this short guideline in knowledge-base writer calls, cleanup passes, or
-context packers that produce durable Cosheaf knowledge. It is not needed for
-pure mathematical oracle calls.
+context-building excerpts that ask a backend to write or review Coflat
+Markdown. It is not needed for pure mathematical oracle calls.
 
 ```text
 Write Coflat Markdown, a Pandoc Markdown flavor. The only conventions to note:
@@ -163,5 +163,6 @@ Proof.
 - Do not use triple-backtick code fences as a substitute for math display mode.
 - Do not use raw HTML comments.
 - Do not include frontmatter unless explicitly asked.
-- Treat branch/PR/review/issue context according to the context pack's trust
-  labels. Only merged `main` pages are accepted workspace knowledge.
+- Treat branch/PR/review/issue context according to the context builder's
+  trust distinctions. Only merged `main` pages are accepted workspace
+  knowledge.

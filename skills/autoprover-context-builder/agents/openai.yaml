@@ -1,0 +1,4 @@
+interface:
+  display_name: "Autoprover Context"
+  short_description: "Build compact Autoprover task context"
+  default_prompt: "Use $autoprover-context-builder to build concise task context from the relevant Cosheaf pages, issues, PRs, reviews, tried routes, and artifacts."

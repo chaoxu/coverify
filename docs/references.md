@@ -11,19 +11,10 @@ architecture.
   feed into.
 - [Experiments](experiments.md) turns these design lessons into measurable
   comparisons.
-- [Correctness Review Prompt](prompts/proof-review.md) applies the review-gate
-  lessons to concrete mathematical knowledge review.
-- [Proof Attempt Oracle Prompt](prompts/proof-attempt-oracle.md) records the
-  clean standalone proof/disproof oracle template.
-- [Exploration Planner Prompt](prompts/exploration-planner.md) records the
-  prompt for turning current workspace state into issue-ready approaches.
-- [Knowledge-Base Writer Prompt](prompts/knowledge-base-writer.md) records the
-  artifact-writing prompt that turns useful source material into Coflat PR
-  content without doing new mathematical reasoning.
-- [Knowledge-Base Manager Prompt](prompts/knowledge-base-manager.md) records
-  the maintenance prompt for consolidating, indexing, and reducing accepted
-  workspace documents.
-- [Prompt Templates](prompts/README.md) records the core prompt taxonomy.
+- [Skills](../skills) are the durable operational interface for review,
+  attempts, planning, writing, cleanup, context building, and the run loop.
+- [Prompt Templates](prompts/README.md) keeps compatibility shims for older
+  docs and PRs; operational behavior belongs in skills.
 - [Reference Prompt Collection](prompts/reference/README.md) indexes external
   prompt systems and their reusable patterns.
 - [Coflat Context Primer](coflat-primer.md) is the local page-format guide for
@@ -67,8 +58,9 @@ Design lessons:
   decidable.
 - For hard proof tasks, Codex can ask for a proof plan before a proof, but the
   plan should become text in PR context, not a private workflow graph.
-- Retry feedback should distinguish execution errors, plan errors, and
-  strategy errors.
+- Retry feedback should explain in ordinary prose whether the failure came
+  from execution, the plan, or the overall strategy when that distinction is
+  useful. Do not turn this into a required failure taxonomy.
 - Do not copy QED's fixed multi-agent pipeline into v1.
 - Treat QED's structural review, detailed review, and regulator prompts as
   reference checklists that can enrich the single review prompt or runner
