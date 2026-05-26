@@ -55,6 +55,13 @@ Your job is artifact preparation, not new reasoning:
 - If the source material is incomplete, write it as an obstruction, frontier
   note, or proposed lemma with explicit gaps, not as a finished result.
 - Use Coflat math mode and semantic blocks for citeable mathematical objects.
+- When the source material naturally contains a definition, theorem-like
+  statement, example, obstruction, conjecture, or proof, actively put it into
+  the corresponding Coflat block form. Do not leave citeable mathematics as
+  undifferentiated prose merely because the source material was unstructured.
+- Do not force block structure when it would distort the trust status or make a
+  loose observation look like a proved result; use ordinary prose or a
+  clearly-labeled `.remark`/frontier note in that case.
 - Give stable ids to definitions, theorem-like statements, examples,
   obstructions, and source-backed facts that future issues or PRs may cite.
 - Use `.proof` blocks for actual proofs, usually without an id unless the proof
