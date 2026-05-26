@@ -95,12 +95,15 @@ Read the workspace with these priorities:
 When making or proposing edits:
 
 - Keep canonical facts in the smallest number of clear documents.
-- Use Coflat math mode for ordinary formulas. Convert code-formatted formulas
-  into inline or display math unless the fenced text is a literal artifact such
-  as raw data, pseudocode, command output, or a certificate.
-- Use Coflat semantic blocks for citeable mathematical objects:
-  `.definition`, `.theorem`, `.lemma`, `.proposition`, `.corollary`,
-  `.example`, `.remark`, `.conjecture`, and `.proof`.
+- Use the short Coflat formatting capsule from `docs/coflat-primer.md` when
+  preparing oracle inputs or rewriting durable math pages. Coflat is a Pandoc
+  Markdown flavor; do not give the oracle a long Markdown tutorial.
+- Convert code-formatted formulas into inline or display math unless the fenced
+  text is a literal artifact such as raw data, pseudocode, command output, or a
+  certificate.
+- Use Pandoc fenced divs for citeable mathematical objects: `.definition`,
+  `.theorem`, `.lemma`, `.proposition`, `.corollary`, `.example`, `.remark`,
+  `.conjecture`, and `.proof`.
 - Give durable theorem-like, definition-like, obstruction-like, and example-like
   blocks stable ids so issues, PRs, and later documents can refer to them.
 - Prefer fewer documents when several files are only fragments of one topic.

@@ -43,11 +43,15 @@ Requirements:
 - Use only the problem statement and allowed context.
 - Do not assume extra hypotheses.
 - Do not change the problem.
-- Write mathematical formulas in math mode, not as code, unless the text is a
-  literal artifact such as raw data, pseudocode, or a certificate format.
-- When the output is suitable for a durable Cosheaf note, use Coflat semantic
-  blocks for definitions, lemmas, theorems, examples, remarks, obstructions,
-  and proofs.
+- If the output may become a durable Cosheaf note, write Coflat Markdown, a
+  Pandoc Markdown flavor. The only conventions to note are: use `$...$` and
+  `$$...$$` for formulas; use code fences only for literal data, code, command
+  output, or certificates; use Pandoc fenced divs for citeable math objects
+  such as `::: {.definition #def:...}`, `::: {.theorem #thm:...}`,
+  `::: {.lemma #lem:...}`, `::: {.example #ex:...}`,
+  `::: {.remark #obs:... title="Obstruction"}`, and `::: {.proof}`; give
+  stable ids to citeable definitions, results, examples, and obstructions; when
+  writing a whole page, start with one H1 and do not add YAML frontmatter.
 - If proving the statement, give a complete argument.
 - If disproving the statement, give a complete counterexample or contradiction
   to the claimed statement.
@@ -80,25 +84,9 @@ UNRESOLVED_GAPS:
 CHECKS_FOR_REVIEWER:
 ```
 
-For output that is likely to be proposed as an accepted Cosheaf page, prefer
-Coflat Markdown inside the relevant sections:
-
-```markdown
-::: {.definition #def:...}
-...
-:::
-
-::: {.theorem #thm:...}
-...
-:::
-
-::: {.proof}
-...
-:::
-```
-
-Use `.lemma`, `.proposition`, `.corollary`, `.example`, `.remark`, or
-`.conjecture` when those classes state the mathematical status more accurately.
+For output that is likely to be proposed as an accepted Cosheaf page, use the
+short Coflat formatting capsule in [Coflat Context Primer](../coflat-primer.md)
+rather than a longer formatting tutorial.
 
 ## Artifact Effects
 

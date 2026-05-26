@@ -16,6 +16,25 @@ The full format lives in Cosheaf/Coflat `FORMAT.md`. A future context packer
 or workflow skill may include parts of this primer when it asks a model backend
 to write or review Coflat Markdown.
 
+## Oracle Formatting Capsule
+
+Use this short guideline in oracle calls that may produce durable Cosheaf
+knowledge:
+
+```text
+Write Coflat Markdown, a Pandoc Markdown flavor. The only conventions to note:
+- Use `$...$` and `$$...$$` for formulas; code fences are only for literal
+  data, code, command output, or certificates.
+- Use Pandoc fenced divs for citeable math objects, such as:
+  `::: {.definition #def:...}`, `::: {.theorem #thm:...}`,
+  `::: {.lemma #lem:...}`, `::: {.example #ex:...}`,
+  `::: {.remark #obs:... title="Obstruction"}`, and `::: {.proof}`.
+- Give stable ids to citeable definitions, results, examples, and
+  obstructions. Proof blocks usually need no id unless the proof itself is
+  referenced.
+- When writing a whole page, start with one H1 and do not add YAML frontmatter.
+```
+
 ## Required Output Shape
 
 - Return Coflat-compatible Markdown body text unless the prompt explicitly asks

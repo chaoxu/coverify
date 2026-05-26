@@ -63,10 +63,10 @@ Your task:
 - Check promotion hygiene: raw oracle output, local scratch, issue history,
   process provenance, and state indexes must not be presented as mathematical
   evidence.
-- Check document hygiene: ordinary mathematical formulas should use math mode,
-  and citeable mathematical objects should use Coflat semantic blocks such as
-  `.definition`, `.theorem`, `.lemma`, `.example`, `.remark`, and `.proof`.
-  Treat this as an exposition issue unless the formatting hides scope,
+- Check document hygiene: Coflat is a Pandoc Markdown flavor; formulas should
+  use math mode, and citeable mathematical objects should use Pandoc fenced
+  divs such as `.definition`, `.theorem`, `.lemma`, `.example`, `.remark`, and
+  `.proof`. Treat this as an exposition issue unless formatting hides scope,
   dependencies, or correctness-relevant status.
 - Check that every theorem-like or bound-like claim states the model scope
   needed to make it true: weighted or unweighted, atomic or nonatomic,
