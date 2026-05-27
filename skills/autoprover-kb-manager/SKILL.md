@@ -1,6 +1,6 @@
 ---
 name: autoprover-kb-manager
-description: Clean up and consolidate an Autoprover Cosheaf wiki. Use for topic-shaped KB maintenance, large or narrow cleanup PRs, deleting bulky generated Markdown, merging duplicate notes, repairing links, and making future mathematical runs easier.
+description: Clean up and consolidate an Autoprover Cosheaf wiki and related route artifacts. Use for topic-shaped KB maintenance, large or narrow cleanup PRs, deleting bulky generated Markdown or exploratory code residue, merging duplicate notes, repairing links, and making future mathematical runs easier.
 ---
 
 # Autoprover KB Manager
@@ -23,7 +23,11 @@ Prefer a smaller, clearer wiki over preserving old file boundaries.
 5. Delete or retire bulky generated Markdown after distilling useful claims,
    pseudocode, commands, or small result tables.
 6. Preserve useful "things tried" notes in the relevant topic page.
-7. Produce a reviewable PR with a migration map, correctness-relevant changes,
+7. Audit exploratory code and helper branches. Keep scripts only when they
+   reproduce an accepted KB claim or active issue check with a named question,
+   compact command, compact output, and clear owner. Delete, close, or leave
+   off main one-off route scaffolds after distilling their result.
+8. Produce a reviewable PR with a migration map, correctness-relevant changes,
    issue/PR update plan, and live-check result.
 
 ## Output
@@ -34,6 +38,7 @@ PROPOSED_INDEX:
 PAGE_BREAKDOWN:
 PROBLEMS_FOUND:
 THINGS_TRIED_AUDIT:
+SCRIPT_RETENTION_AUDIT:
 CLEANUP_PLAN:
 DOCUMENT_REDUCTION:
 ISSUE_UPDATES:
@@ -46,5 +51,5 @@ PR_SIZE:
 ## Fit Check
 
 A good cleanup has topic-named pages, fewer bucket-shaped files, no local-only
-evidence paths, no bulky generated payloads, and a live tree whose files can be
-explained in one sentence each.
+evidence paths, no bulky generated payloads, no unexplained exploratory code,
+and a live tree whose files can be explained in one sentence each.

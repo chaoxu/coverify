@@ -20,8 +20,11 @@ avoid.
 3. Inspect "things tried" notes and relevant issue/PR history before proposing
    routes.
 4. Propose only bounded routes whose success or failure would create durable knowledge.
+   Prefer text oracle/proof attempts when the finite structure can be stated
+   clearly without code.
 5. For each route, state the first step, expected artifact, likely failure
-   mode, and closest prior tried route.
+   mode, closest prior tried route, and whether any code produced by the route
+   would be kept, deleted, or left off main after distillation.
 6. Draft issues only for routes that a later runner can start without guessing.
 
 ## Output
@@ -37,6 +40,7 @@ APPROACHES:
   Expected artifact:
   Prior route check:
   Oracle or computation:
+  Script retention:
   Issue draft:
 
 DUPLICATES_OR_REJECTED:
@@ -52,4 +56,7 @@ MISSING_CONTEXT:
 
 An issue-ready route names the exact mathematical subproblem, first artifacts
 to inspect, what counts as progress, which dead ends to avoid, and whether the
-task should call an oracle, run computation, or stay agentic.
+task should call a text oracle, run computation, or stay agentic. Computation is
+justified only for a named finite yes/no check whose output should be a small
+witness, certificate, or table that survives after exploratory code is deleted
+or kept off main.
