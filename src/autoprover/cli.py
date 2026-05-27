@@ -27,6 +27,10 @@ def env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
 
+def truthy(value: str) -> bool:
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
 def build_client(
     *,
     api_url: str,
@@ -70,6 +74,11 @@ def backend_runner(args: argparse.Namespace) -> Callable[[str], BackendResult]:
             timeout_seconds=timeout,
         )
     if args.backend == "codex":
+        if not args.allow_codex_backend:
+            raise SystemExit(
+                "codex backend is disabled by default because it consumes Codex usage; "
+                "set AUTOPROVER_ALLOW_CODEX_BACKEND=1 or pass --allow-codex-backend"
+            )
         return lambda prompt: run_codex_backend(
             prompt,
             artifact_root=artifact_root,
@@ -414,6 +423,12 @@ def add_backend_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--reasoning-effort", default=env("AUTOPROVER_CODEX_REASONING_EFFORT", "xhigh"))
     parser.add_argument("--codex-bin", default=env("AUTOPROVER_CODEX_BIN", "codex"))
     parser.add_argument("--codex-sandbox", default=env("AUTOPROVER_CODEX_SANDBOX", "read-only"))
+    parser.add_argument(
+        "--allow-codex-backend",
+        action="store_true",
+        default=truthy(env("AUTOPROVER_ALLOW_CODEX_BACKEND")),
+        help="allow the Codex backend to run; required because it consumes Codex usage",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:

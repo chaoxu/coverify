@@ -292,6 +292,18 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.backend, "codex")
         self.assertEqual(args.model, "gpt-5.5")
         self.assertEqual(args.reasoning_effort, "xhigh")
+        self.assertEqual(args.allow_codex_backend, False)
+
+    def test_ask_oracle_requires_explicit_codex_backend_opt_in(self) -> None:
+        args = build_parser().parse_args(["ask-oracle", "hello"])
+
+        with self.assertRaisesRegex(SystemExit, "codex backend is disabled"):
+            args.func(args)
+
+    def test_ask_oracle_accepts_codex_backend_opt_in_flag(self) -> None:
+        args = build_parser().parse_args(["ask-oracle", "--allow-codex-backend", "hello"])
+
+        self.assertEqual(args.allow_codex_backend, True)
 
     def test_ttsp_search_cli_emits_bounded_search_payload(self) -> None:
         parser = build_parser()
