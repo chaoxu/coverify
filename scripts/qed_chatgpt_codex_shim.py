@@ -11,9 +11,6 @@ from pathlib import Path
 
 
 def default_chatgpt_cli() -> str:
-    repo_cli = Path("/Users/chaoxu/playground/chatgpt-cli/.venv/bin/chatgpt-cli")
-    if repo_cli.exists():
-        return str(repo_cli)
     return "chatgpt-cli"
 
 

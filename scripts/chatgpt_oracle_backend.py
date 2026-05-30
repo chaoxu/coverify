@@ -18,9 +18,6 @@ def read_prompt() -> str:
 
 
 def default_chatgpt_cli() -> str:
-    repo_cli = Path("/Users/chaoxu/playground/chatgpt-cli/.venv/bin/chatgpt-cli")
-    if repo_cli.exists():
-        return str(repo_cli)
     return "chatgpt-cli"
 
 
@@ -85,7 +82,7 @@ def run_oracle(args: argparse.Namespace, prompt: str) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Coverify script backend adapter for chatgpt-cli oracle")
-    parser.add_argument("--chatgpt-cli", default="", help="chatgpt-cli executable; defaults to CHATGPT_CLI or the local checkout venv")
+    parser.add_argument("--chatgpt-cli", default="", help="chatgpt-cli executable; defaults to CHATGPT_CLI or chatgpt-cli on PATH")
     parser.add_argument("--workdir", default=".", help="adapter working directory; defaults to the backend artifact dir")
     parser.add_argument("--timeout", type=int, default=int(os.environ.get("COVERIFY_CHATGPT_TIMEOUT_SECONDS", "6000") or "6000"))
     parser.add_argument("--process-grace-seconds", type=int, default=30)
