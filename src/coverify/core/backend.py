@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Protocol
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,17 @@ class BackendResult:
     artifact_dir: Path
     provider: str
     oracle_call_id: str
+
+
+class BackendRunner(Protocol):
+    """An oracle invocation: text in, audited ``BackendResult`` out.
+
+    This is the core seam of the harness. Every backend -- fixture, codex,
+    script, and the composite verifying oracle -- satisfies it, which is why a
+    verifying oracle can be used anywhere a plain oracle can, and can even nest.
+    """
+
+    def __call__(self, context: str) -> BackendResult: ...
 
 
 def sha256_file(path: Path) -> str:

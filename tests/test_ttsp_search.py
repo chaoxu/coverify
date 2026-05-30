@@ -5,7 +5,7 @@ import json
 import unittest
 from unittest.mock import patch
 
-from coverify.ttsp_search import (
+from coverify.apps.ttsp_search import (
     EDGE,
     QueueConfig,
     SearchConfig,

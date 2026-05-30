@@ -5,14 +5,10 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
-from .backend import BackendResult, audit_summary
+from ..core.backend import BackendResult, BackendRunner, audit_summary
 from .review import review_event_from_oracle
-
-
-class BackendRunner(Protocol):
-    def __call__(self, context: str) -> BackendResult: ...
 
 
 @dataclass(frozen=True)

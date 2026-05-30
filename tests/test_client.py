@@ -6,7 +6,7 @@ import unittest
 from typing import Any
 from unittest.mock import patch
 
-from coverify.client import CosheafClient, CosheafConfig
+from coverify.cosheaf.client import CosheafClient, CosheafConfig
 
 
 class FakeResponse:
@@ -36,7 +36,7 @@ class ClientTests(unittest.TestCase):
             return FakeResponse({"slug": "w", "default_md_format": "coflat"})
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
-        with patch("coverify.client.urlopen", fake_urlopen):
+        with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
             response = client.create_workspace("w", "Workspace", default_md_format="coflat")
 
         self.assertEqual(response["default_md_format"], "coflat")
@@ -59,7 +59,7 @@ class ClientTests(unittest.TestCase):
             return FakeResponse({"slug": "w"})
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
-        with patch("coverify.client.urlopen", fake_urlopen):
+        with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
             client.create_workspace("w", "Workspace")
 
         self.assertEqual(captured["body"], {"slug": "w", "name": "Workspace"})
@@ -75,7 +75,7 @@ class ClientTests(unittest.TestCase):
             return FakeResponse({"ok": True, "username": "vera", "role": "write"})
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
-        with patch("coverify.client.urlopen", fake_urlopen):
+        with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
             response = client.set_workspace_member("w", "vera", "write")
 
         self.assertEqual(response["ok"], True)
@@ -93,7 +93,7 @@ class ClientTests(unittest.TestCase):
             return FakeResponse({"number": 3, "title": "Try lower bound", "state": "open"})
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
-        with patch("coverify.client.urlopen", fake_urlopen):
+        with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
             response = client.create_issue("w", title="Try lower bound", body="body")
 
         self.assertEqual(response["number"], 3)
@@ -111,7 +111,7 @@ class ClientTests(unittest.TestCase):
             return FakeResponse({"number": 3, "title": "Try lower bound", "body": "updated"})
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
-        with patch("coverify.client.urlopen", fake_urlopen):
+        with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
             response = client.edit_issue("w", 3, body="updated")
 
         self.assertEqual(response["body"], "updated")
@@ -133,7 +133,7 @@ class ClientTests(unittest.TestCase):
             return FakeResponse({"events": [{"type": "close"}]})
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
-        with patch("coverify.client.urlopen", fake_urlopen):
+        with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
             response = client.read_issue_timeline("w", 23)
 
         self.assertEqual(response["events"], [{"type": "close"}])
@@ -150,7 +150,7 @@ class ClientTests(unittest.TestCase):
             return FakeResponse({"ok": True, "state": "open"})
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
-        with patch("coverify.client.urlopen", fake_urlopen):
+        with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
             response = client.reopen_issue("w", 23)
 
         self.assertEqual(response["state"], "open")
@@ -172,7 +172,7 @@ class ClientTests(unittest.TestCase):
             return FakeResponse({"results": []})
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
-        with patch("coverify.client.urlopen", fake_urlopen):
+        with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
             response = client.search("w", "series parallel")
 
         self.assertEqual(response["results"], [])
@@ -189,7 +189,7 @@ class ClientTests(unittest.TestCase):
             return FakeResponse({"ok": True, "branch": "agent/cleanup"})
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
-        with patch("coverify.client.urlopen", fake_urlopen):
+        with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
             response = client.delete_branch_file("w", "old.md", "agent/cleanup")
 
         self.assertEqual(response["ok"], True)
@@ -212,7 +212,7 @@ class ClientTests(unittest.TestCase):
             return FakeResponse({"ok": True})
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
-        with patch("coverify.client.urlopen", fake_urlopen):
+        with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
             client.list_pull_requests("w", state="all")
             client.read_pull_request("w", 7)
             client.close_pull_request("w", 7)
@@ -236,7 +236,7 @@ class ClientTests(unittest.TestCase):
             return FakeResponse({"number": 7, "title": "Proof update"})
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
-        with patch("coverify.client.urlopen", fake_urlopen):
+        with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
             response = client.read_pull_request_context("w", 7)
 
         self.assertEqual(

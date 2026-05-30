@@ -60,6 +60,35 @@ knowledge, normally by branch, PR, review, and merge.
   policy. A reviewer identity submits the review result to Cosheaf; the
   correctness judgment should come from the review oracle, not from the runner.
 
+## Package Layers
+
+Coverify's one job is to produce a trustworthy answer: take a question, return
+an answer it has checked, with an audit trail. Everything else is either the
+substrate for that or a consumer of it. The dividing line with Cosheaf:
+
+- **Cosheaf owns the workspace** — durable state (pages, issues, PRs),
+  identity, and presentation/UI. Chat threads, chat tabs, and rendered
+  conversations belong here.
+- **Coverify owns the thinking** — the verified answer and the audited oracle
+  calls. It is the brain, not the workspace; it never grows a UI or a store.
+- **Thin glue maps one onto the other** — read Cosheaf state, run an oracle,
+  write Cosheaf state back.
+
+The `src/coverify` package makes these layers explicit, with dependencies only
+ever pointing inward toward the core:
+
+| Layer | Package | Knows Cosheaf? | Contents |
+| --- | --- | --- | --- |
+| Core | `coverify.core` | no | backend contract + `BackendRunner`, audit bundles, the verifying oracle |
+| Cosheaf client | `coverify.cosheaf` | yes (it *is* the SDK) | the typed Cosheaf HTTP client |
+| Integration / glue | `coverify.integration` | yes | `chat-reply`, proof workflows, PR-review decision mapping |
+| Applications | `coverify.apps` | mixed | eval harnesses, TTSP search, research tooling |
+
+`coverify.cli` is the top-level orchestrator that wires the layers together. The
+rule of thumb: "make the answer better" work lands in core; "talk to the
+workspace" work lands in integration; domain experiments land in apps;
+presentation never enters Coverify at all.
+
 ## State Model
 
 Durable state should map to Cosheaf primitives:
@@ -472,6 +501,46 @@ Bad oracle tasks:
 Raw oracle output is evidence, not truth. Quarantine it while evaluating. If
 preserved in Cosheaf, label it as `oracle-output`; if it is useful, distill it
 into reviewed claims, obstructions, or questions.
+
+### Self-Verifying Oracle
+
+Because every backend is `prompt -> BackendResult`, a backend may itself be
+composed of other backends. The `verifying` backend (`coverify.core.verifying`)
+is such a composite: it produces its answer by running a generate → verify →
+adjudicate loop over sub-oracles.
+
+- a generator produces a candidate answer;
+- one or more verifiers act as adversarial referees, each ending its reply with
+  a single `VERDICT: PASS | FAIL` line; failing critiques feed back to the
+  self-revising generator;
+- any FAIL triggers another round; the loop stops on the first all-PASS round,
+  or when `max_rounds` is exhausted;
+- a final adjunct always writes the natural-language reply, asserting only what
+  was verified and stating plainly what it could not.
+
+A broken verifier (call failure after retries, or no parseable verdict) is
+ERROR. The lenient default treats ERROR as PASS for loop control so a run still
+produces something, recording the unrun check in the audit journal; a `strict`
+profile refuses to answer instead. Each step (generator, verifier, adjunct) is a
+`{backend, prompt}`, so profiles can mix backends and add custom verifiers;
+named profiles and a JSON config select them. The verify/revise rounds are the
+oracle's private reasoning and stay in the audit bundle, not in PR or issue
+threads — only the adjudicated answer is surfaced. Runs are journaled, so an
+interrupted oracle resumes from completed steps rather than restarting.
+
+This is the same backend contract, so a verifying oracle drops into
+`ask-oracle`, `run-eval`, and the workflows unchanged, and can even nest inside
+another verifying oracle as one of its verifiers.
+
+### Issue Chat
+
+`chat-reply` (integration glue) treats a Cosheaf issue as a chat thread: the
+opening post and each comment is one turn. It reads the thread, runs the
+configured oracle — normally a verifying oracle — on the conversation, and posts
+one adjudicated reply as a comment. The chat data lives in Cosheaf issues, so
+the feature degrades gracefully when Coverify is offline: the thread still
+renders, the reply just has not arrived yet. Any chat UI belongs in Cosheaf
+(a view over issues), not in Coverify.
 
 ## Knowledge Workflow
 

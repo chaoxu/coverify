@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from .backend import BackendResult
-from .review import parse_review_decision
+from ..core.backend import BackendResult
+from ..integration.review import parse_review_decision
 
 
 @dataclass(frozen=True)

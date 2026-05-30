@@ -5,9 +5,9 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from coverify.backend import BackendResult, run_fixture_backend, run_script_backend
-from coverify.client import CosheafError
-from coverify.workflows import (
+from coverify.core.backend import BackendResult, run_fixture_backend, run_script_backend
+from coverify.cosheaf.client import CosheafError
+from coverify.integration.workflows import (
     InfinitePrimesRunOptions,
     build_infinite_primes_context,
     kb_write_infinite_primes_from_oracle,

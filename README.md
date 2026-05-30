@@ -65,6 +65,12 @@ The design target:
 The first runnable surface is a Python CLI package under `src/coverify`.
 Use `PYTHONPATH=src python3 -m coverify --help` from this checkout.
 
+The package is organized into layers (see [`docs/design.md`](docs/design.md)):
+`core` (the backend contract and the self-verifying oracle, Cosheaf-agnostic),
+`cosheaf` (the Cosheaf HTTP client), `integration` (chat and proof-workflow
+glue), and `apps` (eval and search tooling). Coverify produces verified
+answers; Cosheaf owns durable state and presentation.
+
 Install repo-owned skills for Codex discovery:
 
 ```bash
@@ -86,6 +92,15 @@ Implemented commands:
 - `ask-oracle`: send one prompt to the configured backend oracle and record
   the standard prompt/answer/metadata audit bundle. Transient backend failures
   can be retried with `--backend-retries`; the default is one retry.
+- `--backend verifying`: a composite self-verifying oracle. It runs a
+  generate → adversarial-verify → adjudicate loop over sub-oracles and returns
+  one answer it has checked, journaling the rounds into the audit bundle.
+  Tune it with `--verify-profile {default,strict}`, `--verify-config <json>`,
+  `--verify-inner-backend`, `--verify-max-rounds`, `--verify-strict`,
+  `--verify-quiet-adjunct`, and `--verify-resume <dir>`.
+- `chat-reply`: treat a Cosheaf issue as a chat thread; read the conversation,
+  run the configured oracle (typically `verifying`), and post one adjudicated
+  reply comment. Durable chat state stays in Cosheaf issues.
 - `run-eval`: run JSONL eval cases against a fixture, script, or explicitly
   enabled Codex backend and emit a JSON report with grader results and audit
   artifact links.
@@ -118,6 +133,28 @@ Direct oracle call:
 PYTHONPATH=src python3 -m coverify ask-oracle \
   --prompt "Give a concise proof attempt for the current lemma." \
   --json
+```
+
+Self-verifying oracle (deterministic fixture smoke):
+
+```bash
+PYTHONPATH=src python3 -m coverify ask-oracle \
+  --backend verifying \
+  --verify-inner-backend fixture \
+  --prompt "Prove that there are infinitely many prime numbers." \
+  --json
+```
+
+Each run leaves a `verifying` audit bundle whose `journal.json` records the
+generator, the verifier verdicts, and the adjudicator for every round.
+
+Issue chat reply (run the oracle on an issue thread and post the answer):
+
+```bash
+PYTHONPATH=src python3 -m coverify chat-reply \
+  --workspace poa-network-game-clean \
+  --issue 23 \
+  --backend verifying
 ```
 
 Smoke eval:

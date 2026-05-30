@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from coverify.backend import BackendResult
-from coverify.evals import EvalCase, grade_answer, load_eval_cases, run_eval_cases
+from coverify.core.backend import BackendResult
+from coverify.apps.evals import EvalCase, grade_answer, load_eval_cases, run_eval_cases
 
 
 class EvalTests(unittest.TestCase):

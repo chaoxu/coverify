@@ -87,6 +87,17 @@ Large generated Markdown files, transcripts, floating-point dumps, and raw
 oracle answers are not durable knowledge. They should be distilled into compact
 claims, tables, pseudocode, certificates, source notes, or failed-route notes.
 
+### Verification Travels With The Answer
+
+An oracle should check its own work before its answer is trusted. The harness
+provides a self-verifying oracle that runs adversarial verification internally
+and emits only an adjudicated answer plus an honest account of what it could not
+establish. This pushes cheap, repeated checking down into the oracle call, so
+that PR review and human judgment are reserved for what genuinely needs them.
+The verification reasoning is the oracle's private work and belongs in the audit
+bundle, not in durable threads; what is surfaced is the checked answer, marked
+honestly where confidence is partial.
+
 ### Review Separates Belief From Coordination
 
 Issues and comments coordinate live work. Accepted knowledge requires a merged
@@ -126,5 +137,8 @@ repeating work, even if the prose looks different.
 - Cleanup should prefer fewer, clearer topic pages over bucket-shaped files.
 - More structure, such as dependent issues or route graphs, is useful only when
   it helps future attempts start from what is already known.
+- Coverify produces verified answers; Cosheaf owns durable state and
+  presentation. A chat interface is a view over Cosheaf issues, not a second
+  system inside Coverify.
 - Prompts should operationalize these principles, not duplicate the entire
   architecture contract.

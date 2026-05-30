@@ -7,30 +7,34 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-from .backend import (
+from .core.backend import (
     BackendResult,
     run_codex_backend,
     run_fixture_backend,
     run_script_backend,
 )
-from .client import CosheafClient, CosheafConfig
-from .evals import load_eval_cases, run_eval_cases
-from .research_evals import load_research_eval_candidates, seed_research_eval_workspace, utc_stamp
-from .ttsp_search import QueueConfig, SearchConfig, build_queue_payload, build_search_payload
-from .chat import extract_login, run_chat_reply
-from .verifying import (
+from .core.verifying import (
     Step,
     VerifyingOracle,
     builtin_profile,
     load_verifying_config,
     verifying_config_from_dict,
 )
-from .workflows import (
+from .cosheaf.client import CosheafClient, CosheafConfig
+from .integration.chat import extract_login, run_chat_reply
+from .integration.workflows import (
     InfinitePrimesRunOptions,
     default_branch_name,
     run_ask_oracle,
     run_infinite_primes_workflow,
 )
+from .apps.evals import load_eval_cases, run_eval_cases
+from .apps.research_evals import (
+    load_research_eval_candidates,
+    seed_research_eval_workspace,
+    utc_stamp,
+)
+from .apps.ttsp_search import QueueConfig, SearchConfig, build_queue_payload, build_search_payload
 
 
 def env(name: str, default: str = "") -> str:

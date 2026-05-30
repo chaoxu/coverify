@@ -40,11 +40,11 @@ from typing import Any
 
 from .backend import (
     BackendResult,
+    BackendRunner,
     ensure_artifact_dir,
     write_audit_metadata,
     write_prompt_file,
 )
-from .workflows import BackendRunner
 
 
 class Verdict(StrEnum):

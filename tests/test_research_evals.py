@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from coverify.research_evals import (
+from coverify.apps.research_evals import (
     ResearchEvalCandidate,
     load_research_eval_candidates,
     problem_page,

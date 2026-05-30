@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 from typing import Callable
 
-from coverify.backend import BackendResult
-from coverify.verifying import (
+from coverify.core.backend import BackendResult
+from coverify.core.verifying import (
     Step,
     StrictVerificationError,
     Verdict,
