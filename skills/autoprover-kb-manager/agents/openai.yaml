@@ -1,4 +1,0 @@
-interface:
-  display_name: "Autoprover KB Manager"
-  short_description: "Clean up topic-shaped KB pages"
-  default_prompt: "Use $autoprover-kb-manager to clean up and consolidate the Cosheaf wiki while preserving useful things tried."

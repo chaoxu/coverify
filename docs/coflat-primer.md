@@ -7,7 +7,7 @@ tool-harness design has no fixed prompt pipeline yet.
 ## Doc Map
 
 - [README](../README.md) is the repository entry point.
-- [Autoprover Design](design.md) defines when this primer is used by context
+- [Coverify Design](design.md) defines when this primer is used by context
   builders, backend calls, writer skills, and review workflows.
 - [References And Future Notes](references.md) explains the paper-inspired
   review and knowledge-format constraints that motivate stable block ids.

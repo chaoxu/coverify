@@ -1,4 +1,0 @@
-interface:
-  display_name: "Autoprover Loop"
-  short_description: "Run the lightweight progress loop"
-  default_prompt: "Use $autoprover-run-loop to make durable Cosheaf progress by building context, choosing one action, writing state, verifying, and measuring completeness."

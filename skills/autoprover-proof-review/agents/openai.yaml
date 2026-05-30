@@ -1,4 +1,0 @@
-interface:
-  display_name: "Autoprover Review"
-  short_description: "Review math PRs before merge"
-  default_prompt: "Use $autoprover-proof-review to review a Cosheaf PR for mathematical correctness before merge."

@@ -1,6 +1,6 @@
-# Autoprover Design
+# Coverify Design
 
-Autoprover is being restarted as a small Codex tool harness around Cosheaf.
+Coverify is being restarted as a small Codex tool harness around Cosheaf.
 The old proof harness has been removed. Proof work, benchmark work, verifier
 calibration, and learning systems are future workflows built on top of this
 harness, not the core architecture.
@@ -22,7 +22,7 @@ knowledge, normally by branch, PR, review, and merge.
   They cover context building, exploration planning, proof attempts, KB
   writing, PR review, KB management, and the lightweight run loop.
 - [Philosophy](philosophy.md) records the stable principles that explain why
-  Autoprover uses Cosheaf for durable state, topic-shaped knowledge pages,
+  Coverify uses Cosheaf for durable state, topic-shaped knowledge pages,
   reviewed promotion, negative knowledge, and retry gates.
 - This file is the canonical architecture and workflow contract.
 - The Cosheaf workspace is the tracked mathematical state: topic-first wiki
@@ -48,7 +48,7 @@ knowledge, normally by branch, PR, review, and merge.
   run lifecycle, context selection, tool use, stop conditions, retry policy,
   artifact writing, and final response. It should not be trusted as the source
   of mathematical reasoning when an oracle call is possible.
-- **Autoprover harness** provides Cosheaf adapters, context-building helpers,
+- **Coverify harness** provides Cosheaf adapters, context-building helpers,
   and backend-script invocation. It must not become a second workflow database.
 - **Model backend** means a script, CLI, API wrapper, remote job, or future
   stronger system. The minimum contract is stdin prompt in, stdout answer out.
@@ -121,7 +121,7 @@ and linked Cosheaf artifacts. It is not project memory.
 Rejected durable stores for v1:
 
 - separate task queue
-- autoprover-owned issue graph
+- coverify-owned issue graph
 - proposal/review table
 - branch or PR mirror
 - hidden long-term agent memory
@@ -129,9 +129,9 @@ Rejected durable stores for v1:
 
 ## Cosheaf Contract
 
-Autoprover must talk to Cosheaf, not directly to Forgejo. The current Cosheaf
+Coverify must talk to Cosheaf, not directly to Forgejo. The current Cosheaf
 implementation is Forgejo-backed, but Forgejo is an implementation detail.
-Autoprover-facing tools should expose Cosheaf concepts: pages, branches, PRs,
+Coverify-facing tools should expose Cosheaf concepts: pages, branches, PRs,
 reviews, issues, labels, comments, notifications, and merge gates.
 
 The current typed API is rooted at:
@@ -149,7 +149,7 @@ Authorization: Bearer <cosheaf-token>
 Today that token is a Forgejo PAT resolved by Cosheaf to a workspace user and
 role. Keep this as adapter configuration, not workflow state.
 
-Normal workflows must use typed Cosheaf routes. Do not bind autoprover to
+Normal workflows must use typed Cosheaf routes. Do not bind coverify to
 `/forgejo/...` compatibility routes or Forgejo request bodies. If a needed
 operation is missing from Cosheaf, that is Cosheaf API work.
 
@@ -324,7 +324,7 @@ They are not a substitute for an oracle correctness decision.
 Context building is an orchestrator responsibility. A context pack is a
 temporary working excerpt for one task, not a durable artifact class and not a
 second knowledge base. The orchestrator may build it directly or use
-[`autoprover-context-builder`](../skills/autoprover-context-builder/SKILL.md).
+[`coverify-context-builder`](../skills/coverify-context-builder/SKILL.md).
 
 `build_context_pack`, if implemented as code, should take artifact references
 and a task:
@@ -563,7 +563,7 @@ edits, and PR review.
 sequenceDiagram
     participant User
     participant Runner as "Codex runner"
-    participant Tools as "Autoprover tools"
+    participant Tools as "Coverify tools"
     participant Cosheaf
     participant Backend as "Optional backend"
     participant Reviewer as "Reviewer identity"
@@ -654,7 +654,7 @@ must not be cited as mathematical evidence until promoted through exact
 verification, PR review, and merge.
 
 The philosophy behind these trust distinctions is in
-[Autoprover Philosophy](philosophy.md). In particular, negative knowledge is
+[Coverify Philosophy](philosophy.md). In particular, negative knowledge is
 durable when it changes future behavior: a failed route should be promoted only
 after it has been distilled into a compact, reviewable topic-page note with a
 clear retry condition.
@@ -662,7 +662,7 @@ clear retry condition.
 ## Runs, Jobs, Progress, And Claiming
 
 A **run** is one bounded execution attempt by a runner. The runner owns it.
-Autoprover does not create a durable run object. A run can contain multiple
+Coverify does not create a durable run object. A run can contain multiple
 oracle calls, for example one exploration call, one proof-attempt call, and one
 review call. Those calls are represented by separate local artifact
 directories and by whatever Cosheaf PR/comment/knowledge artifacts the runner
@@ -729,13 +729,13 @@ blocks.
 
 The concrete v1 operational skills are:
 
-- [`autoprover-run-loop`](../skills/autoprover-run-loop/SKILL.md)
-- [`autoprover-context-builder`](../skills/autoprover-context-builder/SKILL.md)
-- [`autoprover-exploration-planner`](../skills/autoprover-exploration-planner/SKILL.md)
-- [`autoprover-proof-attempt`](../skills/autoprover-proof-attempt/SKILL.md)
-- [`autoprover-kb-writer`](../skills/autoprover-kb-writer/SKILL.md)
-- [`autoprover-proof-review`](../skills/autoprover-proof-review/SKILL.md)
-- [`autoprover-kb-manager`](../skills/autoprover-kb-manager/SKILL.md)
+- [`coverify-run-loop`](../skills/coverify-run-loop/SKILL.md)
+- [`coverify-context-builder`](../skills/coverify-context-builder/SKILL.md)
+- [`coverify-exploration-planner`](../skills/coverify-exploration-planner/SKILL.md)
+- [`coverify-proof-attempt`](../skills/coverify-proof-attempt/SKILL.md)
+- [`coverify-kb-writer`](../skills/coverify-kb-writer/SKILL.md)
+- [`coverify-proof-review`](../skills/coverify-proof-review/SKILL.md)
+- [`coverify-kb-manager`](../skills/coverify-kb-manager/SKILL.md)
 
 The prompt files under [prompts](prompts/README.md) preserve longer source
 text and reference patterns. The skills are the orchestration interface.
@@ -785,7 +785,7 @@ NON_BLOCKING_NOTES:
 1. Implement minimal branch/PR/issue-native Cosheaf tools.
 2. Add a smoke harness that validates current Cosheaf API operations and
    leaves inspectable issues, branches, PRs, reviews, and pages.
-3. Add and keep complete the Autoprover skills under `skills/`.
+3. Add and keep complete the Coverify skills under `skills/`.
 4. Add pluggable backend invocation with the stdin/stdout script contract,
    starting with the Codex `gpt-5.5` + `xhigh` wrapper.
 5. Add promotion-audit checks for trust distinctions, model scope, stale
@@ -804,7 +804,7 @@ NON_BLOCKING_NOTES:
 ## Non-Goals
 
 - No separate durable task database.
-- No autoprover-owned review queue.
+- No coverify-owned review queue.
 - No hidden agent memory that humans cannot inspect.
 - No provider-specific oracle design in the core.
 - No direct Forgejo access from the harness.

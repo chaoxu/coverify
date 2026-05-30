@@ -1,10 +1,10 @@
 # Reference Prompt Collection
 
 This directory collects prompt patterns from other mathematical-agent systems.
-These files are references for humans and runners, not canonical Autoprover v1
+These files are references for humans and runners, not canonical Coverify v1
 workflow definitions.
 
-Autoprover's canonical prompt surface remains:
+Coverify's canonical prompt surface remains:
 
 1. Explore current Cosheaf state and produce issue-ready directions.
 2. Attempt one well-defined proof/disproof/obstruction.

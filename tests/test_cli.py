@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from autoprover.cli import build_parser
+from coverify.cli import build_parser
 
 
 class FakeClient:
@@ -65,7 +65,7 @@ class CliTests(unittest.TestCase):
         args = parser.parse_args(argv)
         stdout = io.StringIO()
         with (
-            patch("autoprover.cli.authed_client_from_args", return_value=client),
+            patch("coverify.cli.authed_client_from_args", return_value=client),
             patch("sys.stdout", stdout),
         ):
             self.assertEqual(args.func(args), 0)
@@ -305,6 +305,74 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(args.allow_codex_backend, True)
 
+    def test_run_eval_dispatches_fixture_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cases = Path(tmpdir) / "cases.jsonl"
+            cases.write_text(
+                (
+                    '{"id":"c1","task_set":"T0","prompt":"prove primes",'
+                    '"grader":"contains_all","expect":{"required":["infinitely many prime"]}}\n'
+                ),
+                encoding="utf-8",
+            )
+            args = build_parser().parse_args(
+                [
+                    "run-eval",
+                    "--backend",
+                    "fixture",
+                    "--run-dir",
+                    str(Path(tmpdir) / "runs"),
+                    "--cases",
+                    str(cases),
+                ],
+            )
+            stdout = io.StringIO()
+
+            with patch("sys.stdout", stdout):
+                self.assertEqual(args.func(args), 0)
+
+            result = json.loads(stdout.getvalue())
+            self.assertEqual(result["summary"]["passed"], 1)
+            self.assertEqual(result["results"][0]["id"], "c1")
+
+    def test_scaffold_workdir_creates_local_wrappers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parser = build_parser()
+            args = parser.parse_args(
+                [
+                    "scaffold-workdir",
+                    "--workspace",
+                    "demo-workspace",
+                    "--works-root",
+                    tmpdir,
+                    "--coverify-checkout",
+                    "/repo/coverify",
+                    "--qed-root",
+                    "/repo/QED",
+                ],
+            )
+            stdout = io.StringIO()
+
+            with patch("sys.stdout", stdout):
+                self.assertEqual(args.func(args), 0)
+
+            result = json.loads(stdout.getvalue())
+            workdir = Path(result["workdir"])
+            self.assertEqual(workdir, Path(tmpdir) / "demo-workspace")
+            self.assertTrue((workdir / "bin" / "coverify").exists())
+            self.assertTrue((workdir / "bin" / "chatgpt-coverify").exists())
+            self.assertTrue((workdir / "bin" / "qed-coverify").exists())
+            self.assertTrue((workdir / "bin" / "qed-chatgpt-coverify").exists())
+            self.assertTrue((workdir / "config" / "qed-codex-low.yaml").exists())
+            self.assertTrue((workdir / "config" / "qed-chatgpt-oracle.yaml").exists())
+            self.assertIn("demo-workspace", (workdir / ".env.example").read_text(encoding="utf-8"))
+            self.assertIn("CHATGPT_CLI", (workdir / ".env.example").read_text(encoding="utf-8"))
+            self.assertIn("/repo/coverify", (workdir / "bin" / "coverify").read_text(encoding="utf-8"))
+            chatgpt_config = (workdir / "config" / "qed-chatgpt-oracle.yaml").read_text(encoding="utf-8")
+            self.assertIn("chatgpt:", chatgpt_config)
+            self.assertIn('provider: "chatgpt"', chatgpt_config)
+            self.assertNotIn("qed_chatgpt_codex_shim.py", chatgpt_config)
+
     def test_ttsp_search_cli_emits_bounded_search_payload(self) -> None:
         parser = build_parser()
         args = parser.parse_args(
@@ -382,6 +450,59 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["source_parameters"]["terminal_scope"], "internal")
         self.assertEqual(payload["queue_parameters"]["players"], 3)
         self.assertEqual(len(payload["queued_graphs"][0]["best_terminal_quads"][0]["terminal_pair_ids"]), 3)
+
+    def test_seed_research_evals_dispatches_to_client(self) -> None:
+        class SeedClient:
+            def create_branch(self, workspace: str, name: str) -> dict[str, str]:
+                return {"name": name}
+
+            def create_issue(self, workspace: str, *, title: str, body: str) -> dict[str, int]:
+                return {"number": 1}
+
+            def write_branch_file(self, workspace: str, path: str, branch: str, content: str) -> dict[str, bool]:
+                return {"ok": True}
+
+            def open_pull_request(self, workspace: str, *, head: str, title: str, body: str, base: str = "main") -> dict[str, int]:
+                return {"number": 2}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            candidates = Path(tmpdir) / "candidates.jsonl"
+            candidates.write_text(
+                (
+                    '{"id":"researchmath-14k-000-sample","source":"ResearchMath row 0",'
+                    '"source_url":"https://example.test","domain":"Number Theory",'
+                    '"statement_sketch":"Prove something research-level.",'
+                    '"target_artifact":"A reviewed note.","why_good_eval":"It is hard.",'
+                    '"tier":"research-open","one_shot_probe":"Try it.",'
+                    '"few_shot_probe":"Use prior state."}\n'
+                ),
+                encoding="utf-8",
+            )
+            args = build_parser().parse_args(
+                [
+                    "seed-research-evals",
+                    "--token",
+                    "tok",
+                    "--workspace",
+                    "w",
+                    "--candidates",
+                    str(candidates),
+                    "--branch",
+                    "research-eval-seed-test",
+                ],
+            )
+            stdout = io.StringIO()
+
+            with (
+                patch("coverify.cli.build_client", return_value=SeedClient()),
+                patch("sys.stdout", stdout),
+            ):
+                self.assertEqual(args.func(args), 0)
+
+        result = json.loads(stdout.getvalue())
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["candidate_count"], 1)
+        self.assertEqual(result["pr_number"], 2)
 
 if __name__ == "__main__":
     unittest.main()

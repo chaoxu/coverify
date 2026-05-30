@@ -5,7 +5,7 @@ import json
 import unittest
 from unittest.mock import patch
 
-from autoprover.ttsp_search import (
+from coverify.ttsp_search import (
     EDGE,
     QueueConfig,
     SearchConfig,

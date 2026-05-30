@@ -1,7 +1,7 @@
 # Exploration Planner Prompt
 
 The durable operational entry point is
-[`autoprover-exploration-planner`](../../skills/autoprover-exploration-planner/SKILL.md).
+[`coverify-exploration-planner`](../../skills/coverify-exploration-planner/SKILL.md).
 
 Use that skill when a runner needs to inspect current Cosheaf knowledge,
 existing issues/PRs, and "things tried" notes before proposing issue-ready

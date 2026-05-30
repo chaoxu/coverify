@@ -8,6 +8,9 @@ from json import loads
 from pathlib import Path
 
 
+LEGACY_SKILL_PREFIX = "auto" + "prover-"
+
+
 def default_codex_skill_dir() -> Path:
     return Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "skills"
 
@@ -21,13 +24,15 @@ def skill_names(skills_root: Path) -> list[str]:
     return [item["name"] for item in manifest["skills"]]
 
 
-def stale_autoprover_links(dest_root: Path, expected: set[str]) -> list[str]:
+def stale_coverify_links(dest_root: Path, expected: set[str]) -> list[str]:
     if not dest_root.exists():
         return []
     stale: list[str] = []
     for path in dest_root.iterdir():
-        if path.name.startswith("autoprover-") and path.name not in expected:
-            stale.append(f"stale Autoprover skill in discovery dir: {path}")
+        if path.name.startswith(LEGACY_SKILL_PREFIX):
+            stale.append(f"stale pre-Coverify skill in discovery dir: {path}")
+        if path.name.startswith("coverify-") and path.name not in expected:
+            stale.append(f"stale Coverify skill in discovery dir: {path}")
     return stale
 
 
@@ -49,7 +54,7 @@ def ensure_link(source: Path, dest: Path, *, check: bool) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="Link repo-owned Autoprover skills into Codex skill discovery.")
+    parser = argparse.ArgumentParser(description="Link repo-owned Coverify skills into Codex skill discovery.")
     parser.add_argument("--skills-dir", type=Path, default=repo_root() / "skills")
     parser.add_argument("--codex-skills-dir", type=Path, default=default_codex_skill_dir())
     parser.add_argument("--check", action="store_true", help="verify links without creating them")
@@ -62,7 +67,7 @@ def main(argv: list[str]) -> int:
     if not args.check:
         args.codex_skills_dir.mkdir(parents=True, exist_ok=True)
 
-    problems.extend(stale_autoprover_links(args.codex_skills_dir, set(names)))
+    problems.extend(stale_coverify_links(args.codex_skills_dir, set(names)))
     for name in names:
         source = (args.skills_dir / name).resolve()
         dest = args.codex_skills_dir / name
@@ -73,7 +78,7 @@ def main(argv: list[str]) -> int:
             print(f"FAIL {problem}", file=sys.stderr)
         return 1
     action = "verified" if args.check else "linked"
-    print(f"{action} {len(names)} Autoprover skills in {args.codex_skills_dir}")
+    print(f"{action} {len(names)} Coverify skills in {args.codex_skills_dir}")
     return 0
 
 

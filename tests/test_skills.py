@@ -29,7 +29,7 @@ link_skills = load_script("link_skills", LINK_SKILLS)
 
 
 class SkillCompletenessTests(unittest.TestCase):
-    def test_autoprover_skills_are_complete(self) -> None:
+    def test_coverify_skills_are_complete(self) -> None:
         checks = check_skills.check_all(ROOT / "skills")
         failures = {
             check.name: check.problems
@@ -42,7 +42,7 @@ class SkillCompletenessTests(unittest.TestCase):
         specs = check_skills.load_manifest(ROOT / "skills")
         names = [spec.name for spec in specs]
         self.assertEqual(len(names), len(set(names)))
-        skill_dirs = sorted(path.name for path in (ROOT / "skills").glob("autoprover-*") if (path / "SKILL.md").exists())
+        skill_dirs = sorted(path.name for path in (ROOT / "skills").glob("coverify-*") if (path / "SKILL.md").exists())
         self.assertEqual(sorted(names), skill_dirs)
 
     def test_link_skills_creates_manifest_driven_symlinks(self) -> None:
@@ -78,15 +78,15 @@ class SkillCompletenessTests(unittest.TestCase):
             self.assertFalse(dest.exists())
 
     def test_check_skills_uses_exact_second_level_headings(self) -> None:
-        spec = check_skills.SkillSpec("autoprover-bad", ["Purpose"], [])
+        spec = check_skills.SkillSpec("coverify-bad", ["Purpose"], [])
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            skill = root / "autoprover-bad"
+            skill = root / "coverify-bad"
             (skill / "agents").mkdir(parents=True)
             (skill / "SKILL.md").write_text(
                 "\n".join([
                     "---",
-                    "name: autoprover-bad",
+                    "name: coverify-bad",
                     "description: " + "x" * 90,
                     "---",
                     "",
@@ -102,7 +102,7 @@ class SkillCompletenessTests(unittest.TestCase):
                     "interface:",
                     "  display_name: \"Bad\"",
                     "  short_description: \"Bad skill heading fixture\"",
-                    "  default_prompt: \"Use $autoprover-bad for tests.\"",
+                    "  default_prompt: \"Use $coverify-bad for tests.\"",
                     "",
                 ]),
                 encoding="utf-8",
@@ -111,22 +111,32 @@ class SkillCompletenessTests(unittest.TestCase):
         self.assertFalse(check.ok)
         self.assertIn("missing section: Purpose", check.problems)
 
-    def test_unmanifested_autoprover_skill_fails_repository_check(self) -> None:
+    def test_unmanifested_coverify_skill_fails_repository_check(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            extra = root / "autoprover-extra"
+            extra = root / "coverify-extra"
             extra.mkdir()
             (extra / "SKILL.md").write_text("# Extra\n", encoding="utf-8")
             check = check_skills.check_repository(root, [])
         self.assertFalse(check.ok)
-        self.assertIn("unmanifested skill directory: autoprover-extra", check.problems)
+        self.assertIn("unmanifested skill directory: coverify-extra", check.problems)
+
+    def test_legacy_pre_coverify_skill_fails_repository_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            legacy = root / ("auto" + "prover-context-builder")
+            legacy.mkdir()
+            (legacy / "SKILL.md").write_text("# Legacy\n", encoding="utf-8")
+            check = check_skills.check_repository(root, [])
+        self.assertFalse(check.ok)
+        self.assertIn("legacy pre-Coverify skill directory: auto" + "prover-context-builder", check.problems)
 
     def test_context_and_planner_keep_prior_route_guard(self) -> None:
         checks = {
-            "autoprover-context-builder": ["closest tried route", "materially different"],
-            "autoprover-exploration-planner": ["Prior route check", "issue-ready"],
-            "autoprover-proof-attempt": ["Things tried", "Do not retry"],
-            "autoprover-run-loop": ["PRIOR_ROUTE_CHECK", "THINGS_TRIED_UPDATED"],
+            "coverify-context-builder": ["closest tried route", "materially different"],
+            "coverify-exploration-planner": ["Prior route check", "issue-ready"],
+            "coverify-proof-attempt": ["Things tried", "Do not retry"],
+            "coverify-run-loop": ["PRIOR_ROUTE_CHECK", "THINGS_TRIED_UPDATED"],
         }
         for name, phrases in checks.items():
             text = (ROOT / "skills" / name / "SKILL.md").read_text(encoding="utf-8")

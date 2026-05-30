@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from autoprover.review import ReviewDecision, parse_review_decision, review_event_from_oracle
+from coverify.review import ReviewDecision, parse_review_decision, review_event_from_oracle
 
 
 class ReviewDecisionTests(unittest.TestCase):

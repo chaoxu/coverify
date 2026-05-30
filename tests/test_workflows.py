@@ -5,8 +5,9 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from autoprover.backend import BackendResult, run_fixture_backend, run_script_backend
-from autoprover.workflows import (
+from coverify.backend import BackendResult, run_fixture_backend, run_script_backend
+from coverify.client import CosheafError
+from coverify.workflows import (
     InfinitePrimesRunOptions,
     build_infinite_primes_context,
     kb_write_infinite_primes_from_oracle,
@@ -24,6 +25,7 @@ class FakeCosheaf:
         self.files: dict[tuple[str, str, str], str] = {}
         self.calls: list[tuple[str, Any]] = []
         self.next_pr = 1
+        self.list_failures_before_ready = 0
 
     def create_workspace(self, slug: str, name: str, *, default_md_format: str | None = None) -> dict[str, str]:
         self.calls.append(("create_workspace", (slug, default_md_format)))
@@ -32,6 +34,9 @@ class FakeCosheaf:
 
     def list_workspace_files(self, workspace: str, *, branch: str = "main") -> dict[str, list[dict[str, str]]]:
         self.calls.append(("list_workspace_files", (workspace, branch)))
+        if self.list_failures_before_ready > 0:
+            self.list_failures_before_ready -= 1
+            raise CosheafError("GET", f"/w/{workspace}/tree", 404, {"error": "workspace not found"})
         files = [
             {"path": path}
             for (ws, br, path), _content in self.files.items()
@@ -199,6 +204,38 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("REVIEWER_CHECKLIST", open_pr_call[1][4])
         self.assertTrue(any(call[0] == "review_pull_request" for call in reviewer.calls))
         self.assertTrue(any(call[0] == "merge_pull_request" for call in author.calls))
+
+    def test_workflow_waits_for_created_workspace_to_be_readable(self) -> None:
+        author = FakeCosheaf()
+        author.list_failures_before_ready = 1
+        with tempfile.TemporaryDirectory() as tmpdir:
+            options = InfinitePrimesRunOptions(
+                workspace="prime-demo",
+                workspace_name="Prime Demo",
+                default_md_format="coflat",
+                create_workspace=True,
+                allow_existing_workspace=False,
+                branch="agent/infinite-primes-test",
+                path="infinite-primes.md",
+                title="Proof",
+                merge=False,
+                force_merge=False,
+            )
+            result = run_infinite_primes_workflow(
+                client=author,
+                reviewer_client=None,
+                backend=lambda context: run_fixture_backend(context, artifact_root=Path(tmpdir)),
+                options=options,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            [call for call in author.calls if call[0] == "list_workspace_files"],
+            [
+                ("list_workspace_files", ("prime-demo", "main")),
+                ("list_workspace_files", ("prime-demo", "main")),
+            ],
+        )
 
     def test_workflow_refuses_merge_without_review(self) -> None:
         author = FakeCosheaf()

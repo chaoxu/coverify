@@ -1,13 +1,13 @@
-# Autoprover Philosophy
+# Coverify Philosophy
 
-This document records the stable principles behind the Autoprover design. It
+This document records the stable principles behind the Coverify design. It
 should stay short. Operational checklists belong in prompts; API contracts and
 workflow mechanics belong in [design.md](design.md).
 
 ## Motivation
 
 Strong language models can sometimes solve mathematical problems in one shot:
-ask for a proof, and the answer is correct enough to review. Autoprover exists
+ask for a proof, and the answer is correct enough to review. Coverify exists
 for the harder cases where that does not happen.
 
 The harness is built around a different bet: some problems may be solvable by a
@@ -24,7 +24,7 @@ many short mathematical attempts into directed exploration: keep what was
 learned, review what should be trusted, make failed routes searchable, and
 force retries to be materially different.
 
-Autoprover is therefore both a general mathematical exploration tool and a
+Coverify is therefore both a general mathematical exploration tool and a
 memory system for many-shot proof search. It should help a runner ask better
 next questions, avoid stale dead ends, and promote useful partial results into
 a shared knowledge base.

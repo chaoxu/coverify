@@ -1,0 +1,4 @@
+interface:
+  display_name: "Coverify Planner"
+  short_description: "Plan routes without repeating failures"
+  default_prompt: "Use $coverify-exploration-planner to propose issue-ready mathematical routes from current Cosheaf knowledge and things already tried."

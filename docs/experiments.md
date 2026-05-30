@@ -1,6 +1,6 @@
 # Experiments
 
-This document defines the first evaluation plan for Autoprover. The question is
+This document defines the first evaluation plan for Coverify. The question is
 not just whether the system can emit a proof. The question is whether a
 Cosheaf-backed runner produces more durable, reviewable mathematical progress
 than a fixed proof pipeline, a one-shot oracle, or QED-style multi-agent
@@ -9,13 +9,15 @@ generation under the same budget.
 ## Doc Map
 
 - [README](../README.md) is the repository entry point.
-- [Autoprover Design](design.md) defines the tool-harness contract.
+- [Coverify Design](design.md) defines the tool-harness contract.
+- [Eval Problem Selection](eval-problem-selection.md) defines the candidate
+  promotion rule and Coflat/Cosheaf task shape.
 - [References And Future Notes](references.md) records the external systems
   that inspire the experiment design.
 
 ## Claim To Test
 
-Autoprover should be better at long-horizon mathematical work because every
+Coverify should be better at long-horizon mathematical work because every
 important action leaves a Cosheaf artifact: issue, page, branch, PR, review,
 comment, label, or merge.
 
@@ -41,16 +43,20 @@ for all baselines.
 3. **Fixed multi-agent pipeline**: a QED-style prover/verifier/summarizer flow
    with fixed stages.
 4. **QED as backend**: QED receives a clean context pack and returns output;
-   Autoprover writes useful output as a PR and sends it through the normal
+   Coverify writes useful output as a PR and sends it through the normal
    review gate.
-5. **Autoprover full loop**: Codex operator, context packs, optional oracle
+5. **Coverify full loop**: Codex operator, context packs, optional oracle
    calls, PR review, repair, and merged knowledge.
 
 QED should be treated as a strategy provider, not as a competitor that must be
 kept outside the system. If QED produces a useful proof plan, obstruction, or
-partial proof, the right Autoprover behavior is to preserve and review it.
+partial proof, the right Coverify behavior is to preserve and review it.
 
 ## Task Sets
+
+Seed candidates live in `evals/problem-candidates.jsonl`. They are deliberately
+not final benchmark items yet; first run one-shot and reviewed-repair probes to
+measure whether they have the right difficulty profile.
 
 Start with tasks where correctness can be judged without pretending to solve
 unknown mathematics.
@@ -132,6 +138,14 @@ For fair comparison:
 
 ## First Experiments
 
+Run the local smoke eval before using budgeted backends:
+
+```bash
+PYTHONPATH=src python3 -m coverify run-eval \
+  --backend fixture \
+  --cases evals/smoke.jsonl
+```
+
 1. **Primitive tool smoke**
    - Run 10 T0 tasks end to end.
    - Require branch, PR, review, merge, path readback, and Cosheaf search
@@ -150,7 +164,13 @@ For fair comparison:
    - Wrap QED behind the same stdin/stdout backend contract.
    - Feed it context packs for T1-T2 tasks.
    - Store each useful result as a PR.
-   - Goal: test whether QED improves the Autoprover loop as one strategy.
+   - Goal: test whether QED improves the Coverify loop as one strategy.
+   - Initial adapter: `scripts/qed_backend.py` writes `problem.tex`, runs
+     `QED_ROOT/run.sh problem.tex qed_output config.yaml`, and returns a
+     compact digest of `proof.md`, `proof_effort_summary.md`, or failure
+     analysis artifacts. Pass the adapter as an absolute path when using
+     `--backend script`, because script backends run inside the audit artifact
+     directory.
 
 4. **State ablation**
    - Run matched tasks with and without prior Cosheaf knowledge included in
@@ -183,9 +203,9 @@ into a reviewed page.
 
 Do not start hard comparisons until these exist:
 
-- `autoprover-context-builder` linked and passing completeness checks
-- `autoprover-proof-attempt` linked and passing completeness checks
-- `autoprover-proof-review` linked and passing completeness checks
+- `coverify-context-builder` linked and passing completeness checks
+- `coverify-proof-attempt` linked and passing completeness checks
+- `coverify-proof-review` linked and passing completeness checks
 - CLI support for PR review context, including PR files/diff plus accepted KB
   dependencies gathered by the runner
 - reviewer calibration set

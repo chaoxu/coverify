@@ -62,7 +62,7 @@ Rethlas stores intermediate state in channels such as immediate conclusions,
 toy examples, counterexamples, big decisions, subgoals, proof steps, failed
 paths, verification reports, branch states, and events.
 
-Autoprover use: map these to Cosheaf artifacts. Examples:
+Coverify use: map these to Cosheaf artifacts. Examples:
 
 - immediate conclusions -> issue comment or planning page
 - counterexamples -> accepted obstruction page or PR comment
@@ -74,9 +74,9 @@ Autoprover use: map these to Cosheaf artifacts. Examples:
 ### Adaptive Tactics
 
 Rethlas chooses tactics based on current state. This is the main idea worth
-keeping. The tactics themselves do not need to become Autoprover skills.
+keeping. The tactics themselves do not need to become Coverify skills.
 
-Autoprover use: an Explore prompt can ask the runner to consider these tactics
+Coverify use: an Explore prompt can ask the runner to consider these tactics
 while producing issue-ready approaches. An Attempt prompt can ask for examples,
 counterexamples, decomposition, or literature checks only when relevant.
 
@@ -86,7 +86,7 @@ Counterexample construction is treated as first-class. If a candidate
 counterexample refutes a branch, Rethlas records its assumptions, failed
 conclusion, and impact.
 
-Autoprover use: when an Attempt output disproves a claim or kills a direction,
+Coverify use: when an Attempt output disproves a claim or kills a direction,
 turn it into a reviewable obstruction artifact rather than losing it in logs.
 
 ### Verification Repair
@@ -94,12 +94,12 @@ turn it into a reviewable obstruction artifact rather than losing it in logs.
 Rethlas treats verifier `wrong`, critical errors, or gaps as failure. It then
 repairs the proof, changes strategy, or records failed paths.
 
-Autoprover use: PR review is the gate. If review requests changes, the runner
+Coverify use: PR review is the gate. If review requests changes, the runner
 repairs the branch or records the obstruction in Cosheaf.
 
 ## What Not To Copy
 
-- Do not copy all Rethlas skills as mandatory Autoprover skills.
+- Do not copy all Rethlas skills as mandatory Coverify skills.
 - Do not create a separate local memory hierarchy as durable project state.
 - Do not require recursive proving or parallel subagents in v1.
 - Do not treat search results as accepted knowledge before review.

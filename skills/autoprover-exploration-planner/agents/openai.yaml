@@ -1,4 +1,0 @@
-interface:
-  display_name: "Autoprover Planner"
-  short_description: "Plan routes without repeating failures"
-  default_prompt: "Use $autoprover-exploration-planner to propose issue-ready mathematical routes from current Cosheaf knowledge and things already tried."

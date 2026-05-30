@@ -7,7 +7,7 @@ architecture.
 ## Doc Map
 
 - [README](../README.md) is the repository entry point.
-- [Autoprover Design](design.md) is the canonical contract these references
+- [Coverify Design](design.md) is the canonical contract these references
   feed into.
 - [Experiments](experiments.md) turns these design lessons into measurable
   comparisons.

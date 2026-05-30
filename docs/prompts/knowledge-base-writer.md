@@ -1,7 +1,7 @@
 # Knowledge-Base Writer Prompt
 
 The durable operational entry point is
-[`autoprover-kb-writer`](../../skills/autoprover-kb-writer/SKILL.md).
+[`coverify-kb-writer`](../../skills/coverify-kb-writer/SKILL.md).
 
 Use that skill to turn useful source material, oracle output, checked
 calculations, source notes, or failed routes into compact Cosheaf wiki or PR

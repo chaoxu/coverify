@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 MANIFEST = "manifest.json"
+LEGACY_SKILL_PREFIX = "auto" + "prover-"
 
 
 @dataclass(frozen=True)
@@ -138,7 +139,9 @@ def check_repository(root: Path, specs: list[SkillSpec]) -> SkillCheck:
             continue
         if not (skill_dir / "SKILL.md").exists():
             continue
-        if skill_dir.name.startswith("autoprover-") and skill_dir.name not in expected:
+        if skill_dir.name.startswith(LEGACY_SKILL_PREFIX):
+            problems.append(f"legacy pre-Coverify skill directory: {skill_dir.name}")
+        if skill_dir.name.startswith("coverify-") and skill_dir.name not in expected:
             problems.append(f"unmanifested skill directory: {skill_dir.name}")
     return SkillCheck("skills-root", not problems, problems)
 

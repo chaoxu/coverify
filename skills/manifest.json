@@ -2,37 +2,37 @@
   "schema_version": 1,
   "skills": [
     {
-      "name": "autoprover-context-builder",
+      "name": "coverify-context-builder",
       "required_sections": ["Purpose", "Workflow", "Retry Guard"],
       "must_contain": ["Things Tried", "closest tried route", "materially different"]
     },
     {
-      "name": "autoprover-exploration-planner",
+      "name": "coverify-exploration-planner",
       "required_sections": ["Purpose", "Workflow", "Output", "Issue Quality Bar"],
       "must_contain": ["Prior route check", "durable knowledge", "issue-ready"]
     },
     {
-      "name": "autoprover-proof-attempt",
+      "name": "coverify-proof-attempt",
       "required_sections": ["Purpose", "Workflow", "Oracle Prompt Shape"],
       "must_contain": ["Do not change the problem", "Quarantine raw output", "UNRESOLVED_GAPS", "Things tried", "Do not retry"]
     },
     {
-      "name": "autoprover-kb-writer",
+      "name": "coverify-kb-writer",
       "required_sections": ["Purpose", "Workflow", "Failed Routes", "Output"],
       "must_contain": ["what was tried", "local scratch paths", "REVIEWER_CHECKLIST"]
     },
     {
-      "name": "autoprover-proof-review",
+      "name": "coverify-proof-review",
       "required_sections": ["Purpose", "Workflow", "Decision Rules", "Output"],
       "must_contain": ["Findings lead", "REQUEST_CHANGES", "PROBLEM_INTEGRITY", "accepted KB statements"]
     },
     {
-      "name": "autoprover-kb-manager",
+      "name": "coverify-kb-manager",
       "required_sections": ["Purpose", "Workflow", "Output", "Fit Check"],
       "must_contain": ["flat wiki", "DOCUMENT_REDUCTION", "live tree"]
     },
     {
-      "name": "autoprover-run-loop",
+      "name": "coverify-run-loop",
       "required_sections": ["Purpose", "Loop", "Stop Rule", "Run Summary"],
       "must_contain": ["DURABLE_STATE_CHANGED", "PRIOR_ROUTE_CHECK", "THINGS_TRIED_UPDATED", "COMPLETENESS"]
     }
