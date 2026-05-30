@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..core.backend import BackendRunner
+from ..engine.backend import BackendRunner
 
 
 @dataclass(frozen=True)

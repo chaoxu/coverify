@@ -25,6 +25,13 @@ Each step (generator, each verifier, adjunct) is a ``Step`` = a sub-oracle
 backends and verifier roles freely. Passing ``resume_dir`` reuses journaled
 sub-call results: any step already completed in that bundle is served from its
 recorded answer instead of being re-run.
+
+Sub-runners must be **side-effect-free**. The loop retries failed calls and
+replays completed ones on resume, so a runner that mutates the world (posts a
+comment, writes a file, merges a PR) would double-fire. This is the operational
+form of "verify oracles, not agents": verification applies to side-effect-free
+producers of claims. An effectful agent is *gated by* a verifying oracle -- it
+acts on the oracle's checked answer -- but is never placed inside the loop.
 """
 
 from __future__ import annotations

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from coverify.core.backend import BackendResult, run_fixture_backend, run_script_backend
+from coverify.engine.backend import BackendResult, run_fixture_backend, run_script_backend
 from coverify.cosheaf.client import CosheafError
 from coverify.integration.workflows import (
     InfinitePrimesRunOptions,

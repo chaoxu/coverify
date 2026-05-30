@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from coverify.core.backend import BackendResult
+from coverify.engine.backend import BackendResult
 from coverify.apps.evals import EvalCase, grade_answer, load_eval_cases, run_eval_cases
 
 

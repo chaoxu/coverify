@@ -60,34 +60,53 @@ knowledge, normally by branch, PR, review, and merge.
   policy. A reviewer identity submits the review result to Cosheaf; the
   correctness judgment should come from the review oracle, not from the runner.
 
-## Package Layers
+## Roles and Layers
 
-Coverify's one job is to produce a trustworthy answer: take a question, return
-an answer it has checked, with an audit trail. Everything else is either the
-substrate for that or a consumer of it. The dividing line with Cosheaf:
+There are three roles, and they have different physics. Do not collapse them:
+the engine and the tools both live in Python, but they are not the same kind of
+thing.
 
-- **Cosheaf owns the workspace** — durable state (pages, issues, PRs),
-  identity, and presentation/UI. Chat threads, chat tabs, and rendered
-  conversations belong here.
-- **Coverify owns the thinking** — the verified answer and the audited oracle
-  calls. It is the brain, not the workspace; it never grows a UI or a store.
-- **Thin glue maps one onto the other** — read Cosheaf state, run an oracle,
-  write Cosheaf state back.
+- **Engine** (Python, `coverify.engine`). Pure, side-effect-free, replayable:
+  take a question, return an answer it has checked, with an audit trail. This is
+  the thing you *verify*. It knows nothing about Cosheaf.
+- **Tools** (Python, the `coverify` CLI). Deterministic glue: Cosheaf adapter
+  primitives plus fixed-sequence commands (`ask-oracle`, `chat-reply`).
+  Effectful but scripted — they sequence, they do not *decide*. Because there is
+  no judgment, they are neither verified nor gated; they are simply *tested*.
+  This is the surface the orchestrator calls.
+- **Orchestrator** (Codex + skills). The side-effecting agent that drives
+  Cosheaf — browses, decides, posts, opens PRs. This is the thing you *gate*,
+  not verify. It is **not Python in this package**; it is the playbooks in
+  [`skills/`](../skills) run by Codex, which invoke the tools as commands.
 
-The `src/coverify` package makes these layers explicit, with dependencies only
-ever pointing inward toward the core:
+The seam is the **tool surface**: the orchestrator never reaches into the
+engine's internals; it invokes CLI commands. Dependencies only ever point from
+the orchestrator toward the tools and from the tools toward the engine, never
+back.
 
-| Layer | Package | Knows Cosheaf? | Contents |
+The `src/coverify` Python package holds the engine and the tools; the
+orchestrator lives in [`skills/`](../skills), not here. Its subpackages:
+
+| Sub-package | Role | Knows Cosheaf? | Contents |
 | --- | --- | --- | --- |
-| Core | `coverify.core` | no | backend contract + `BackendRunner`, audit bundles, the verifying oracle |
-| Cosheaf client | `coverify.cosheaf` | yes (it *is* the SDK) | the typed Cosheaf HTTP client |
-| Integration / glue | `coverify.integration` | yes | `chat-reply`, proof workflows, PR-review decision mapping |
-| Applications | `coverify.apps` | mixed | eval harnesses, TTSP search, research tooling |
+| `coverify.engine` | engine | no | backend contract + `BackendRunner`, audit bundles, the verifying oracle |
+| `coverify.cosheaf` | tools | yes (it *is* the SDK) | the typed Cosheaf HTTP client |
+| `coverify.integration` | tools | yes | fixed-sequence commands (`chat-reply`), reference workflows, PR-review mapping |
+| `coverify.apps` | tools | mixed | eval harnesses, TTSP search, research tooling |
 
-`coverify.cli` is the top-level orchestrator that wires the layers together. The
-rule of thumb: "make the answer better" work lands in core; "talk to the
-workspace" work lands in integration; domain experiments land in apps;
-presentation never enters Coverify at all.
+`coverify.cli` wires the tool surface together. Where new orchestration goes is
+decided by *how much judgment it needs*:
+
+- **Pure answer production → the engine** (`coverify.engine`).
+- **A fixed, deterministic sequence over tools → a Python CLI command** (e.g.
+  `chat-reply`: read thread → verify → post). No judgment, so no agent — a
+  script is the right tool, and it is testable.
+- **Adaptive, judgment-driven orchestration → a skill run by Codex**, not Python.
+  The moment a Python workflow needs to *decide* rather than *sequence*, that is
+  the signal it belongs in `skills/`.
+
+Presentation never enters Coverify at all — any chat UI is a view over Cosheaf
+issues, owned by Cosheaf.
 
 ## State Model
 
@@ -505,7 +524,7 @@ into reviewed claims, obstructions, or questions.
 ### Self-Verifying Oracle
 
 Because every backend is `prompt -> BackendResult`, a backend may itself be
-composed of other backends. The `verifying` backend (`coverify.core.verifying`)
+composed of other backends. The `verifying` backend (`coverify.engine.verifying`)
 is such a composite: it produces its answer by running a generate → verify →
 adjudicate loop over sub-oracles.
 
@@ -531,6 +550,12 @@ interrupted oracle resumes from completed steps rather than restarting.
 This is the same backend contract, so a verifying oracle drops into
 `ask-oracle`, `run-eval`, and the workflows unchanged, and can even nest inside
 another verifying oracle as one of its verifiers.
+
+Its sub-runners must be **side-effect-free**, because retries and journal-resume
+replay them; a verifier that *writes* would double-fire. This is the operational
+form of "verify oracles, not agents": verification applies to side-effect-free
+producers of claims, while an effectful agent is *gated by* a verifying oracle
+(it acts on the checked answer) rather than placed inside the loop.
 
 ### Issue Chat
 

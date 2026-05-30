@@ -8,7 +8,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from coverify.core.backend import audit_summary, run_codex_backend, run_fixture_backend, run_script_backend
+from coverify.engine.backend import audit_summary, run_codex_backend, run_fixture_backend, run_script_backend
 
 
 class BackendTests(unittest.TestCase):

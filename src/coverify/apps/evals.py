@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from ..core.backend import BackendResult
+from ..engine.backend import BackendResult
 from ..integration.review import parse_review_decision
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from coverify.core.backend import BackendResult
+from coverify.engine.backend import BackendResult
 from coverify.integration.chat import (
     build_chat_prompt,
     extract_login,

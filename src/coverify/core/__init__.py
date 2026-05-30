@@ -1,1 +1,0 @@
-"""coverify core layer."""

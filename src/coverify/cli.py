@@ -7,13 +7,13 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-from .core.backend import (
+from .engine.backend import (
     BackendResult,
     run_codex_backend,
     run_fixture_backend,
     run_script_backend,
 )
-from .core.verifying import (
+from .engine.verifying import (
     Step,
     VerifyingOracle,
     builtin_profile,

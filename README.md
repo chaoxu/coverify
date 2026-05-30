@@ -65,11 +65,19 @@ The design target:
 The first runnable surface is a Python CLI package under `src/coverify`.
 Use `PYTHONPATH=src python3 -m coverify --help` from this checkout.
 
-The package is organized into layers (see [`docs/design.md`](docs/design.md)):
-`core` (the backend contract and the self-verifying oracle, Cosheaf-agnostic),
-`cosheaf` (the Cosheaf HTTP client), `integration` (chat and proof-workflow
-glue), and `apps` (eval and search tooling). Coverify produces verified
-answers; Cosheaf owns durable state and presentation.
+The system has three roles (see [`docs/design.md`](docs/design.md)): a pure
+**engine**, the deterministic **tools** that wrap it, and an imperative
+**orchestrator**. Engine and tools both live in the Python package under
+`src/coverify`, but they are different kinds of thing. `engine` (the backend
+contract and the self-verifying oracle, Cosheaf-agnostic) is the part you
+*verify*. `cosheaf` (the Cosheaf HTTP client), `integration` (fixed-sequence
+commands and reference workflows), and `apps` (eval and search tooling) are the
+tools — the `coverify` CLI surface, which sequences but does not decide. The
+orchestrator is **Codex running the playbooks in [`skills/`](skills)**, which
+drive work by calling those tools. Rule of thumb: pure answer production lives in
+the engine, a fixed sequence is a CLI command, and adaptive judgment-driven
+orchestration is a skill — not Python. Cosheaf owns durable state and
+presentation.
 
 Install repo-owned skills for Codex discovery:
 
