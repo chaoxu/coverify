@@ -17,6 +17,14 @@ from .client import CosheafClient, CosheafConfig
 from .evals import load_eval_cases, run_eval_cases
 from .research_evals import load_research_eval_candidates, seed_research_eval_workspace, utc_stamp
 from .ttsp_search import QueueConfig, SearchConfig, build_queue_payload, build_search_payload
+from .chat import extract_login, run_chat_reply
+from .verifying import (
+    Step,
+    VerifyingOracle,
+    builtin_profile,
+    load_verifying_config,
+    verifying_config_from_dict,
+)
 from .workflows import (
     InfinitePrimesRunOptions,
     default_branch_name,
@@ -61,21 +69,29 @@ def maybe_build_reviewer_client(args: argparse.Namespace) -> CosheafClient | Non
     return None
 
 
-def backend_runner(args: argparse.Namespace) -> Callable[[str], BackendResult]:
+def build_base_runner(
+    args: argparse.Namespace,
+    backend_name: str,
+    *,
+    command: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> Callable[[str], BackendResult]:
     artifact_root = Path(args.run_dir)
     timeout = args.backend_timeout if args.backend_timeout > 0 else None
-    if args.backend == "fixture":
+    if backend_name == "fixture":
         return lambda prompt: run_fixture_backend(prompt, artifact_root=artifact_root)
-    if args.backend == "script":
-        if not args.backend_command:
+    if backend_name == "script":
+        cmd = command or args.backend_command
+        if not cmd:
             raise SystemExit("--backend-command is required when --backend=script")
         return lambda prompt: run_script_backend(
             prompt,
-            command=args.backend_command,
+            command=cmd,
             artifact_root=artifact_root,
             timeout_seconds=timeout,
         )
-    if args.backend == "codex":
+    if backend_name == "codex":
         if not args.allow_codex_backend:
             raise SystemExit(
                 "codex backend is disabled by default because it consumes Codex usage; "
@@ -84,13 +100,52 @@ def backend_runner(args: argparse.Namespace) -> Callable[[str], BackendResult]:
         return lambda prompt: run_codex_backend(
             prompt,
             artifact_root=artifact_root,
-            model=args.model,
-            reasoning_effort=args.reasoning_effort,
+            model=model or args.model,
+            reasoning_effort=reasoning_effort or args.reasoning_effort,
             timeout_seconds=timeout,
             codex_bin=args.codex_bin,
             sandbox=args.codex_sandbox,
         )
-    raise SystemExit(f"unknown backend: {args.backend}")
+    raise SystemExit(f"unknown backend: {backend_name}")
+
+
+def resolve_verifying_config(args: argparse.Namespace):
+    if args.verify_config:
+        return load_verifying_config(Path(args.verify_config))
+    if args.verify_profile and args.verify_profile != "default":
+        return builtin_profile(args.verify_profile, max_rounds=args.verify_max_rounds)
+    return verifying_config_from_dict({"max_rounds": args.verify_max_rounds})
+
+
+def build_verifying_oracle(args: argparse.Namespace, config) -> VerifyingOracle:
+    def step(step_config) -> Step:
+        backend_name = step_config.backend or args.verify_inner_backend
+        runner = build_base_runner(
+            args,
+            backend_name,
+            command=step_config.command,
+            model=step_config.model,
+            reasoning_effort=step_config.reasoning_effort,
+        )
+        return Step(runner=runner, instructions=step_config.instructions)
+
+    return VerifyingOracle(
+        generator=step(config.generator),
+        verifiers=[step(v) for v in config.verifiers],
+        adjudicator=step(config.adjudicator),
+        artifact_root=Path(args.run_dir),
+        max_rounds=config.max_rounds,
+        retries=args.backend_retries,
+        strict=config.strict or args.verify_strict,
+        quiet_adjunct=config.quiet_adjunct or args.verify_quiet_adjunct,
+        resume_dir=Path(args.verify_resume) if args.verify_resume else None,
+    )
+
+
+def backend_runner(args: argparse.Namespace) -> Callable[[str], BackendResult]:
+    if args.backend == "verifying":
+        return build_verifying_oracle(args, resolve_verifying_config(args))
+    return build_base_runner(args, args.backend)
 
 
 def cmd_login(args: argparse.Namespace) -> int:
@@ -640,6 +695,21 @@ def cmd_comment_issue(args: argparse.Namespace) -> int:
     return print_json(authed_client_from_args(args).comment_issue(args.workspace, args.issue, body))
 
 
+def cmd_chat_reply(args: argparse.Namespace) -> int:
+    client = authed_client_from_args(args)
+    bot_login = args.bot_user or extract_login(client.me())
+    result = run_chat_reply(
+        client=client,
+        workspace=args.workspace,
+        number=args.issue,
+        oracle=backend_runner(args),
+        bot_login=bot_login,
+    )
+    return print_json(
+        {"status": result.status, "posted": result.posted, "reply": result.reply}
+    )
+
+
 def cmd_close_issue(args: argparse.Namespace) -> int:
     return print_json(authed_client_from_args(args).close_issue(args.workspace, args.issue))
 
@@ -888,7 +958,46 @@ def add_workspace_arg(parser: argparse.ArgumentParser) -> None:
 
 
 def add_backend_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--backend", choices=("codex", "fixture", "script"), default=env("COVERIFY_BACKEND", "codex"))
+    parser.add_argument("--backend", choices=("codex", "fixture", "script", "verifying"), default=env("COVERIFY_BACKEND", "codex"))
+    parser.add_argument(
+        "--verify-inner-backend",
+        choices=("codex", "fixture", "script"),
+        default=env("COVERIFY_VERIFY_INNER_BACKEND", "codex"),
+        help="underlying oracle used for generator/verifier/adjunct when --backend=verifying",
+    )
+    parser.add_argument(
+        "--verify-max-rounds",
+        type=int,
+        default=int(env("COVERIFY_VERIFY_MAX_ROUNDS", "3") or "3"),
+        help="max generate->verify rounds when --backend=verifying",
+    )
+    parser.add_argument(
+        "--verify-profile",
+        default=env("COVERIFY_VERIFY_PROFILE", "default"),
+        help="built-in verifying profile (default, strict)",
+    )
+    parser.add_argument(
+        "--verify-config",
+        default=env("COVERIFY_VERIFY_CONFIG"),
+        help="path to a JSON verifying-oracle config (overrides --verify-profile)",
+    )
+    parser.add_argument(
+        "--verify-strict",
+        action="store_true",
+        default=env("COVERIFY_VERIFY_STRICT") in {"1", "true", "yes"},
+        help="refuse to answer if a verifier errors out, instead of treating ERROR as PASS",
+    )
+    parser.add_argument(
+        "--verify-quiet-adjunct",
+        action="store_true",
+        default=env("COVERIFY_VERIFY_QUIET_ADJUNCT") in {"1", "true", "yes"},
+        help="adjunct states only verified content, without 'could not verify' notes",
+    )
+    parser.add_argument(
+        "--verify-resume",
+        default=None,
+        help="resume a verifying run from an existing artifact dir, reusing journaled steps",
+    )
     parser.add_argument("--backend-command", default=env("COVERIFY_BACKEND_COMMAND"))
     parser.add_argument("--backend-timeout", type=int, default=int(env("COVERIFY_BACKEND_TIMEOUT_SECONDS", "0") or "0"))
     parser.add_argument("--backend-retries", type=int, default=int(env("COVERIFY_BACKEND_RETRIES", "1") or "0"))
@@ -996,6 +1105,21 @@ def build_parser() -> argparse.ArgumentParser:
     comment_issue.add_argument("--body", default="")
     comment_issue.add_argument("--body-file", default="")
     comment_issue.set_defaults(func=cmd_comment_issue)
+
+    chat_reply = sub.add_parser(
+        "chat-reply",
+        help="read an issue thread, run the oracle, and post one reply comment",
+    )
+    add_common_auth(chat_reply)
+    add_workspace_arg(chat_reply)
+    add_backend_args(chat_reply)
+    chat_reply.add_argument("--issue", type=int, required=True)
+    chat_reply.add_argument(
+        "--bot-user",
+        default=env("COVERIFY_BOT_USER"),
+        help="login of the oracle's own account; defaults to the authenticated user",
+    )
+    chat_reply.set_defaults(func=cmd_chat_reply)
 
     close_issue = sub.add_parser("close-issue", help="close a workspace issue")
     add_common_auth(close_issue)
