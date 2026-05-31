@@ -94,6 +94,47 @@ class RepoOracleTests(unittest.TestCase):
         self.assertEqual([snippet.path for snippet in gathered.snippets], ["reserve.md"])
         self.assertEqual(gathered.tier, "light")
 
+    def test_gather_context_uses_best_window_not_first_generic_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "poa-bound-summary.md").write_text(
+                "\n".join(
+                    [
+                        "---",
+                        "id: poa-bound-summary",
+                        "title: PoA Bound Summary",
+                        "status: accepted",
+                        "---",
+                        "# PoA Bound Summary",
+                        "",
+                        "This file is the canonical current project status page.",
+                        "",
+                        *[f"Filler line {i}" for i in range(50)],
+                        "## Current Working Bound Table",
+                        "",
+                        "| Problem | Workspace lower bound | Workspace upper bound | Current status |",
+                        "| --- | ---: | ---: | --- |",
+                        "| Directed TTSP with arbitrary terminal pairs | at least $5/3$ | $5/2$ | current target barrier |",
+                        "",
+                        "## Active Fronts",
+                        "",
+                        "- improve the lower bound beyond $5/3$.",
+                    ],
+                ),
+                encoding="utf-8",
+            )
+            bundle = load_source_bundle(root)
+
+            gathered = gather_context(
+                bundle,
+                question="What is the current status, what is successful, and what can we work on in the future?",
+                max_context_chars=4_000,
+            )
+
+        self.assertEqual(len(gathered.snippets), 1)
+        self.assertIn("Current Working Bound Table", gathered.snippets[0].text)
+        self.assertIn("at least $5/3$", gathered.snippets[0].text)
+
     def test_proof_requests_are_strong_even_when_wording_is_simple(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

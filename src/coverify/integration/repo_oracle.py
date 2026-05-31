@@ -356,14 +356,33 @@ def _score_file(file: SourceFile, tokens: list[str]) -> int:
     return score
 
 
-def _snippet_for(file: SourceFile, tokens: list[str], *, context_lines: int = 8) -> SourceSnippet:
+def _window_score(lines: list[str], tokens: list[str], index: int, context_lines: int) -> int:
+    start = max(0, index - context_lines)
+    end = min(len(lines), index + context_lines + 1)
+    text = "\n".join(lines[start:end]).lower()
+    score = 0
+    for token in tokens:
+        score += min(text.count(token), 8)
+    line = lines[index].lower()
+    if line.startswith("#"):
+        score += 2
+    if "|" in line:
+        score += 1
+    return score
+
+
+def _snippet_for(file: SourceFile, tokens: list[str], *, context_lines: int = 48) -> SourceSnippet:
     lines = file.content.splitlines()
     match_index = 0
+    best_score = -1
     for index, line in enumerate(lines):
         lowered = line.lower()
-        if any(token in lowered for token in tokens):
+        if not any(token in lowered for token in tokens):
+            continue
+        score = _window_score(lines, tokens, index, context_lines)
+        if score > best_score:
+            best_score = score
             match_index = index
-            break
     start = max(0, match_index - context_lines)
     end = min(len(lines), match_index + context_lines + 1)
     return SourceSnippet(
