@@ -72,14 +72,14 @@ class ClientTests(unittest.TestCase):
             captured["url"] = req.full_url
             captured["method"] = req.get_method()
             captured["body"] = json.loads(req.data.decode("utf-8"))
-            return FakeResponse({"ok": True, "username": "vera", "role": "write"})
+            return FakeResponse({"ok": True, "username": "test-vera", "role": "write"})
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
         with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
-            response = client.set_workspace_member("w", "vera", "write")
+            response = client.set_workspace_member("w", "test-vera", "write")
 
         self.assertEqual(response["ok"], True)
-        self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/workspaces/w/members/vera")
+        self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/workspaces/w/members/test-vera")
         self.assertEqual(captured["method"], "PUT")
         self.assertEqual(captured["body"], {"role": "write"})
 
