@@ -281,6 +281,49 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(stdout.getvalue(), "file prompt\n")
 
+    def test_repo_oracle_eval_gather_reports_required_snippets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "source"
+            root.mkdir()
+            (root / "summary.md").write_text(
+                "# Summary\n\n## Current Working Bound Table\n\n5/3 target.\n\n## Active Fronts\n\nImprove the bound.\n",
+                encoding="utf-8",
+            )
+            cases = Path(tmpdir) / "cases.jsonl"
+            cases.write_text(
+                json.dumps(
+                    {
+                        "id": "status",
+                        "question": "What is the current status and future work?",
+                        "must_include": [
+                            {"path": "summary.md", "text": "Current Working Bound Table"},
+                            {"path": "summary.md", "text": "Active Fronts"},
+                        ],
+                    },
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            parser = build_parser()
+            args = parser.parse_args(
+                [
+                    "repo-oracle",
+                    "eval-gather",
+                    "--source-bundle",
+                    str(root),
+                    "--cases",
+                    str(cases),
+                ],
+            )
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                self.assertEqual(args.func(args), 0)
+
+        report = json.loads(stdout.getvalue())
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["passed_cases"], 1)
+        self.assertEqual(report["passed_requirements"], 2)
+
     def test_chat_ask_creates_branch_scoped_issue_and_posts_verified_answer(self) -> None:
         class ChatClient:
             def __init__(self) -> None:

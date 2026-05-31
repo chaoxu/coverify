@@ -107,6 +107,10 @@ class GatheredContext:
     snippets: list[SourceSnippet]
     warnings: list[str]
     tier: str
+    gatherer_provider: str | None = None
+    gatherer_call_id: str | None = None
+    gatherer_artifact_dir: str | None = None
+    gatherer_plan: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -126,6 +130,10 @@ class RepoOracleResult:
     verifier_call_id: str | None = None
     verifier_artifact_dir: str | None = None
     verifier_answer: str | None = None
+    gatherer_provider: str | None = None
+    gatherer_call_id: str | None = None
+    gatherer_artifact_dir: str | None = None
+    gatherer_plan: dict[str, Any] | None = None
 
     def to_json(self) -> dict[str, object]:
         out: dict[str, object] = {
@@ -149,6 +157,14 @@ class RepoOracleResult:
             out["verifier_artifact_dir"] = self.verifier_artifact_dir
         if self.verifier_answer is not None:
             out["verifier_answer"] = self.verifier_answer
+        if self.gatherer_provider is not None:
+            out["gatherer_provider"] = self.gatherer_provider
+        if self.gatherer_call_id is not None:
+            out["gatherer_call_id"] = self.gatherer_call_id
+        if self.gatherer_artifact_dir is not None:
+            out["gatherer_artifact_dir"] = self.gatherer_artifact_dir
+        if self.gatherer_plan is not None:
+            out["gatherer_plan"] = self.gatherer_plan
         return out
 
 
@@ -394,7 +410,7 @@ def _snippet_for(file: SourceFile, tokens: list[str], *, context_lines: int = 48
     )
 
 
-def gather_context(
+def deterministic_gather_context(
     bundle: SourceBundle,
     *,
     question: str,
@@ -437,6 +453,215 @@ def gather_context(
     )
 
 
+def _file_catalog(files: list[SourceFile], *, max_files: int = 200, max_headings_per_file: int = 40) -> str:
+    parts: list[str] = []
+    for file in files[:max_files]:
+        headings = [
+            f"L{index}: {line.strip()}"
+            for index, line in enumerate(file.content.splitlines(), start=1)
+            if line.lstrip().startswith("#")
+        ][:max_headings_per_file]
+        parts.append(
+            "\n".join(
+                [
+                    f"### {file.path}",
+                    f"- lines: {file.line_count}",
+                    "- headings:",
+                    *(f"  - {heading}" for heading in headings),
+                ],
+            ),
+        )
+    if len(files) > max_files:
+        parts.append(f"... {len(files) - max_files} additional files omitted from gather catalog")
+    return "\n\n".join(parts)
+
+
+def build_gatherer_prompt(
+    *,
+    question: str,
+    thread_context: str,
+    bundle: SourceBundle,
+) -> str:
+    return "\n".join(
+        [
+            "# Coverify Repo-Snapshot Gatherer",
+            "",
+            "Choose the repo passages needed to answer the user's mathematical question.",
+            "You are only selecting context, not answering the question.",
+            "",
+            "Allowed sources are the current source bundle only. Do not request issues,",
+            "PRs, git history, web pages, sibling repos, local notes, or hidden memory.",
+            "",
+            "Prefer canonical ledger/status pages, theorem statements, examples,",
+            "proofs, obstruction notes, and active-front sections over introductory",
+            "frontmatter. For broad status questions, include the actual bound tables",
+            "and active-front/future-work sections when they exist.",
+            "",
+            "Return only JSON with this shape:",
+            '{"requests":[{"path":"file.md","queries":["section title, theorem id, phrase, or target fact"]}],"notes":["optional"]}',
+            "",
+            "Each request path must be one of the catalog paths. Keep the list small;",
+            "usually 4-10 files/queries are enough.",
+            "",
+            "## Source bundle",
+            f"- source_id: {bundle.source_id}",
+            f"- snapshot: {bundle.snapshot}",
+            "",
+            "## Current chat thread",
+            thread_context.strip() or "(no prior thread context supplied)",
+            "",
+            "## User question",
+            question.strip(),
+            "",
+            "## Repo catalog",
+            _file_catalog(bundle.files),
+        ],
+    )
+
+
+def _json_object_from_text(text: str) -> dict[str, Any]:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```(?:json)?\s*", "", stripped)
+        stripped = re.sub(r"\s*```$", "", stripped)
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start < 0 or end < start:
+        raise ValueError("gatherer did not return a JSON object")
+    parsed = json.loads(stripped[start : end + 1])
+    if not isinstance(parsed, dict):
+        raise ValueError("gatherer JSON root must be an object")
+    return parsed
+
+
+def _snippets_from_gatherer_plan(
+    bundle: SourceBundle,
+    *,
+    question: str,
+    plan: dict[str, Any],
+    max_context_chars: int,
+    max_files: int,
+) -> tuple[list[SourceSnippet], list[str]]:
+    by_path = {file.path: file for file in bundle.files}
+    requests = plan.get("requests")
+    if not isinstance(requests, list):
+        raise ValueError("gatherer JSON must contain a requests list")
+    selected: list[SourceSnippet] = []
+    warnings: list[str] = []
+    seen: set[tuple[str, int, int]] = set()
+    used = 0
+    fallback_tokens = _tokens(question)
+    for item in requests:
+        if not isinstance(item, dict):
+            warnings.append("Ignored non-object gatherer request.")
+            continue
+        path = item.get("path")
+        if not isinstance(path, str) or path not in by_path:
+            warnings.append(f"Ignored gatherer request for unavailable path {path!r}.")
+            continue
+        raw_queries = item.get("queries")
+        queries = [q for q in raw_queries if isinstance(q, str) and q.strip()] if isinstance(raw_queries, list) else []
+        if not queries:
+            queries = [question]
+        for query in queries:
+            tokens = _tokens(query) or fallback_tokens
+            snippet = _snippet_for(by_path[path], tokens)
+            if any(
+                existing.path == snippet.path
+                and existing.line_start <= snippet.line_end
+                and snippet.line_start <= existing.line_end
+                for existing in selected
+            ):
+                continue
+            key = (snippet.path, snippet.line_start, snippet.line_end)
+            if key in seen:
+                continue
+            cost = len(snippet.text) + len(snippet.path) + 80
+            if selected and used + cost > max_context_chars:
+                warnings.append("Gatherer-selected context exceeded max_context_chars; later requests were skipped.")
+                return selected, warnings
+            selected.append(snippet)
+            seen.add(key)
+            used += cost
+            if len(selected) >= max_files:
+                return selected, warnings
+    return selected, warnings
+
+
+def gather_context(
+    bundle: SourceBundle,
+    *,
+    question: str,
+    thread_context: str = "",
+    max_context_chars: int = 60_000,
+    max_files: int = 12,
+    gatherer_backend: BackendRunner | None = None,
+) -> GatheredContext:
+    if gatherer_backend is None:
+        return deterministic_gather_context(
+            bundle,
+            question=question,
+            thread_context=thread_context,
+            max_context_chars=max_context_chars,
+            max_files=max_files,
+        )
+    prompt = build_gatherer_prompt(question=question, thread_context=thread_context, bundle=bundle)
+    result = gatherer_backend(prompt)
+    warnings: list[str] = []
+    try:
+        plan = _json_object_from_text(result.answer)
+        snippets, plan_warnings = _snippets_from_gatherer_plan(
+            bundle,
+            question=question,
+            plan=plan,
+            max_context_chars=max_context_chars,
+            max_files=max_files,
+        )
+        warnings.extend(plan_warnings)
+    except (ValueError, json.JSONDecodeError) as err:
+        fallback = deterministic_gather_context(
+            bundle,
+            question=question,
+            thread_context=thread_context,
+            max_context_chars=max_context_chars,
+            max_files=max_files,
+        )
+        return GatheredContext(
+            snippets=fallback.snippets,
+            warnings=[*fallback.warnings, f"LLM gatherer failed; used deterministic fallback: {err}"],
+            tier=fallback.tier,
+            gatherer_provider=result.provider,
+            gatherer_call_id=result.oracle_call_id,
+            gatherer_artifact_dir=str(result.artifact_dir),
+        )
+    if not snippets:
+        fallback = deterministic_gather_context(
+            bundle,
+            question=question,
+            thread_context=thread_context,
+            max_context_chars=max_context_chars,
+            max_files=max_files,
+        )
+        snippets = fallback.snippets
+        warnings.extend(fallback.warnings)
+        warnings.append("LLM gatherer selected no usable snippets; used deterministic fallback snippets.")
+    if bundle.omitted:
+        warnings.append(
+            f"{len(bundle.omitted)} non-text or too-large file(s) were listed in the source bundle but not injected.",
+        )
+    if not bundle.files:
+        warnings.append("No UTF-8 text files were available in the source bundle.")
+    return GatheredContext(
+        snippets=snippets,
+        warnings=warnings,
+        tier=classify_tier(question),
+        gatherer_provider=result.provider,
+        gatherer_call_id=result.oracle_call_id,
+        gatherer_artifact_dir=str(result.artifact_dir),
+        gatherer_plan=plan,
+    )
+
+
 def classify_tier(question: str) -> str:
     tokens = set(_tokens(question))
     return "strong" if tokens & STRONG_TERMS else "light"
@@ -455,6 +680,79 @@ def _format_snippets(snippets: list[SourceSnippet]) -> str:
             ],
         )
     return "\n".join(parts).strip()
+
+
+def _citation_pattern(snippets: list[SourceSnippet]) -> re.Pattern[str] | None:
+    paths = sorted({snippet.path for snippet in snippets}, key=len, reverse=True)
+    if not paths:
+        return None
+    escaped = "|".join(re.escape(path) for path in paths)
+    return re.compile(
+        rf"(?P<path>{escaped})(?::(?P<colon_start>\d+)(?:-(?P<colon_end>\d+))?|#L(?P<hash_start>\d+)(?:-(?P<hash_end>\d+))?)",
+    )
+
+
+def _containing_snippet(snippets: list[SourceSnippet], path: str, start: int, end: int) -> SourceSnippet | None:
+    candidates = [
+        snippet
+        for snippet in snippets
+        if snippet.path == path and snippet.line_start <= start and end <= snippet.line_end
+    ]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda snippet: snippet.line_end - snippet.line_start)
+
+
+def normalize_answer_citations(answer: str, snippets: list[SourceSnippet]) -> tuple[str, list[str]]:
+    """Rewrite cited line numbers to exact injected snippet ranges.
+
+    The model only receives snippets, not full files. Letting it cite narrower
+    line ranges invites plausible-but-shaky citations, so answers may only cite
+    exact snippet ranges. Citations inside a snippet are widened to that snippet
+    range and rendered as Cosheaf Markdown path refs (`path.md#L10-40`);
+    citations outside gathered context are reported as invalid.
+    """
+    pattern = _citation_pattern(snippets)
+    if pattern is None:
+        return answer, []
+    warnings: list[str] = []
+
+    def replace(match: re.Match[str]) -> str:
+        path = match.group("path")
+        start_raw = match.group("colon_start") or match.group("hash_start")
+        end_raw = match.group("colon_end") or match.group("hash_end") or start_raw
+        if start_raw is None or end_raw is None:
+            warnings.append(f"Invalid citation {match.group(0)!r}: line range was missing.")
+            return match.group(0)
+        start = int(start_raw)
+        end = int(end_raw)
+        if end < start:
+            warnings.append(f"Invalid descending citation {match.group(0)!r}.")
+            return match.group(0)
+        snippet = _containing_snippet(snippets, path, start, end)
+        if snippet is None:
+            warnings.append(f"Invalid citation {match.group(0)!r}: line range was not in gathered context.")
+            return match.group(0)
+        normalized_range = (
+            f"L{snippet.line_start}"
+            if snippet.line_start == snippet.line_end
+            else f"L{snippet.line_start}-{snippet.line_end}"
+        )
+        normalized = f"{path}#{normalized_range}"
+        if normalized != match.group(0):
+            warnings.append(f"Normalized citation {match.group(0)!r} to {normalized!r}.")
+        return normalized
+
+    normalized_answer = pattern.sub(replace, answer)
+    for path in sorted({snippet.path for snippet in snippets}, key=len, reverse=True):
+        code_ref_pattern = re.compile(rf"`(?P<ref>{re.escape(path)}#L\d+(?:-\d+)?)`")
+
+        def unwrap_code_ref(match: re.Match[str]) -> str:
+            warnings.append(f"Unwrapped code-formatted source ref {match.group(0)!r}.")
+            return match.group("ref")
+
+        normalized_answer = code_ref_pattern.sub(unwrap_code_ref, normalized_answer)
+    return normalized_answer, warnings
 
 
 def build_reasoner_prompt(
@@ -494,8 +792,12 @@ def build_reasoner_prompt(
             question.strip(),
             "",
             "## Required answer behavior",
-            "- Be concise but complete.",
-            "- Cite repo files for repo-specific facts using `path:line` when useful.",
+            "- Write Markdown suitable for a Cosheaf issue comment.",
+            "- Use short headings and bullet lists when they improve scanability.",
+            "- Use TeX math syntax (`$...$` or `$$...$$`) for formulas.",
+            "- Cite repo-specific facts only with exact gathered snippet ranges as bare Cosheaf file refs, e.g. `path.md#L10-40`.",
+            "- Do not wrap source refs in backticks and do not use `path.md:10-40` in the final answer.",
+            "- Do not invent narrower line citations; if the snippet header is `a.md:10-40`, cite `a.md#L10-40`.",
             "- Standard mathematical facts do not need citations.",
             "- If support is missing, say what is missing.",
             "- Do not write or propose direct repo edits.",
@@ -522,6 +824,10 @@ def build_verifier_prompt(
             "notes, hidden memory, or any repo-specific fact unsupported by the",
             "source snippets. Reject if a proof step is invalid or if a conflict is",
             "smoothed over as settled knowledge.",
+            "Reject citations to repo line ranges that are not exact gathered snippet",
+            "headers after converting `path.md#Lx-y` references back to line ranges.",
+            "Reject final answers that are not Markdown suitable for a Cosheaf issue",
+            "comment or that use `path.md:x-y` instead of `path.md#Lx-y` source refs.",
             "",
             "Write findings, then output exactly one line:",
             "",
@@ -573,6 +879,7 @@ def run_repo_oracle(
     question: str,
     answer_backend: BackendRunner,
     verifier_backend: BackendRunner | None,
+    gatherer_backend: BackendRunner | None = None,
     thread_context: str = "",
     max_context_chars: int = 60_000,
 ) -> RepoOracleResult:
@@ -583,6 +890,7 @@ def run_repo_oracle(
         question=question,
         thread_context=thread_context,
         max_context_chars=max_context_chars,
+        gatherer_backend=gatherer_backend,
     )
     prompt = build_reasoner_prompt(
         question=question,
@@ -591,10 +899,15 @@ def run_repo_oracle(
         gathered=gathered,
     )
     answer_result = answer_backend(prompt)
+    candidate_answer, citation_warnings = normalize_answer_citations(answer_result.answer, gathered.snippets)
+    invalid_citations = [warning for warning in citation_warnings if warning.startswith("Invalid ")]
     verification = verification_from_metadata(answer_result)
     verifier_result: BackendResult | None = None
     verifier_answer: str | None = None
-    if verification is None:
+    if invalid_citations:
+        verification = "failed"
+        verifier_answer = "\n".join(invalid_citations)
+    elif verification is None:
         if verifier_backend is None:
             raise ValueError("repo oracle requires a verifier backend unless the answer backend is verifying")
         verifier_result = verifier_backend(
@@ -603,7 +916,7 @@ def run_repo_oracle(
                 thread_context=thread_context,
                 bundle=bundle,
                 gathered=gathered,
-                candidate=answer_result.answer,
+                candidate=candidate_answer,
             ),
         )
         verifier_answer = verifier_result.answer
@@ -614,8 +927,8 @@ def run_repo_oracle(
         verification = "passed" if verdict == "PASS" else "failed" if verdict == "FAIL" else "error"
 
     ok = verification == "passed"
-    final_answer = answer_result.answer
-    warnings = list(gathered.warnings)
+    final_answer = candidate_answer
+    warnings = [*gathered.warnings, *citation_warnings]
     if not ok:
         warnings.append("Candidate answer was not verified; returning an explicit refusal summary.")
         final_answer = "\n".join(
@@ -651,6 +964,10 @@ def run_repo_oracle(
         verifier_call_id=verifier_result.oracle_call_id if verifier_result else None,
         verifier_artifact_dir=str(verifier_result.artifact_dir) if verifier_result else None,
         verifier_answer=verifier_answer,
+        gatherer_provider=gathered.gatherer_provider,
+        gatherer_call_id=gathered.gatherer_call_id,
+        gatherer_artifact_dir=gathered.gatherer_artifact_dir,
+        gatherer_plan=gathered.gatherer_plan,
     )
 
 

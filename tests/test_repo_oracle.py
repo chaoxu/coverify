@@ -58,6 +58,26 @@ else:
 """
 
 
+PASS_VERIFIER_SCRIPT = """#!/usr/bin/env python3
+print("Candidate accepted for this test.\\nVERDICT: PASS")
+"""
+
+
+GATHERER_SCRIPT = """#!/usr/bin/env python3
+import json
+
+print(json.dumps({
+    "requests": [
+        {
+            "path": "poa-bound-summary.md",
+            "queries": ["Current Working Bound Table", "Active Fronts"],
+        }
+    ],
+    "notes": ["select canonical status ledger"]
+}))
+"""
+
+
 class RepoOracleTests(unittest.TestCase):
     def test_chat_metadata_round_trips_and_strips_from_visible_body(self) -> None:
         body = chat_issue_body("Prove the reserve lemma.", branch="agent/reserve")
@@ -135,6 +155,52 @@ class RepoOracleTests(unittest.TestCase):
         self.assertIn("Current Working Bound Table", gathered.snippets[0].text)
         self.assertIn("at least $5/3$", gathered.snippets[0].text)
 
+    def test_llm_gatherer_plan_selects_requested_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "source"
+            root.mkdir()
+            (root / "poa-bound-summary.md").write_text(
+                "\n".join(
+                    [
+                        "# PoA Bound Summary",
+                        "",
+                        "Introductory current status line.",
+                        "",
+                        *[f"Filler line {i}" for i in range(70)],
+                        "## Current Working Bound Table",
+                        "",
+                        "| Problem | Workspace lower bound | Workspace upper bound | Current status |",
+                        "| --- | ---: | ---: | --- |",
+                        "| Directed TTSP with arbitrary terminal pairs | at least $5/3$ | $5/2$ | current target barrier |",
+                        "",
+                        "## Active Fronts",
+                        "",
+                        "- improve the lower bound beyond $5/3$.",
+                    ],
+                ),
+                encoding="utf-8",
+            )
+            (root / "misc.md").write_text("Miscellaneous notes.", encoding="utf-8")
+            gatherer_script = write_script(Path(tmpdir) / "gather.py", GATHERER_SCRIPT)
+            bundle = load_source_bundle(root, source_id="seeded:gather")
+
+            gathered = gather_context(
+                bundle,
+                question="What is the current status and future work?",
+                gatherer_backend=lambda prompt: run_script_backend(
+                    prompt,
+                    command=f"{sys.executable} {gatherer_script}",
+                    artifact_root=Path(tmpdir) / "runs",
+                ),
+            )
+
+        self.assertEqual(gathered.gatherer_provider, "script")
+        self.assertEqual({snippet.path for snippet in gathered.snippets}, {"poa-bound-summary.md"})
+        combined = "\n".join(snippet.text for snippet in gathered.snippets)
+        self.assertIn("Current Working Bound Table", combined)
+        self.assertIn("Active Fronts", combined)
+        self.assertIn("at least $5/3$", combined)
+
     def test_proof_requests_are_strong_even_when_wording_is_simple(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -199,6 +265,103 @@ class RepoOracleTests(unittest.TestCase):
             [source["path"] for source in result.sources],
             ["reserve-overlap.md", "switch-credit.md"],
         )
+
+    def test_repo_oracle_normalizes_citations_to_gathered_snippet_ranges(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "source"
+            root.mkdir()
+            (root / "facts.md").write_text(
+                "Header\n\nLocal fact A is accepted.\n",
+                encoding="utf-8",
+            )
+            answer_script = write_script(
+                Path(tmpdir) / "answer.py",
+                "#!/usr/bin/env python3\nprint('Local fact A is accepted (`facts.md:3`).')\n",
+            )
+            verifier_script = write_script(Path(tmpdir) / "verify.py", PASS_VERIFIER_SCRIPT)
+
+            result = run_repo_oracle(
+                bundle=load_source_bundle(root),
+                question="What is local fact A?",
+                answer_backend=lambda prompt: run_script_backend(
+                    prompt,
+                    command=f"{sys.executable} {answer_script}",
+                    artifact_root=Path(tmpdir) / "runs",
+                ),
+                verifier_backend=lambda prompt: run_script_backend(
+                    prompt,
+                    command=f"{sys.executable} {verifier_script}",
+                    artifact_root=Path(tmpdir) / "runs",
+                ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("facts.md#L1-3", result.answer)
+        self.assertNotIn("`facts.md", result.answer)
+        self.assertTrue(any("Normalized citation" in warning for warning in result.warnings))
+        self.assertTrue(any("Unwrapped code-formatted source ref" in warning for warning in result.warnings))
+
+    def test_repo_oracle_normalizes_hash_line_citations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "source"
+            root.mkdir()
+            (root / "facts.md").write_text(
+                "Header\n\nLocal fact A is accepted.\n",
+                encoding="utf-8",
+            )
+            answer_script = write_script(
+                Path(tmpdir) / "answer.py",
+                "#!/usr/bin/env python3\nprint('Local fact A is accepted (facts.md#L3).')\n",
+            )
+            verifier_script = write_script(Path(tmpdir) / "verify.py", PASS_VERIFIER_SCRIPT)
+
+            result = run_repo_oracle(
+                bundle=load_source_bundle(root),
+                question="What is local fact A?",
+                answer_backend=lambda prompt: run_script_backend(
+                    prompt,
+                    command=f"{sys.executable} {answer_script}",
+                    artifact_root=Path(tmpdir) / "runs",
+                ),
+                verifier_backend=lambda prompt: run_script_backend(
+                    prompt,
+                    command=f"{sys.executable} {verifier_script}",
+                    artifact_root=Path(tmpdir) / "runs",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("facts.md#L1-3", result.answer)
+
+    def test_repo_oracle_rejects_citations_outside_gathered_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "source"
+            root.mkdir()
+            (root / "facts.md").write_text("Local fact A is accepted.\n", encoding="utf-8")
+            answer_script = write_script(
+                Path(tmpdir) / "answer.py",
+                "#!/usr/bin/env python3\nprint('Unsupported line citation (`facts.md:99`).')\n",
+            )
+            verifier_script = write_script(Path(tmpdir) / "verify.py", PASS_VERIFIER_SCRIPT)
+
+            result = run_repo_oracle(
+                bundle=load_source_bundle(root),
+                question="What is local fact A?",
+                answer_backend=lambda prompt: run_script_backend(
+                    prompt,
+                    command=f"{sys.executable} {answer_script}",
+                    artifact_root=Path(tmpdir) / "runs",
+                ),
+                verifier_backend=lambda prompt: run_script_backend(
+                    prompt,
+                    command=f"{sys.executable} {verifier_script}",
+                    artifact_root=Path(tmpdir) / "runs",
+                ),
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.verification, "failed")
+        self.assertIn("Invalid citation", result.answer)
 
     def test_repo_oracle_returns_refusal_when_verifier_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

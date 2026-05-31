@@ -26,6 +26,7 @@ from .integration.repo_oracle import (
     answer_with_metadata,
     chat_issue_body,
     export_cosheaf_source_bundle,
+    gather_context,
     load_source_bundle,
     parse_chat_metadata,
     run_repo_oracle,
@@ -170,6 +171,19 @@ def verifier_runner(args: argparse.Namespace) -> Callable[[str], BackendResult] 
         command=getattr(args, "verifier_command", "") or None,
         model=getattr(args, "verifier_model", "") or None,
         reasoning_effort=getattr(args, "verifier_reasoning_effort", "") or None,
+    )
+
+
+def gatherer_runner(args: argparse.Namespace) -> Callable[[str], BackendResult] | None:
+    backend_name = getattr(args, "gatherer_backend", "") or ""
+    if not backend_name:
+        return None
+    return build_base_runner(
+        args,
+        backend_name,
+        command=getattr(args, "gatherer_command", "") or None,
+        model=getattr(args, "gatherer_model", "") or None,
+        reasoning_effort=getattr(args, "gatherer_reasoning_effort", "") or None,
     )
 
 
@@ -742,6 +756,7 @@ def cmd_chat_reply(args: argparse.Namespace) -> int:
             bot_login=bot_login,
             answer_backend=backend_runner(args),
             verifier_backend=verifier_runner(args),
+            gatherer_backend=gatherer_runner(args),
             branch_override=args.branch or None,
             run_dir=Path(args.run_dir),
             max_context_chars=args.max_context_chars,
@@ -922,6 +937,17 @@ def read_message_input(args: argparse.Namespace) -> str:
     return sys.stdin.read()
 
 
+def has_message_source(args: argparse.Namespace) -> bool:
+    return any(
+        bool(source)
+        for source in (
+            getattr(args, "message_text", ""),
+            getattr(args, "message_file", ""),
+            getattr(args, "message", []),
+        )
+    )
+
+
 def cmd_ask_oracle(args: argparse.Namespace) -> int:
     result = run_ask_oracle(
         prompt=read_oracle_prompt(args),
@@ -951,6 +977,7 @@ def cmd_repo_oracle_ask(args: argparse.Namespace) -> int:
         question=question,
         answer_backend=backend_runner(args),
         verifier_backend=verifier_runner(args),
+        gatherer_backend=gatherer_runner(args),
         thread_context=thread_context,
         max_context_chars=args.max_context_chars,
     )
@@ -958,6 +985,156 @@ def cmd_repo_oracle_ask(args: argparse.Namespace) -> int:
         print(json.dumps(result.to_json(), indent=2, sort_keys=True))
     else:
         print(result.answer, end="" if result.answer.endswith("\n") else "\n")
+    return 0
+
+
+def cmd_repo_oracle_gather(args: argparse.Namespace) -> int:
+    question = read_message_input(args)
+    thread_context = ""
+    if args.thread_file:
+        thread_context = sys.stdin.read() if args.thread_file == "-" else Path(args.thread_file).read_text(encoding="utf-8")
+    bundle = load_source_bundle(
+        Path(args.source_bundle),
+        source_id=args.source_id or None,
+        max_file_bytes=args.max_file_bytes,
+    )
+    gathered = gather_context(
+        bundle,
+        question=question,
+        thread_context=thread_context,
+        max_context_chars=args.max_context_chars,
+        gatherer_backend=gatherer_runner(args),
+    )
+    return print_gathered_context(bundle, gathered)
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parsed = json.loads(stripped)
+        if not isinstance(parsed, dict):
+            raise SystemExit(f"{path}:{line_number}: case must be a JSON object")
+        cases.append(parsed)
+    return cases
+
+
+def gather_requirement_passed(requirement: Any, snippets: list[Any]) -> tuple[bool, str]:
+    if isinstance(requirement, str):
+        ok = any(snippet.path == requirement for snippet in snippets)
+        return ok, requirement
+    if not isinstance(requirement, dict):
+        return False, repr(requirement)
+    path = requirement.get("path")
+    text = requirement.get("text")
+    label = json.dumps(requirement, sort_keys=True)
+    if not isinstance(path, str):
+        return False, label
+    matching = [snippet for snippet in snippets if snippet.path == path]
+    if not matching:
+        return False, label
+    if text is None:
+        return True, label
+    if not isinstance(text, str):
+        return False, label
+    return any(text in snippet.text for snippet in matching), label
+
+
+def cmd_repo_oracle_eval_gather(args: argparse.Namespace) -> int:
+    bundle = load_source_bundle(
+        Path(args.source_bundle),
+        source_id=args.source_id or None,
+        max_file_bytes=args.max_file_bytes,
+    )
+    case_results = []
+    passed_cases = 0
+    total_requirements = 0
+    passed_requirements = 0
+    for case in read_jsonl(Path(args.cases)):
+        case_id = str(case.get("id") or f"case-{len(case_results) + 1}")
+        question = case.get("question")
+        if not isinstance(question, str) or not question.strip():
+            raise SystemExit(f"{case_id}: question is required")
+        thread_context = case.get("thread_context")
+        if thread_context is not None and not isinstance(thread_context, str):
+            raise SystemExit(f"{case_id}: thread_context must be a string")
+        gathered = gather_context(
+            bundle,
+            question=question,
+            thread_context=thread_context or "",
+            max_context_chars=args.max_context_chars,
+            gatherer_backend=gatherer_runner(args),
+        )
+        requirements = case.get("must_include", [])
+        if not isinstance(requirements, list):
+            raise SystemExit(f"{case_id}: must_include must be a list")
+        checks = []
+        for requirement in requirements:
+            ok, label = gather_requirement_passed(requirement, gathered.snippets)
+            checks.append({"ok": ok, "requirement": label})
+            total_requirements += 1
+            passed_requirements += 1 if ok else 0
+        case_ok = all(check["ok"] for check in checks)
+        passed_cases += 1 if case_ok else 0
+        case_results.append(
+            {
+                "id": case_id,
+                "ok": case_ok,
+                "checks": checks,
+                "warnings": gathered.warnings,
+                "gatherer_provider": gathered.gatherer_provider,
+                "sources": [
+                    {
+                        "path": snippet.path,
+                        "line_start": snippet.line_start,
+                        "line_end": snippet.line_end,
+                        "score": snippet.score,
+                    }
+                    for snippet in gathered.snippets
+                ],
+            },
+        )
+    report = {
+        "ok": passed_cases == len(case_results) and passed_requirements == total_requirements,
+        "passed_cases": passed_cases,
+        "total_cases": len(case_results),
+        "passed_requirements": passed_requirements,
+        "total_requirements": total_requirements,
+        "cases": case_results,
+    }
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0 if report["ok"] else 1
+
+
+def print_gathered_context(bundle, gathered) -> int:
+    print(
+        json.dumps(
+            {
+                "source_id": bundle.source_id,
+                "snapshot": bundle.snapshot,
+                "tier": gathered.tier,
+                "warnings": gathered.warnings,
+                "gatherer_provider": gathered.gatherer_provider,
+                "gatherer_call_id": gathered.gatherer_call_id,
+                "gatherer_artifact_dir": gathered.gatherer_artifact_dir,
+                "gatherer_plan": gathered.gatherer_plan,
+                "snippets": [
+                    {
+                        "path": snippet.path,
+                        "line_start": snippet.line_start,
+                        "line_end": snippet.line_end,
+                        "score": snippet.score,
+                        "text": snippet.text,
+                    }
+                    for snippet in gathered.snippets
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+    )
     return 0
 
 
@@ -994,6 +1171,7 @@ def run_repo_chat_reply(
     bot_login: str,
     answer_backend: Callable[[str], BackendResult],
     verifier_backend: Callable[[str], BackendResult] | None,
+    gatherer_backend: Callable[[str], BackendResult] | None,
     branch_override: str | None,
     run_dir: Path,
     max_context_chars: int,
@@ -1028,6 +1206,7 @@ def run_repo_chat_reply(
         question=turns[-1].body,
         answer_backend=answer_backend,
         verifier_backend=verifier_backend,
+        gatherer_backend=gatherer_backend,
         thread_context=prior,
         max_context_chars=max_context_chars,
     )
@@ -1040,6 +1219,8 @@ def run_repo_chat_reply(
         "tier": result.tier,
         "sources": result.sources,
         "warnings": result.warnings,
+        "gatherer_provider": result.gatherer_provider,
+        "gatherer_call_id": result.gatherer_call_id,
     }
     comment_body = answer_with_metadata(result.answer, metadata)
     comment = client.comment_issue(workspace, issue_number, comment_body)
@@ -1107,6 +1288,7 @@ def cmd_chat_ask(args: argparse.Namespace) -> int:
         question=question,
         answer_backend=backend_runner(args),
         verifier_backend=verifier_runner(args),
+        gatherer_backend=gatherer_runner(args),
         thread_context=thread_context,
         max_context_chars=args.max_context_chars,
     )
@@ -1136,6 +1318,53 @@ def cmd_chat_ask(args: argparse.Namespace) -> int:
     else:
         print(str(result.get("reply") or ""), end="" if str(result.get("reply") or "").endswith("\n") else "\n")
     return 0
+
+
+def cmd_chat_gather(args: argparse.Namespace) -> int:
+    client = authed_client_from_args(args)
+    branch = args.branch or "main"
+    question = read_message_input(args) if has_message_source(args) else ""
+    thread_context = ""
+    if args.issue is not None:
+        issue = client.read_issue(args.workspace, args.issue)
+        issue_branch = branch_from_issue_body(issue)
+        if issue_branch:
+            if args.branch and issue_branch != args.branch:
+                raise SystemExit(f"chat issue is pinned to branch {issue_branch!r}, not {args.branch!r}")
+            branch = issue_branch
+        timeline = client.read_issue_timeline(args.workspace, args.issue)
+        turns = extract_turns(issue, timeline, args.bot_user)
+        if question.strip():
+            thread_context = "\n\n".join(
+                f"## {'User' if turn.role == 'user' else 'Assistant'}\n{turn.body}"
+                for turn in turns
+            )
+        else:
+            if not turns:
+                raise SystemExit("issue has no chat turns; provide a message")
+            question = turns[-1].body
+            thread_context = "\n\n".join(
+                f"## {'User' if turn.role == 'user' else 'Assistant'}\n{turn.body}"
+                for turn in turns[:-1]
+            )
+    if not question.strip():
+        raise SystemExit("message is required unless --issue has at least one turn")
+    source_root = Path(args.run_dir) / "source-bundles"
+    source_root.mkdir(parents=True, exist_ok=True)
+    bundle = export_cosheaf_source_bundle(
+        client=client,
+        workspace=args.workspace,
+        branch=branch,
+        root=source_root / f"{args.workspace}-gather-{branch.replace('/', '_')}",
+    )
+    gathered = gather_context(
+        bundle,
+        question=question,
+        thread_context=thread_context,
+        max_context_chars=args.max_context_chars,
+        gatherer_backend=gatherer_runner(args),
+    )
+    return print_gathered_context(bundle, gathered)
 
 
 def cmd_run_eval(args: argparse.Namespace) -> int:
@@ -1313,6 +1542,43 @@ def add_repo_oracle_args(
     parser.add_argument(
         "--verifier-reasoning-effort",
         default=env("COVERIFY_REPO_ORACLE_VERIFIER_REASONING_EFFORT"),
+    )
+    parser.add_argument(
+        "--gatherer-backend",
+        choices=("codex", "fixture", "script"),
+        default=env("COVERIFY_REPO_ORACLE_GATHERER_BACKEND"),
+        help="optional LLM/backend planner that selects repo snippets before answering",
+    )
+    parser.add_argument("--gatherer-command", default=env("COVERIFY_REPO_ORACLE_GATHERER_COMMAND"))
+    parser.add_argument("--gatherer-model", default=env("COVERIFY_REPO_ORACLE_GATHERER_MODEL"))
+    parser.add_argument(
+        "--gatherer-reasoning-effort",
+        default=env("COVERIFY_REPO_ORACLE_GATHERER_REASONING_EFFORT"),
+    )
+
+
+def add_gather_eval_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--max-context-chars",
+        type=int,
+        default=int(env("COVERIFY_REPO_ORACLE_MAX_CONTEXT_CHARS", "60000") or "60000"),
+    )
+    parser.add_argument(
+        "--max-file-bytes",
+        type=int,
+        default=int(env("COVERIFY_REPO_ORACLE_MAX_FILE_BYTES", "1000000") or "1000000"),
+    )
+    parser.add_argument(
+        "--gatherer-backend",
+        choices=("codex", "fixture", "script"),
+        default=env("COVERIFY_REPO_ORACLE_GATHERER_BACKEND"),
+        help="optional LLM/backend planner that selects repo snippets before answering",
+    )
+    parser.add_argument("--gatherer-command", default=env("COVERIFY_REPO_ORACLE_GATHERER_COMMAND"))
+    parser.add_argument("--gatherer-model", default=env("COVERIFY_REPO_ORACLE_GATHERER_MODEL"))
+    parser.add_argument(
+        "--gatherer-reasoning-effort",
+        default=env("COVERIFY_REPO_ORACLE_GATHERER_REASONING_EFFORT"),
     )
 
 
@@ -1548,6 +1814,19 @@ def build_parser() -> argparse.ArgumentParser:
     add_backend_args(repo_ask)
     add_repo_oracle_args(repo_ask)
     repo_ask.set_defaults(func=cmd_repo_oracle_ask)
+    repo_gather = repo_oracle_sub.add_parser("gather", help="prototype and inspect repo context gathering")
+    repo_gather.add_argument("--source-bundle", required=True, help="directory containing allowed source files")
+    repo_gather.add_argument("--source-id", default="", help="stable source bundle id")
+    add_backend_args(repo_gather)
+    add_repo_oracle_args(repo_gather)
+    repo_gather.set_defaults(func=cmd_repo_oracle_gather)
+    repo_eval_gather = repo_oracle_sub.add_parser("eval-gather", help="run JSONL gather-quality checks")
+    repo_eval_gather.add_argument("--source-bundle", required=True, help="directory containing allowed source files")
+    repo_eval_gather.add_argument("--source-id", default="", help="stable source bundle id")
+    repo_eval_gather.add_argument("--cases", required=True, help="JSONL cases with question and must_include checks")
+    add_backend_args(repo_eval_gather)
+    add_gather_eval_args(repo_eval_gather)
+    repo_eval_gather.set_defaults(func=cmd_repo_oracle_eval_gather)
 
     chat = sub.add_parser("chat", help="branch-scoped chat harness commands")
     chat_sub = chat.add_subparsers(dest="chat_command", required=True)
@@ -1561,6 +1840,15 @@ def build_parser() -> argparse.ArgumentParser:
     add_backend_args(chat_ask)
     add_repo_oracle_args(chat_ask)
     chat_ask.set_defaults(func=cmd_chat_ask)
+    chat_gather = chat_sub.add_parser("gather", help="export a branch and inspect gathered chat context without posting")
+    add_common_auth(chat_gather)
+    add_workspace_arg(chat_gather)
+    chat_gather.add_argument("--branch", default="")
+    chat_gather.add_argument("--issue", type=int, default=None)
+    chat_gather.add_argument("--bot-user", default=env("COVERIFY_BOT_USER", "coverify"))
+    add_backend_args(chat_gather)
+    add_repo_oracle_args(chat_gather)
+    chat_gather.set_defaults(func=cmd_chat_gather)
 
     run_eval = sub.add_parser("run-eval", help="run JSONL eval cases against a backend")
     run_eval.add_argument("--cases", required=True, help="JSONL eval case file")
