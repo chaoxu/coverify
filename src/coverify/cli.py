@@ -21,7 +21,15 @@ from .engine.verifying import (
     verifying_config_from_dict,
 )
 from .cosheaf.client import CosheafClient, CosheafConfig
-from .integration.chat import extract_login, run_chat_reply
+from .integration.chat import extract_login, extract_turns, run_chat_reply
+from .integration.repo_oracle import (
+    answer_with_metadata,
+    chat_issue_body,
+    export_cosheaf_source_bundle,
+    load_source_bundle,
+    parse_chat_metadata,
+    run_repo_oracle,
+)
 from .integration.workflows import (
     InfinitePrimesRunOptions,
     default_branch_name,
@@ -150,6 +158,19 @@ def backend_runner(args: argparse.Namespace) -> Callable[[str], BackendResult]:
     if args.backend == "verifying":
         return build_verifying_oracle(args, resolve_verifying_config(args))
     return build_base_runner(args, args.backend)
+
+
+def verifier_runner(args: argparse.Namespace) -> Callable[[str], BackendResult] | None:
+    backend_name = getattr(args, "verifier_backend", "") or ""
+    if not backend_name:
+        return None
+    return build_base_runner(
+        args,
+        backend_name,
+        command=getattr(args, "verifier_command", "") or None,
+        model=getattr(args, "verifier_model", "") or None,
+        reasoning_effort=getattr(args, "verifier_reasoning_effort", "") or None,
+    )
 
 
 def cmd_login(args: argparse.Namespace) -> int:
@@ -702,15 +723,29 @@ def cmd_comment_issue(args: argparse.Namespace) -> int:
 def cmd_chat_reply(args: argparse.Namespace) -> int:
     client = authed_client_from_args(args)
     bot_login = args.bot_user or extract_login(client.me())
-    result = run_chat_reply(
-        client=client,
-        workspace=args.workspace,
-        number=args.issue,
-        oracle=backend_runner(args),
-        bot_login=bot_login,
-    )
+    if args.legacy_prompt_only:
+        result = run_chat_reply(
+            client=client,
+            workspace=args.workspace,
+            number=args.issue,
+            oracle=backend_runner(args),
+            bot_login=bot_login,
+        )
+        return print_json(
+            {"status": result.status, "posted": result.posted, "reply": result.reply}
+        )
     return print_json(
-        {"status": result.status, "posted": result.posted, "reply": result.reply}
+        run_repo_chat_reply(
+            client=client,
+            workspace=args.workspace,
+            issue_number=args.issue,
+            bot_login=bot_login,
+            answer_backend=backend_runner(args),
+            verifier_backend=verifier_runner(args),
+            branch_override=args.branch or None,
+            run_dir=Path(args.run_dir),
+            max_context_chars=args.max_context_chars,
+        ),
     )
 
 
@@ -863,6 +898,30 @@ def read_oracle_prompt(args: argparse.Namespace) -> str:
     return sys.stdin.read()
 
 
+def read_message_input(args: argparse.Namespace) -> str:
+    sources = sum(
+        bool(source)
+        for source in (
+            getattr(args, "message_text", ""),
+            getattr(args, "message_file", ""),
+            getattr(args, "message", []),
+        )
+    )
+    if sources > 1:
+        raise SystemExit("provide only one message source: message args, --message, or --message-file")
+    if getattr(args, "message_file", ""):
+        path = args.message_file
+        if path == "-":
+            return sys.stdin.read()
+        return Path(path).read_text(encoding="utf-8")
+    if getattr(args, "message_text", ""):
+        return args.message_text
+    positional = getattr(args, "message", [])
+    if positional:
+        return " ".join(positional)
+    return sys.stdin.read()
+
+
 def cmd_ask_oracle(args: argparse.Namespace) -> int:
     result = run_ask_oracle(
         prompt=read_oracle_prompt(args),
@@ -874,6 +933,208 @@ def cmd_ask_oracle(args: argparse.Namespace) -> int:
         return 0
     answer = str(result["answer"])
     print(answer, end="" if answer.endswith("\n") else "\n")
+    return 0
+
+
+def cmd_repo_oracle_ask(args: argparse.Namespace) -> int:
+    question = read_message_input(args)
+    thread_context = ""
+    if args.thread_file:
+        thread_context = sys.stdin.read() if args.thread_file == "-" else Path(args.thread_file).read_text(encoding="utf-8")
+    bundle = load_source_bundle(
+        Path(args.source_bundle),
+        source_id=args.source_id or None,
+        max_file_bytes=args.max_file_bytes,
+    )
+    result = run_repo_oracle(
+        bundle=bundle,
+        question=question,
+        answer_backend=backend_runner(args),
+        verifier_backend=verifier_runner(args),
+        thread_context=thread_context,
+        max_context_chars=args.max_context_chars,
+    )
+    if args.json:
+        print(json.dumps(result.to_json(), indent=2, sort_keys=True))
+    else:
+        print(result.answer, end="" if result.answer.endswith("\n") else "\n")
+    return 0
+
+
+def chat_title_from(message: str) -> str:
+    for line in message.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped[:79] + ("..." if len(stripped) > 80 else "")
+    return "Chat"
+
+
+def branch_from_issue_body(issue: object) -> str | None:
+    if not isinstance(issue, dict):
+        return None
+    body = issue.get("body")
+    if not isinstance(body, str):
+        return None
+    branch = parse_chat_metadata(body).get("branch")
+    return branch if isinstance(branch, str) and branch.strip() else None
+
+
+def issue_number_from_create(response: object) -> int:
+    number = response.get("number") if isinstance(response, dict) else None
+    if not isinstance(number, int):
+        raise RuntimeError("created issue did not return an issue number")
+    return number
+
+
+def run_repo_chat_reply(
+    *,
+    client: CosheafClient,
+    workspace: str,
+    issue_number: int,
+    bot_login: str,
+    answer_backend: Callable[[str], BackendResult],
+    verifier_backend: Callable[[str], BackendResult] | None,
+    branch_override: str | None,
+    run_dir: Path,
+    max_context_chars: int,
+) -> dict[str, object]:
+    issue = client.read_issue(workspace, issue_number)
+    timeline = client.read_issue_timeline(workspace, issue_number)
+    turns = extract_turns(issue, timeline, bot_login)
+    if not any(turn.role == "user" for turn in turns):
+        return {"status": "skipped_no_user", "posted": False, "reply": None}
+    if turns[-1].role == "assistant":
+        return {"status": "skipped_already_replied", "posted": False, "reply": None}
+
+    issue_branch = branch_from_issue_body(issue)
+    branch = issue_branch or branch_override or "main"
+    if branch_override and issue_branch and branch_override != issue_branch:
+        raise SystemExit(f"chat issue is pinned to branch {issue_branch!r}, not {branch_override!r}")
+
+    source_root = run_dir / "source-bundles"
+    source_root.mkdir(parents=True, exist_ok=True)
+    bundle = export_cosheaf_source_bundle(
+        client,
+        workspace=workspace,
+        branch=branch,
+        root=source_root / f"{workspace}-{issue_number}-{branch.replace('/', '_')}",
+    )
+    prior = "\n\n".join(
+        f"## {'User' if turn.role == 'user' else 'Assistant'}\n{turn.body}"
+        for turn in turns[:-1]
+    )
+    result = run_repo_oracle(
+        bundle=bundle,
+        question=turns[-1].body,
+        answer_backend=answer_backend,
+        verifier_backend=verifier_backend,
+        thread_context=prior,
+        max_context_chars=max_context_chars,
+    )
+    metadata = {
+        "kind": "coverify-chat-reply",
+        "branch": branch,
+        "source_id": result.source_id,
+        "snapshot": result.snapshot,
+        "verification": result.verification,
+        "tier": result.tier,
+        "sources": result.sources,
+        "warnings": result.warnings,
+    }
+    comment_body = answer_with_metadata(result.answer, metadata)
+    comment = client.comment_issue(workspace, issue_number, comment_body)
+    return {
+        **result.to_json(),
+        "status": "replied",
+        "posted": True,
+        "reply": result.answer,
+        "workspace": workspace,
+        "branch": branch,
+        "issue_number": issue_number,
+        "comment": comment,
+    }
+
+
+def cmd_chat_ask(args: argparse.Namespace) -> int:
+    client = authed_client_from_args(args)
+    question = read_message_input(args)
+    if not question.strip():
+        raise SystemExit("message is required")
+    branch = args.branch or "main"
+    issue_number = args.issue
+    thread_context = ""
+    if issue_number is None:
+        label_id = client.ensure_label(
+            args.workspace,
+            name="chat",
+            color="8b5cf6",
+            description="Coverify chat",
+        )
+        created = client.create_issue(
+            args.workspace,
+            title=args.title or chat_title_from(question),
+            body=chat_issue_body(question, branch=branch),
+            labels=[label_id],
+        )
+        issue_number = issue_number_from_create(created)
+    else:
+        issue = client.read_issue(args.workspace, issue_number)
+        issue_branch = branch_from_issue_body(issue)
+        if issue_branch:
+            if args.branch and issue_branch != args.branch:
+                raise SystemExit(f"chat issue is pinned to branch {issue_branch!r}, not {args.branch!r}")
+            branch = issue_branch
+        elif args.branch:
+            branch = args.branch
+        timeline = client.read_issue_timeline(args.workspace, issue_number)
+        turns = extract_turns(issue, timeline, args.bot_user)
+        thread_context = "\n\n".join(
+            f"## {'User' if turn.role == 'user' else 'Assistant'}\n{turn.body}"
+            for turn in turns
+        )
+        client.comment_issue(args.workspace, issue_number, question)
+
+    source_root = Path(args.run_dir) / "source-bundles"
+    source_root.mkdir(parents=True, exist_ok=True)
+    bundle = export_cosheaf_source_bundle(
+        client=client,
+        workspace=args.workspace,
+        branch=branch,
+        root=source_root / f"{args.workspace}-{issue_number}-{branch.replace('/', '_')}",
+    )
+    repo_result = run_repo_oracle(
+        bundle=bundle,
+        question=question,
+        answer_backend=backend_runner(args),
+        verifier_backend=verifier_runner(args),
+        thread_context=thread_context,
+        max_context_chars=args.max_context_chars,
+    )
+    metadata = {
+        "kind": "coverify-chat-reply",
+        "branch": branch,
+        "source_id": repo_result.source_id,
+        "snapshot": repo_result.snapshot,
+        "verification": repo_result.verification,
+        "tier": repo_result.tier,
+        "sources": repo_result.sources,
+        "warnings": repo_result.warnings,
+    }
+    comment = client.comment_issue(args.workspace, issue_number, answer_with_metadata(repo_result.answer, metadata))
+    result = {
+        **repo_result.to_json(),
+        "status": "replied",
+        "posted": True,
+        "reply": repo_result.answer,
+        "workspace": args.workspace,
+        "branch": branch,
+        "issue_number": issue_number,
+        "comment": comment,
+    }
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(str(result.get("reply") or ""), end="" if str(result.get("reply") or "").endswith("\n") else "\n")
     return 0
 
 
@@ -1018,6 +1279,43 @@ def add_backend_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_repo_oracle_args(
+    parser: argparse.ArgumentParser,
+    *,
+    include_message: bool = True,
+    include_json: bool = True,
+) -> None:
+    if include_message:
+        parser.add_argument("message", nargs="*", help="question text; stdin is used when omitted")
+        parser.add_argument("--message", dest="message_text", default="", help="question text")
+        parser.add_argument("--message-file", default="", help="question file, or '-' for stdin")
+        parser.add_argument("--thread-file", default="", help="prior thread context file, or '-' for stdin")
+    if include_json:
+        parser.add_argument("--json", action="store_true", help="print structured result JSON")
+    parser.add_argument(
+        "--max-context-chars",
+        type=int,
+        default=int(env("COVERIFY_REPO_ORACLE_MAX_CONTEXT_CHARS", "60000") or "60000"),
+    )
+    parser.add_argument(
+        "--max-file-bytes",
+        type=int,
+        default=int(env("COVERIFY_REPO_ORACLE_MAX_FILE_BYTES", "1000000") or "1000000"),
+    )
+    parser.add_argument(
+        "--verifier-backend",
+        choices=("codex", "fixture", "script"),
+        default=env("COVERIFY_REPO_ORACLE_VERIFIER_BACKEND"),
+        help="extra verifier backend required unless --backend=verifying",
+    )
+    parser.add_argument("--verifier-command", default=env("COVERIFY_REPO_ORACLE_VERIFIER_COMMAND"))
+    parser.add_argument("--verifier-model", default=env("COVERIFY_REPO_ORACLE_VERIFIER_MODEL"))
+    parser.add_argument(
+        "--verifier-reasoning-effort",
+        default=env("COVERIFY_REPO_ORACLE_VERIFIER_REASONING_EFFORT"),
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="coverify")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1123,6 +1421,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=env("COVERIFY_BOT_USER"),
         help="login of the oracle's own account; defaults to the authenticated user",
     )
+    chat_reply.add_argument(
+        "--branch",
+        default="",
+        help="branch to use when the issue has no pinned chat metadata",
+    )
+    chat_reply.add_argument(
+        "--legacy-prompt-only",
+        action="store_true",
+        help="use the old issue-thread-only prompt path instead of repo-snapshot chat",
+    )
+    add_repo_oracle_args(chat_reply, include_message=False, include_json=False)
     chat_reply.set_defaults(func=cmd_chat_reply)
 
     close_issue = sub.add_parser("close-issue", help="close a workspace issue")
@@ -1230,6 +1539,28 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("--json", action="store_true", help="print answer plus audit metadata as JSON")
     add_backend_args(ask)
     ask.set_defaults(func=cmd_ask_oracle)
+
+    repo_oracle = sub.add_parser("repo-oracle", help="repo-snapshot oracle commands")
+    repo_oracle_sub = repo_oracle.add_subparsers(dest="repo_oracle_command", required=True)
+    repo_ask = repo_oracle_sub.add_parser("ask", help="ask against a local source bundle")
+    repo_ask.add_argument("--source-bundle", required=True, help="directory containing allowed source files")
+    repo_ask.add_argument("--source-id", default="", help="stable source bundle id")
+    add_backend_args(repo_ask)
+    add_repo_oracle_args(repo_ask)
+    repo_ask.set_defaults(func=cmd_repo_oracle_ask)
+
+    chat = sub.add_parser("chat", help="branch-scoped chat harness commands")
+    chat_sub = chat.add_subparsers(dest="chat_command", required=True)
+    chat_ask = chat_sub.add_parser("ask", help="create/append a chat issue and answer it")
+    add_common_auth(chat_ask)
+    add_workspace_arg(chat_ask)
+    chat_ask.add_argument("--branch", default="")
+    chat_ask.add_argument("--issue", type=int, default=None)
+    chat_ask.add_argument("--title", default="")
+    chat_ask.add_argument("--bot-user", default=env("COVERIFY_BOT_USER", "coverify"))
+    add_backend_args(chat_ask)
+    add_repo_oracle_args(chat_ask)
+    chat_ask.set_defaults(func=cmd_chat_ask)
 
     run_eval = sub.add_parser("run-eval", help="run JSONL eval cases against a backend")
     run_eval.add_argument("--cases", required=True, help="JSONL eval case file")

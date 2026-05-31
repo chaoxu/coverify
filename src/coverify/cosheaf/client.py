@@ -168,11 +168,15 @@ class CosheafClient:
         *,
         title: str,
         body: str,
+        labels: list[int] | None = None,
     ) -> Any:
+        payload: dict[str, Any] = {"title": title, "body": body}
+        if labels is not None:
+            payload["labels"] = labels
         return self.request(
             "POST",
             f"/w/{workspace}/issues",
-            body={"title": title, "body": body},
+            body=payload,
         )
 
     def edit_issue(
@@ -202,6 +206,50 @@ class CosheafClient:
             f"/w/{workspace}/issues/{number}/comments",
             body={"body": body},
         )
+
+    def list_labels(self, workspace: str) -> Any:
+        return self.request("GET", f"/w/{workspace}/labels")
+
+    def create_label(
+        self,
+        workspace: str,
+        *,
+        name: str,
+        color: str,
+        description: str = "",
+    ) -> Any:
+        return self.request(
+            "POST",
+            f"/w/{workspace}/labels",
+            body={"name": name, "color": color, "description": description},
+        )
+
+    def ensure_label(
+        self,
+        workspace: str,
+        *,
+        name: str,
+        color: str,
+        description: str = "",
+    ) -> int:
+        labels = self.list_labels(workspace)
+        items = labels.get("labels") if isinstance(labels, dict) else None
+        if isinstance(items, list):
+            for label in items:
+                if isinstance(label, dict) and label.get("name") == name:
+                    value = label.get("id")
+                    if isinstance(value, int):
+                        return value
+        created = self.create_label(
+            workspace,
+            name=name,
+            color=color,
+            description=description,
+        )
+        value = created.get("id") if isinstance(created, dict) else None
+        if not isinstance(value, int):
+            raise RuntimeError(f"created label {name!r} did not return an id")
+        return value
 
     def close_issue(self, workspace: str, number: int) -> Any:
         return self.set_issue_state(workspace, number, "closed")

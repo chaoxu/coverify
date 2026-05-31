@@ -1,0 +1,245 @@
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+from coverify.engine.backend import run_script_backend
+from coverify.integration.repo_oracle import (
+    chat_issue_body,
+    gather_context,
+    load_source_bundle,
+    parse_chat_metadata,
+    run_repo_oracle,
+    strip_chat_metadata,
+)
+
+
+def write_script(path: Path, body: str) -> Path:
+    path.write_text(body, encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+ANSWER_SCRIPT = """#!/usr/bin/env python3
+import sys
+
+prompt = sys.stdin.read()
+if "reserve-overlap.md" not in prompt or "switch-credit.md" not in prompt:
+    raise SystemExit("missing source context")
+print(
+    "From `reserve-overlap.md:1` and `switch-credit.md:1`, each overlap debt "
+    "unit is paired with an owned reserve credit. Therefore summing the signed "
+    "credits cancels every overlap debt term, so the branch proves the new "
+    "reserve-overlap closure claim: total uncovered overlap debt is zero."
+)
+"""
+
+
+VERIFIER_SCRIPT = """#!/usr/bin/env python3
+import sys
+
+prompt = sys.stdin.read()
+ok = (
+    "reserve-overlap closure" in prompt
+    and "total uncovered overlap debt is zero" in prompt
+    and "owned reserve credit" in prompt
+    and "reserve-overlap.md" in prompt
+    and "switch-credit.md" in prompt
+)
+if ok:
+    print("The candidate is supported by the injected repo snapshot.\\nVERDICT: PASS")
+else:
+    print("The candidate is not supported by the injected repo snapshot.\\nVERDICT: FAIL")
+"""
+
+
+class RepoOracleTests(unittest.TestCase):
+    def test_chat_metadata_round_trips_and_strips_from_visible_body(self) -> None:
+        body = chat_issue_body("Prove the reserve lemma.", branch="agent/reserve")
+
+        self.assertEqual(parse_chat_metadata(body)["branch"], "agent/reserve")
+        self.assertEqual(strip_chat_metadata(body), "Prove the reserve lemma.")
+
+    def test_source_bundle_uses_tracked_files_when_given_git_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            subprocess.run(["git", "init"], cwd=root, check=True, stdout=subprocess.PIPE)
+            (root / "tracked.md").write_text("tracked reserve fact", encoding="utf-8")
+            (root / "untracked.md").write_text("must not leak", encoding="utf-8")
+            subprocess.run(["git", "add", "tracked.md"], cwd=root, check=True)
+
+            bundle = load_source_bundle(root)
+
+        self.assertEqual([file.path for file in bundle.files], ["tracked.md"])
+        self.assertNotIn("untracked", bundle.snapshot)
+
+    def test_gather_context_selects_relevant_files_without_injecting_everything(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "reserve.md").write_text("Reserve credits cancel overlap debt.", encoding="utf-8")
+            (root / "unrelated.md").write_text("Banana color notes.", encoding="utf-8")
+            bundle = load_source_bundle(root)
+
+            gathered = gather_context(
+                bundle,
+                question="Why does reserve overlap debt cancel?",
+                max_context_chars=1_000,
+            )
+
+        self.assertEqual([snippet.path for snippet in gathered.snippets], ["reserve.md"])
+        self.assertEqual(gathered.tier, "light")
+
+    def test_proof_requests_are_strong_even_when_wording_is_simple(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "lemma.md").write_text("A implies B.", encoding="utf-8")
+            bundle = load_source_bundle(root)
+
+            gathered = gather_context(bundle, question="Prove the branch lemma.")
+
+        self.assertEqual(gathered.tier, "strong")
+
+    def test_repo_oracle_generates_and_verifies_new_math_from_seeded_docs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "source"
+            root.mkdir()
+            (root / "reserve-overlap.md").write_text(
+                "\n".join(
+                    [
+                        "# Reserve overlap invariant",
+                        "",
+                        "Every overlap debt unit is assigned to exactly one reserve owner.",
+                        "A debt unit is uncovered iff it has no owned reserve credit.",
+                    ],
+                ),
+                encoding="utf-8",
+            )
+            (root / "switch-credit.md").write_text(
+                "\n".join(
+                    [
+                        "# Switch credit rule",
+                        "",
+                        "For each assigned overlap debt unit, the owning switch contributes",
+                        "one signed reserve credit that cancels that unit in the total debt sum.",
+                    ],
+                ),
+                encoding="utf-8",
+            )
+            answer_script = write_script(Path(tmpdir) / "answer.py", ANSWER_SCRIPT)
+            verifier_script = write_script(Path(tmpdir) / "verify.py", VERIFIER_SCRIPT)
+            bundle = load_source_bundle(root, source_id="seeded:reserve-overlap")
+            run_root = Path(tmpdir) / "runs"
+
+            result = run_repo_oracle(
+                bundle=bundle,
+                question="Prove the reserve-overlap closure lemma.",
+                answer_backend=lambda prompt: run_script_backend(
+                    prompt,
+                    command=f"{sys.executable} {answer_script}",
+                    artifact_root=run_root,
+                ),
+                verifier_backend=lambda prompt: run_script_backend(
+                    prompt,
+                    command=f"{sys.executable} {verifier_script}",
+                    artifact_root=run_root,
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.verification, "passed")
+        self.assertEqual(result.tier, "strong")
+        self.assertIn("new reserve-overlap closure claim", result.answer)
+        self.assertEqual(
+            [source["path"] for source in result.sources],
+            ["reserve-overlap.md", "switch-credit.md"],
+        )
+
+    def test_repo_oracle_returns_refusal_when_verifier_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "source"
+            root.mkdir()
+            (root / "facts.md").write_text("Only local fact A is known.", encoding="utf-8")
+            bad_answer = write_script(
+                Path(tmpdir) / "bad_answer.py",
+                "#!/usr/bin/env python3\nprint('The repo proves unsupported fact B.')\n",
+            )
+            fail_verify = write_script(
+                Path(tmpdir) / "fail_verify.py",
+                "#!/usr/bin/env python3\nprint('Fact B is not in the supplied source.\\nVERDICT: FAIL')\n",
+            )
+
+            result = run_repo_oracle(
+                bundle=load_source_bundle(root),
+                question="What follows?",
+                answer_backend=lambda prompt: run_script_backend(
+                    prompt,
+                    command=f"{sys.executable} {bad_answer}",
+                    artifact_root=Path(tmpdir) / "runs",
+                ),
+                verifier_backend=lambda prompt: run_script_backend(
+                    prompt,
+                    command=f"{sys.executable} {fail_verify}",
+                    artifact_root=Path(tmpdir) / "runs",
+                ),
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.verification, "failed")
+        self.assertIn("could not confidently verify", result.answer)
+
+    def test_repo_oracle_cli_emits_json_for_other_harnesses(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "source"
+            root.mkdir()
+            (root / "reserve-overlap.md").write_text("Every overlap debt has an owned reserve credit.", encoding="utf-8")
+            (root / "switch-credit.md").write_text("Owned reserve credits cancel overlap debt terms.", encoding="utf-8")
+            answer_script = write_script(Path(tmpdir) / "answer.py", ANSWER_SCRIPT)
+            verifier_script = write_script(Path(tmpdir) / "verify.py", VERIFIER_SCRIPT)
+            parser_cmd = [
+                sys.executable,
+                "-m",
+                "coverify",
+                "repo-oracle",
+                "ask",
+                "--source-bundle",
+                str(root),
+                "--source-id",
+                "cli-smoke",
+                "--backend",
+                "script",
+                "--backend-command",
+                f"{sys.executable} {answer_script}",
+                "--verifier-backend",
+                "script",
+                "--verifier-command",
+                f"{sys.executable} {verifier_script}",
+                "--run-dir",
+                str(Path(tmpdir) / "runs"),
+                "--json",
+                "--message",
+                "Prove the reserve-overlap closure lemma.",
+            ]
+            completed = subprocess.run(
+                parser_cmd,
+                check=True,
+                cwd=Path(__file__).resolve().parents[1],
+                env={**os.environ, "PYTHONPATH": "src"},
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            payload = json.loads(completed.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["verification"], "passed")
+        self.assertEqual(payload["source_id"], "cli-smoke")
+        self.assertEqual(payload["tier"], "strong")
+
+
+if __name__ == "__main__":
+    unittest.main()

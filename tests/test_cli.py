@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -279,6 +280,165 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(args.func(args), 0)
 
         self.assertEqual(stdout.getvalue(), "file prompt\n")
+
+    def test_chat_ask_creates_branch_scoped_issue_and_posts_verified_answer(self) -> None:
+        class ChatClient:
+            def __init__(self) -> None:
+                self.issue_body = ""
+                self.comments: list[str] = []
+
+            def ensure_label(self, workspace: str, *, name: str, color: str, description: str = "") -> int:
+                self.workspace = workspace
+                self.label = (name, color, description)
+                return 4
+
+            def create_issue(self, workspace: str, *, title: str, body: str, labels: list[int] | None = None) -> dict[str, int]:
+                self.issue_body = body
+                self.created = (workspace, title, labels)
+                return {"number": 12}
+
+            def read_issue(self, workspace: str, number: int) -> dict[str, object]:
+                return {
+                    "number": number,
+                    "user": {"login": "alice"},
+                    "body": self.issue_body,
+                    "labels": [{"id": 4, "name": "chat", "color": "8b5cf6"}],
+                }
+
+            def read_issue_timeline(self, workspace: str, number: int) -> list[object]:
+                return []
+
+            def list_workspace_files(self, workspace: str, *, branch: str = "main") -> dict[str, object]:
+                self.branch = branch
+                return {"files": [{"path": "docs/local.md", "size": 24, "kind": "markdown"}]}
+
+            def read_file(self, workspace: str, path: str, *, branch: str = "main") -> dict[str, str]:
+                return {"content": "A local lemma implies the requested theorem."}
+
+            def comment_issue(self, workspace: str, number: int, body: str) -> dict[str, int]:
+                self.comments.append(body)
+                return {"id": 99}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            answer = tmp / "answer.py"
+            answer.write_text("#!/usr/bin/env python3\nprint('Using `docs/local.md:1`, the theorem follows.')\n", encoding="utf-8")
+            verifier = tmp / "verify.py"
+            verifier.write_text("#!/usr/bin/env python3\nprint('Supported by the supplied source.\\nVERDICT: PASS')\n", encoding="utf-8")
+            client = ChatClient()
+            args = build_parser().parse_args(
+                [
+                    "chat",
+                    "ask",
+                    "--token",
+                    "tok",
+                    "--workspace",
+                    "w",
+                    "--branch",
+                    "agent/math",
+                    "--backend",
+                    "script",
+                    "--backend-command",
+                    f"{sys.executable} {answer}",
+                    "--verifier-backend",
+                    "script",
+                    "--verifier-command",
+                    f"{sys.executable} {verifier}",
+                    "--run-dir",
+                    str(tmp / "runs"),
+                    "--json",
+                    "--message",
+                    "Prove the local theorem.",
+                ],
+            )
+            stdout = io.StringIO()
+            with (
+                patch("coverify.cli.authed_client_from_args", return_value=client),
+                patch("sys.stdout", stdout),
+            ):
+                self.assertEqual(args.func(args), 0)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["branch"], "agent/math")
+        self.assertEqual(payload["issue_number"], 12)
+        self.assertEqual(client.created, ("w", "Prove the local theorem.", [4]))
+        self.assertIn('"branch": "agent/math"', client.issue_body)
+        self.assertIn("cosheaf-chat-meta", client.comments[0])
+        self.assertEqual(client.branch, "agent/math")
+
+    def test_chat_reply_uses_pinned_branch_metadata_for_worker_path(self) -> None:
+        class ReplyClient:
+            def __init__(self) -> None:
+                self.comments: list[str] = []
+
+            def me(self) -> dict[str, str]:
+                return {"login": "coverify"}
+
+            def read_issue(self, workspace: str, number: int) -> dict[str, object]:
+                return {
+                    "number": number,
+                    "user": {"login": "alice"},
+                    "body": '<!-- cosheaf-chat-meta\n{"kind":"cosheaf-chat","branch":"agent/math"}\n-->\n\nProve the local theorem.',
+                    "labels": [{"id": 4, "name": "chat", "color": "8b5cf6"}],
+                }
+
+            def read_issue_timeline(self, workspace: str, number: int) -> list[object]:
+                return []
+
+            def list_workspace_files(self, workspace: str, *, branch: str = "main") -> dict[str, object]:
+                self.branch = branch
+                return {"files": [{"path": "docs/local.md", "size": 24, "kind": "markdown"}]}
+
+            def read_file(self, workspace: str, path: str, *, branch: str = "main") -> dict[str, str]:
+                return {"content": "A local lemma implies the requested theorem."}
+
+            def comment_issue(self, workspace: str, number: int, body: str) -> dict[str, int]:
+                self.comments.append(body)
+                return {"id": 99}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            answer = tmp / "answer.py"
+            answer.write_text("#!/usr/bin/env python3\nprint('Using `docs/local.md:1`, the theorem follows.')\n", encoding="utf-8")
+            verifier = tmp / "verify.py"
+            verifier.write_text("#!/usr/bin/env python3\nprint('Supported by the supplied source.\\nVERDICT: PASS')\n", encoding="utf-8")
+            client = ReplyClient()
+            args = build_parser().parse_args(
+                [
+                    "chat-reply",
+                    "--token",
+                    "tok",
+                    "--workspace",
+                    "w",
+                    "--issue",
+                    "12",
+                    "--bot-user",
+                    "coverify",
+                    "--backend",
+                    "script",
+                    "--backend-command",
+                    f"{sys.executable} {answer}",
+                    "--verifier-backend",
+                    "script",
+                    "--verifier-command",
+                    f"{sys.executable} {verifier}",
+                    "--run-dir",
+                    str(tmp / "runs"),
+                ],
+            )
+            stdout = io.StringIO()
+            with (
+                patch("coverify.cli.authed_client_from_args", return_value=client),
+                patch("sys.stdout", stdout),
+            ):
+                self.assertEqual(args.func(args), 0)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["branch"], "agent/math")
+        self.assertEqual(client.branch, "agent/math")
+        self.assertIn("cosheaf-chat-meta", client.comments[0])
 
     def test_ask_oracle_rejects_multiple_prompt_sources(self) -> None:
         args = build_parser().parse_args(["ask-oracle", "--prompt", "one", "two"])

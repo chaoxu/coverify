@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..engine.backend import BackendRunner
+from .repo_oracle import strip_chat_metadata
 
 
 @dataclass(frozen=True)
@@ -56,7 +57,7 @@ def _body_of(item: dict[str, Any]) -> str:
     for key in ("body", "content", "message"):
         value = item.get(key)
         if isinstance(value, str):
-            return value
+            return strip_chat_metadata(value)
     return ""
 
 
