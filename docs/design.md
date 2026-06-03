@@ -231,6 +231,27 @@ source-column widths. Prompts should ask writers to keep each ordinary prose
 paragraph on one logical source line, while preserving intentional line breaks
 for headings, lists, tables, TeX blocks, and fenced code.
 
+Expensive mathematical-resolution calls can use a strict prompt contract and a
+compact deterministic context digest instead of the normal exploratory-response
+prompt:
+
+```bash
+coverify chat prepare-llm --prompt-contract resolution --prompt-context digest ...
+```
+
+The source bundle may contain `COVERIFY_PROMPT.md`, `.coverify/PROMPT.md`, or
+`.coverify/prompt.md`. Coverify treats that file as project-local prompt
+guidance: it is injected as a prompt profile, can rank desired artifact types,
+can define forbidden routes and required output shape, and is omitted from the
+ordinary gathered context to avoid duplication. This lets the golden project
+state shape prover prompts without hard-coding project-specific instructions in
+Coverify itself.
+
+Digest context is deterministic and extractive. It keeps headings, formulas,
+required output blocks, and high-value local-certificate facts while dropping
+low-value operational pages such as `AGENTS.md` and `README.md` in resolution
+mode when other mathematical context remains available.
+
 The `verifying` backend composes generator, verifier, and adjudicator calls. It
 is useful for smoke tests and bounded self-checking, but it is not a substitute
 for source-backed proof, formal verification, or human review on hard claims.

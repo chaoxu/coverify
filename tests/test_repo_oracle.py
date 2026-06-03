@@ -11,6 +11,8 @@ from pathlib import Path
 from coverify.engine.backend import BackendResult, run_script_backend
 from coverify.engine.verifying import Verdict
 from coverify.integration.repo_oracle import (
+    PROMPT_CONTEXT_DIGEST,
+    PROMPT_CONTRACT_RESOLUTION,
     VERIFICATION_ERROR,
     VERIFICATION_FAILED,
     VERIFICATION_PASSED,
@@ -151,6 +153,141 @@ class RepoOracleTests(unittest.TestCase):
         self.assertIn("Do not hard-wrap normal prose paragraphs", prepared.prompt)
         self.assertTrue(prepared.selected_snippets_known)
         self.assertEqual([source["path"] for source in prepared.sources], ["reserve.md"])
+
+    def test_prepare_repo_oracle_llm_input_can_build_resolution_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "certificate.md").write_text(
+                "Target: prove a checkable local certificate.\n\nRequired output: CERTIFICATE.",
+                encoding="utf-8",
+            )
+            bundle = load_source_bundle(root)
+
+            prepared = prepare_repo_oracle_llm_input(
+                bundle=bundle,
+                question="Produce exactly one certificate artifact.",
+                prompt_contract=PROMPT_CONTRACT_RESOLUTION,
+            )
+
+        self.assertEqual(prepared.prompt_contract, PROMPT_CONTRACT_RESOLUTION)
+        self.assertIn("# Coverify Repo-Snapshot Mathematical Resolution", prepared.prompt)
+        self.assertIn("Produce one strict mathematical-resolution artifact", prepared.prompt)
+        self.assertIn("Give one artifact, not multiple alternate routes.", prepared.prompt)
+        self.assertNotIn("Produce an exploratory response", prepared.prompt)
+        self.assertEqual(prepared.prompt_audit["prompt_contract"], PROMPT_CONTRACT_RESOLUTION)
+        self.assertEqual(prepared.to_json()["prompt_contract"], PROMPT_CONTRACT_RESOLUTION)
+
+    def test_prompt_audit_flags_exploratory_contract_for_exact_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "certificate.md").write_text("Local certificate target.", encoding="utf-8")
+            bundle = load_source_bundle(root)
+
+            prepared = prepare_repo_oracle_llm_input(
+                bundle=bundle,
+                question="Produce exactly one verifier-ready certificate.",
+            )
+
+        issue_codes = {issue["code"] for issue in prepared.prompt_audit["issues"]}
+        self.assertIn("weak_contract_for_exact_target", issue_codes)
+        self.assertIn("exploratory_contract_allows_broad_answer", issue_codes)
+
+    def test_resolution_prompt_omits_low_value_operational_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "PROJECT.md").write_text("Certificate target and exact inequality.", encoding="utf-8")
+            (root / "AGENTS.md").write_text("Agent guidance for this certificate workspace.", encoding="utf-8")
+            (root / "README.md").write_text("Certificate workspace.", encoding="utf-8")
+            bundle = load_source_bundle(root)
+
+            prepared = prepare_repo_oracle_llm_input(
+                bundle=bundle,
+                question="Produce exactly one verifier-ready certificate.",
+                prompt_contract=PROMPT_CONTRACT_RESOLUTION,
+            )
+
+        self.assertEqual([source["path"] for source in prepared.sources], ["PROJECT.md"])
+        self.assertNotIn("Agent guidance", prepared.prompt)
+        self.assertIn("Prompt context omitted source", "\n".join(prepared.warnings))
+
+    def test_resolution_digest_prompt_uses_project_prompt_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "COVERIFY_PROMPT.md").write_text(
+                "\n".join(
+                    [
+                        "---",
+                        "coverify_prompt_profile: true",
+                        "---",
+                        "# Prompt Profile",
+                        "",
+                        "Ask for one local certificate artifact and rank exact finite inequalities over broad plans.",
+                        "",
+                        "Required output fields: TARGET_CONSTANT, FINITE_INEQUALITY, VERIFICATION_TARGET.",
+                    ],
+                ),
+                encoding="utf-8",
+            )
+            (root / "PROJECT.md").write_text(
+                "\n".join(
+                    [
+                        "# Project",
+                        "",
+                        "This project has a local certificate target.",
+                        "",
+                        *[f"Unimportant filler {index}" for index in range(120)],
+                        "",
+                        "The exact target inequality is $R \\le L/c$.",
+                        "The verifier domain is $a,b,p,q>0$ and $h\\ge0$.",
+                    ],
+                ),
+                encoding="utf-8",
+            )
+            bundle = load_source_bundle(root)
+
+            prepared = prepare_repo_oracle_llm_input(
+                bundle=bundle,
+                question="Produce exactly one verifier-ready certificate.",
+                prompt_contract=PROMPT_CONTRACT_RESOLUTION,
+                prompt_context=PROMPT_CONTEXT_DIGEST,
+            )
+
+        self.assertEqual(prepared.prompt_profile_path, "COVERIFY_PROMPT.md")
+        self.assertEqual(prepared.prompt_context, PROMPT_CONTEXT_DIGEST)
+        self.assertIn("## Project prompt profile", prepared.prompt)
+        self.assertIn("rank exact finite inequalities over broad plans", prepared.prompt)
+        self.assertIn("## Allowed context digest", prepared.prompt)
+        self.assertIn("The exact target inequality is $R \\le L/c$.", prepared.prompt)
+        self.assertNotIn("Unimportant filler 1", prepared.prompt)
+        self.assertNotIn("COVERIFY_PROMPT.md:1", prepared.prompt)
+        self.assertEqual([source["path"] for source in prepared.sources], ["PROJECT.md"])
+
+    def test_short_source_file_is_not_cut_mid_paragraph(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "local.md").write_text(
+                "\n".join(
+                    [
+                        "# Local Setup",
+                        "",
+                        *[f"Filler line {index}" for index in range(70)],
+                        "The selected paragraph starts here and should be kept",
+                        "with its continuation instead of being cut.",
+                        "",
+                        "## Desired Discovery",
+                        "",
+                        "The final section should remain available for small files.",
+                    ],
+                ),
+                encoding="utf-8",
+            )
+            bundle = load_source_bundle(root)
+
+            gathered = gather_context(bundle, question="What is the selected paragraph?")
+
+        self.assertEqual(gathered.snippets[0].line_start, 1)
+        self.assertEqual(gathered.snippets[0].line_end, 78)
+        self.assertIn("Desired Discovery", gathered.snippets[0].text)
 
     def test_verifier_prompt_rejects_hard_wrapped_prose(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

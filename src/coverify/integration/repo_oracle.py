@@ -26,6 +26,12 @@ from ..math_contract import RESOLUTION_OUTPUT_TYPES, RESOLUTION_OUTPUT_TYPE_LIST
 VERIFICATION_PASSED = "passed"
 VERIFICATION_FAILED = "failed"
 VERIFICATION_ERROR = "error"
+PROMPT_CONTRACT_EXPLORATORY = "exploratory"
+PROMPT_CONTRACT_RESOLUTION = "resolution"
+PROMPT_CONTRACTS = (PROMPT_CONTRACT_EXPLORATORY, PROMPT_CONTRACT_RESOLUTION)
+PROMPT_CONTEXT_RAW = "raw"
+PROMPT_CONTEXT_DIGEST = "digest"
+PROMPT_CONTEXTS = (PROMPT_CONTEXT_RAW, PROMPT_CONTEXT_DIGEST)
 
 
 STOPWORDS = {
@@ -64,6 +70,52 @@ STRONG_TERMS = {
     "correct",
 }
 
+RESOLUTION_LOW_VALUE_SOURCE_PATHS = {
+    "AGENTS.md",
+    "README.md",
+}
+
+PROMPT_PROFILE_PATHS = (
+    "COVERIFY_PROMPT.md",
+    ".coverify/PROMPT.md",
+    ".coverify/prompt.md",
+    "PROMPT.md",
+)
+
+PROMPT_PROFILE_FRONTMATTER_KEYS = (
+    "coverify_prompt_profile: true",
+    "coverify_prompt_profile: yes",
+)
+
+DIGEST_IMPORTANT_TERMS = {
+    "attack",
+    "bottleneck",
+    "bound",
+    "candidate",
+    "certificate",
+    "configuration",
+    "constant",
+    "constraint",
+    "counterexample",
+    "domain",
+    "exact",
+    "failed",
+    "gap",
+    "goal",
+    "inequality",
+    "invalid",
+    "local",
+    "output",
+    "profile",
+    "proof",
+    "replacement",
+    "target",
+    "task",
+    "variables",
+    "verification",
+    "verifier",
+}
+
 
 @dataclass(frozen=True)
 class SourceFile:
@@ -98,6 +150,13 @@ class SourceSnippet:
     line_end: int
     text: str
     score: int
+
+
+@dataclass(frozen=True)
+class PromptProfile:
+    path: str
+    content: str
+    sha256: str
 
 
 @dataclass(frozen=True)
@@ -172,6 +231,10 @@ class RepoOracleLLMInput:
 
     step: str
     prompt: str
+    prompt_contract: str
+    prompt_context: str
+    prompt_audit: dict[str, object]
+    prompt_profile_path: str | None
     source_id: str
     snapshot: str
     source_bundle_path: str
@@ -185,6 +248,10 @@ class RepoOracleLLMInput:
         return {
             "step": self.step,
             "prompt": self.prompt,
+            "prompt_contract": self.prompt_contract,
+            "prompt_context": self.prompt_context,
+            "prompt_audit": self.prompt_audit,
+            "prompt_profile_path": self.prompt_profile_path,
             "source_id": self.source_id,
             "snapshot": self.snapshot,
             "source_bundle_path": self.source_bundle_path,
@@ -405,6 +472,27 @@ def _window_score(
     return score
 
 
+def _looks_like_paragraph_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if stripped.startswith(("#", "-", "*", "+", ">", "|", "```", "$$")):
+        return False
+    if re.match(r"^\d+[\.)]\s", stripped):
+        return False
+    if re.match(r"^[-*_]{3,}$", stripped):
+        return False
+    return True
+
+
+def _expand_to_paragraph_boundaries(lines: list[str], start: int, end: int) -> tuple[int, int]:
+    while start > 0 and _looks_like_paragraph_line(lines[start - 1]) and _looks_like_paragraph_line(lines[start]):
+        start -= 1
+    while end < len(lines) and _looks_like_paragraph_line(lines[end - 1]) and _looks_like_paragraph_line(lines[end]):
+        end += 1
+    return start, end
+
+
 def _snippet_for(
     file: SourceFile,
     tokens: list[str],
@@ -413,6 +501,14 @@ def _snippet_for(
     query: str = "",
 ) -> SourceSnippet:
     lines = file.content.splitlines()
+    if len(lines) <= (2 * context_lines) + 80:
+        return SourceSnippet(
+            path=file.path,
+            line_start=1,
+            line_end=max(1, len(lines)),
+            text="\n".join(lines),
+            score=_score_file(file, tokens),
+        )
     match_index = 0
     best_score = -1
     for index, line in enumerate(lines):
@@ -425,6 +521,7 @@ def _snippet_for(
             match_index = index
     start = max(0, match_index - context_lines)
     end = min(len(lines), match_index + context_lines + 1)
+    start, end = _expand_to_paragraph_boundaries(lines, start, end)
     return SourceSnippet(
         path=file.path,
         line_start=start + 1,
@@ -787,6 +884,186 @@ def _format_snippets(snippets: list[SourceSnippet]) -> str:
     return "\n".join(parts).strip()
 
 
+def find_prompt_profile(bundle: SourceBundle) -> PromptProfile | None:
+    by_path = {file.path: file for file in bundle.files}
+    for path in PROMPT_PROFILE_PATHS:
+        file = by_path.get(path)
+        if file is not None:
+            return PromptProfile(path=file.path, content=file.content, sha256=file.sha256)
+    for file in bundle.files:
+        lowered_head = "\n".join(file.content.lower().splitlines()[:12])
+        if any(key in lowered_head for key in PROMPT_PROFILE_FRONTMATTER_KEYS):
+            return PromptProfile(path=file.path, content=file.content, sha256=file.sha256)
+    return None
+
+
+def _strip_frontmatter(text: str) -> str:
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return text
+    for index in range(1, min(len(lines), 80)):
+        if lines[index].strip() == "---":
+            return "\n".join(lines[index + 1 :])
+    return text
+
+
+def _markdown_units(text: str) -> list[str]:
+    units: list[str] = []
+    buffer: list[str] = []
+    list_buffer: list[str] = []
+    in_fence = False
+    in_math = False
+
+    def flush_paragraph() -> None:
+        nonlocal buffer
+        if buffer:
+            units.append(" ".join(line.strip() for line in buffer if line.strip()))
+            buffer = []
+
+    def flush_list() -> None:
+        nonlocal list_buffer
+        if list_buffer:
+            units.append("\n".join(list_buffer))
+            list_buffer = []
+
+    def is_list_start(value: str) -> bool:
+        return value.startswith(("- ", "* ", "+ ")) or re.match(r"^\d+[\.)]\s", value) is not None
+
+    for raw_line in _strip_frontmatter(text).splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            flush_paragraph()
+            flush_list()
+            block = [line]
+            if in_fence:
+                units.append("\n".join(block))
+            in_fence = not in_fence
+            if not in_fence:
+                continue
+            units.append(line)
+            continue
+        if in_fence:
+            units.append(line)
+            continue
+        if stripped == "$$":
+            flush_paragraph()
+            flush_list()
+            units.append(line)
+            in_math = not in_math
+            continue
+        if in_math:
+            units.append(line)
+            continue
+        if not stripped:
+            flush_paragraph()
+            flush_list()
+            continue
+        if is_list_start(stripped):
+            flush_paragraph()
+            list_buffer.append(line)
+            continue
+        if list_buffer and not stripped.startswith(("#", ">", "|")):
+            list_buffer.append(line)
+            continue
+        if stripped.startswith(("#", ">", "|")):
+            flush_paragraph()
+            flush_list()
+            units.append(line)
+            continue
+        buffer.append(line)
+    flush_paragraph()
+    flush_list()
+    return [unit for unit in units if unit.strip()]
+
+
+def _unit_digest_score(unit: str, question_tokens: set[str]) -> int:
+    lowered = unit.lower()
+    score = 0
+    if unit.lstrip().startswith("#"):
+        score += 8
+    if "$" in unit or "\\" in unit or re.search(r"[<>=]", unit):
+        score += 7
+    if unit.lstrip().startswith(("TARGET_", "CONFIGURATION", "FINITE_", "ATTACK_", "VERIFICATION_", "NEXT_", "CLAIM", "CONTRACT")):
+        score += 7
+    unit_tokens = set(_tokens(unit))
+    score += 3 * len(unit_tokens & question_tokens)
+    score += 2 * len(unit_tokens & DIGEST_IMPORTANT_TERMS)
+    if "do not" in lowered or "required output" in lowered:
+        score += 5
+    return score
+
+
+def _prune_empty_headings(units: list[str]) -> list[str]:
+    pruned: list[str] = []
+    for index, unit in enumerate(units):
+        if unit.lstrip().startswith("#"):
+            next_unit = units[index + 1] if index + 1 < len(units) else ""
+            if not next_unit or next_unit.lstrip().startswith("#"):
+                continue
+        pruned.append(unit)
+    return pruned
+
+
+def _digest_markdown(text: str, *, question: str, max_chars: int = 1_300) -> str:
+    units = _markdown_units(text)
+    if len("\n".join(units)) <= max_chars:
+        return "\n".join(units)
+    question_tokens = set(_tokens(question))
+    selected: list[str] = []
+    used = 0
+    in_code_block = False
+    for unit in units:
+        stripped = unit.strip()
+        if stripped.startswith("```"):
+            in_code_block = not in_code_block
+            keep = True
+        else:
+            keep = in_code_block or _unit_digest_score(unit, question_tokens) >= 5
+        if not keep:
+            continue
+        cost = len(unit) + 1
+        if selected and used + cost > max_chars:
+            break
+        selected.append(unit)
+        used += cost
+    if not selected:
+        selected = units[: max(1, min(8, len(units)))]
+    selected = _prune_empty_headings(selected)
+    return "\n".join(selected)
+
+
+def _normalize_prompt_profile(profile: PromptProfile) -> str:
+    return _digest_markdown(profile.content, question="coverify prompt profile", max_chars=2_200)
+
+
+def _format_context_digest(snippets: list[SourceSnippet], *, question: str) -> str:
+    parts: list[str] = []
+    for snippet in snippets:
+        digest = _digest_markdown(snippet.text, question=question)
+        parts.extend(
+            [
+                f"### {snippet.path}:{snippet.line_start}-{snippet.line_end}",
+                digest or "(no digestible content)",
+                "",
+            ],
+        )
+    return "\n".join(parts).strip()
+
+
+def _format_repo_context(
+    snippets: list[SourceSnippet],
+    *,
+    question: str,
+    prompt_context: str,
+) -> str:
+    if prompt_context == PROMPT_CONTEXT_DIGEST:
+        return _format_context_digest(snippets, question=question)
+    if prompt_context != PROMPT_CONTEXT_RAW:
+        raise ValueError(f"unknown prompt context: {prompt_context}")
+    return _format_snippets(snippets)
+
+
 def _citation_pattern(snippets: list[SourceSnippet]) -> re.Pattern[str] | None:
     paths = sorted({snippet.path for snippet in snippets}, key=len, reverse=True)
     if not paths:
@@ -986,6 +1263,273 @@ def build_reasoner_prompt(
     )
 
 
+def build_resolution_prompt(
+    *,
+    question: str,
+    thread_context: str,
+    bundle: SourceBundle,
+    gathered: GatheredContext,
+    prompt_context: str = PROMPT_CONTEXT_DIGEST,
+    prompt_profile: PromptProfile | None = None,
+) -> str:
+    warnings = "\n".join(f"- {warning}" for warning in gathered.warnings) or "- none"
+    profile_block = ""
+    if prompt_profile is not None:
+        profile_block = "\n".join(
+            [
+                "## Project prompt profile",
+                f"- source: {prompt_profile.path}",
+                f"- sha256: {prompt_profile.sha256}",
+                "",
+                _normalize_prompt_profile(prompt_profile),
+                "",
+            ],
+        )
+    context_heading = "Allowed context digest" if prompt_context == PROMPT_CONTEXT_DIGEST else "Allowed repo context"
+    preference_block = (
+        []
+        if prompt_profile is not None
+        else [
+            "Prefer artifacts in this order when the user does not force a narrower type:",
+            "1. A complete proof, certificate, bound, construction, or reduction for the stated target.",
+            "2. A finite verifier-ready statement with exact hypotheses, domain, inequality, and what would count as proof.",
+            "3. An explicit counterexample, obstruction, bottleneck, or precise gap showing why the current target or certificate family fails.",
+            "",
+            "Use exactly one requested resolution-artifact type when possible: "
+            f"{RESOLUTION_OUTPUT_TYPE_LIST}.",
+            "If the user question or allowed context defines a required output format, follow that format exactly.",
+            "",
+        ]
+    )
+    fallback_shape_block = (
+        []
+        if prompt_profile is not None
+        else [
+            "- Use this compact fallback shape if no stricter source-defined format applies:",
+            "",
+            "```text",
+            "CLAIM:",
+            "CONTRACT:",
+            "RESOLUTION_ARTIFACT_TYPE:",
+            "RESOLUTION_ARTIFACT:",
+            "COMPLETENESS_STATUS:",
+            "KEY_IDEA:",
+            "NONTRIVIAL_DEPENDENCIES:",
+            "UNRESOLVED_GAPS:",
+            "CHECKS_FOR_REVIEWER:",
+            "```",
+        ]
+    )
+    return "\n".join(
+        [
+            "# Coverify Repo-Snapshot Mathematical Resolution",
+            "",
+            "Produce one strict mathematical-resolution artifact for the user's target using only the allowed project-local sources below plus general mathematical reasoning. Treat the project prompt profile, when present, as first-class local guidance for shaping the task and output. Do not use issues, PRs, git history, web, sibling repos, local notes, hidden memory, or unprovided computation.",
+            "",
+            "Do not give a broad research essay, literature survey, global theorem claim, or loose plan. If the target is not fully resolvable from the allowed context, return the strongest checkable partial artifact and state the precise gap.",
+            "",
+            *preference_block,
+            "## Source bundle",
+            f"- source_id: {bundle.source_id}",
+            f"- snapshot: {bundle.snapshot}",
+            "",
+            "## Warnings",
+            warnings,
+            "",
+            profile_block,
+            "## Current chat thread",
+            thread_context.strip() or "(no prior thread context supplied)",
+            "",
+            f"## {context_heading}",
+            _format_repo_context(gathered.snippets, question=question, prompt_context=prompt_context) or "(no repo context selected)",
+            "",
+            "## User target",
+            question.strip(),
+            "",
+            "## Required response behavior",
+            "- Give one artifact, not multiple alternate routes.",
+            "- Preserve the problem scope and all forced methods, construction shapes, output formats, and constraints from the user target and allowed context.",
+            "- Follow the project prompt profile output shape exactly when it defines one.",
+            "- State unsupported computation as an attack or gap, not as proof.",
+            "- Use TeX math syntax for formulas, constants, inequalities, and domains.",
+            "- Do not hard-wrap normal prose paragraphs at arbitrary source-column widths; write each prose paragraph as one logical source line.",
+            *fallback_shape_block,
+        ],
+    )
+
+
+def build_repo_oracle_prompt(
+    *,
+    question: str,
+    thread_context: str,
+    bundle: SourceBundle,
+    gathered: GatheredContext,
+    prompt_contract: str = PROMPT_CONTRACT_EXPLORATORY,
+    prompt_context: str = PROMPT_CONTEXT_RAW,
+    prompt_profile: PromptProfile | None = None,
+) -> str:
+    if prompt_contract == PROMPT_CONTRACT_RESOLUTION:
+        return build_resolution_prompt(
+            question=question,
+            thread_context=thread_context,
+            bundle=bundle,
+            gathered=gathered,
+            prompt_context=prompt_context,
+            prompt_profile=prompt_profile,
+        )
+    if prompt_contract != PROMPT_CONTRACT_EXPLORATORY:
+        raise ValueError(f"unknown prompt contract: {prompt_contract}")
+    return build_reasoner_prompt(
+        question=question,
+        thread_context=thread_context,
+        bundle=bundle,
+        gathered=gathered,
+    )
+
+
+def audit_repo_oracle_prompt(
+    *,
+    prompt: str,
+    prompt_contract: str,
+    prompt_context: str,
+    question: str,
+    bundle: SourceBundle,
+    gathered: GatheredContext,
+    prompt_profile: PromptProfile | None,
+) -> dict[str, object]:
+    issues: list[dict[str, str]] = []
+
+    def add(severity: str, code: str, message: str) -> None:
+        issues.append({"severity": severity, "code": code, "message": message})
+
+    question_tokens = set(_tokens(question))
+    exact_target_terms = {
+        "bound",
+        "certificate",
+        "checkable",
+        "counterexample",
+        "exact",
+        "inequality",
+        "prove",
+        "proof",
+        "resolve",
+        "verifier",
+    }
+    if prompt_contract == PROMPT_CONTRACT_EXPLORATORY and (question_tokens & exact_target_terms):
+        add(
+            "warning",
+            "weak_contract_for_exact_target",
+            "Question looks like an exact proof/certificate target but the prompt uses the exploratory contract; use --prompt-contract resolution for expensive prover calls.",
+        )
+    if prompt_contract == PROMPT_CONTRACT_EXPLORATORY and "exactly one" in question.lower():
+        add(
+            "warning",
+            "exploratory_contract_allows_broad_answer",
+            "Question asks for exactly one artifact, but the exploratory contract still permits route comparison and target packaging.",
+        )
+    if len(prompt) > 20_000:
+        add("warning", "large_prompt", f"Prompt is {len(prompt)} characters; consider stricter source selection before an expensive run.")
+    elif prompt_context == PROMPT_CONTEXT_RAW and len(prompt) > 10_000:
+        add(
+            "info",
+            "large_raw_prompt",
+            f"Prompt is {len(prompt)} characters; use --prompt-context digest for a compact source digest.",
+        )
+    if prompt_contract == PROMPT_CONTRACT_RESOLUTION and prompt_profile is None:
+        add(
+            "info",
+            "missing_prompt_profile",
+            "No project-local prompt profile was found; add COVERIFY_PROMPT.md to shape expensive resolution prompts.",
+        )
+    by_path = {file.path: file for file in bundle.files}
+    for snippet in gathered.snippets:
+        file = by_path.get(snippet.path)
+        if file is None:
+            continue
+        lines = file.content.splitlines()
+        if snippet.line_start > 1:
+            current = lines[snippet.line_start - 1] if snippet.line_start - 1 < len(lines) else ""
+            previous = lines[snippet.line_start - 2]
+            if _looks_like_paragraph_line(previous) and _looks_like_paragraph_line(current):
+                add(
+                    "warning",
+                    "snippet_starts_mid_paragraph",
+                    f"{snippet.path}:{snippet.line_start}-{snippet.line_end} starts inside a prose paragraph.",
+                )
+        if snippet.line_end < len(lines):
+            current = lines[snippet.line_end - 1]
+            following = lines[snippet.line_end]
+            if _looks_like_paragraph_line(current) and _looks_like_paragraph_line(following):
+                add(
+                    "warning",
+                    "snippet_ends_mid_paragraph",
+                    f"{snippet.path}:{snippet.line_start}-{snippet.line_end} ends inside a prose paragraph.",
+                )
+    return {
+        "prompt_contract": prompt_contract,
+        "prompt_context": prompt_context,
+        "prompt_profile_path": prompt_profile.path if prompt_profile is not None else None,
+        "prompt_chars": len(prompt),
+        "source_context_chars": sum(len(snippet.text) for snippet in gathered.snippets),
+        "rendered_context_chars": len(
+            _format_repo_context(gathered.snippets, question=question, prompt_context=prompt_context),
+        ),
+        "source_count": len(gathered.snippets),
+        "issues": issues,
+        "ok": not any(issue["severity"] == "error" for issue in issues),
+    }
+
+
+def _adapt_gathered_for_prompt_contract(
+    gathered: GatheredContext,
+    *,
+    prompt_contract: str,
+    prompt_profile: PromptProfile | None = None,
+) -> GatheredContext:
+    prompt_profile_path = prompt_profile.path if prompt_profile is not None else None
+    if prompt_contract != PROMPT_CONTRACT_RESOLUTION and prompt_profile_path is None:
+        return gathered
+    kept = [
+        snippet
+        for snippet in gathered.snippets
+        if snippet.path != prompt_profile_path
+        and (
+            prompt_contract != PROMPT_CONTRACT_RESOLUTION
+            or snippet.path not in RESOLUTION_LOW_VALUE_SOURCE_PATHS
+        )
+    ]
+    if not kept:
+        return gathered
+    omitted = [
+        snippet.path
+        for snippet in gathered.snippets
+        if snippet.path == prompt_profile_path
+        or (
+            prompt_contract == PROMPT_CONTRACT_RESOLUTION
+            and snippet.path in RESOLUTION_LOW_VALUE_SOURCE_PATHS
+        )
+    ]
+    if not omitted:
+        return gathered
+    reason = (
+        "Prompt context omitted source(s) already used as prompt profile or low-value operational source(s): "
+        + ", ".join(omitted)
+        + "."
+    )
+    return GatheredContext(
+        snippets=kept,
+        warnings=[
+            *gathered.warnings,
+            reason,
+        ],
+        tier=gathered.tier,
+        gatherer_provider=gathered.gatherer_provider,
+        gatherer_call_id=gathered.gatherer_call_id,
+        gatherer_artifact_dir=gathered.gatherer_artifact_dir,
+        gatherer_plan=gathered.gatherer_plan,
+    )
+
+
 def build_verifier_prompt(
     *,
     question: str,
@@ -993,14 +1537,20 @@ def build_verifier_prompt(
     bundle: SourceBundle,
     gathered: GatheredContext,
     candidate: str,
+    prompt_contract: str = PROMPT_CONTRACT_EXPLORATORY,
 ) -> str:
+    contract_label = (
+        "mathematical-resolution contract"
+        if prompt_contract == PROMPT_CONTRACT_RESOLUTION
+        else "exploratory-response contract"
+    )
     return "\n".join(
         [
             "# Coverify Repo-Snapshot Verification",
             "",
             "Act as an adversarial mathematical verifier. Check the candidate",
             "response against the allowed source bundle, the current chat thread,",
-            "and the exploratory-response contract.",
+            f"and the {contract_label}.",
             "",
             "Reject if it uses issues, PRs, git history, web, sibling repos, local",
             "notes, hidden memory, or any repo-specific fact unsupported by the",
@@ -1012,6 +1562,9 @@ def build_verifier_prompt(
             f"resolution artifact ({RESOLUTION_OUTPUT_TYPE_LIST}), reject if the",
             "target statement or hypotheses changed, if the hard step is hidden, or",
             "if the candidate does not clearly justify completion or state the precise gap.",
+            "When using the mathematical-resolution contract, reject broad essays",
+            "or multiple-route brainstorming unless the candidate first gives one",
+            "checkable artifact or a precise impossibility/gap artifact.",
             "Reject if the user required a particular theorem, construction shape,",
             "proof method, route, or other constraint and the candidate did not",
             "follow it.",
@@ -1070,10 +1623,17 @@ def prepare_repo_oracle_llm_input(
     thread_context: str = "",
     max_context_chars: int = 60_000,
     gatherer_configured: bool = False,
+    prompt_contract: str = PROMPT_CONTRACT_EXPLORATORY,
+    prompt_context: str = PROMPT_CONTEXT_RAW,
 ) -> RepoOracleLLMInput:
     """Prepare the first repo-oracle LLM input without invoking any backend."""
     if not question.strip():
         raise ValueError("question is empty")
+    if prompt_contract not in PROMPT_CONTRACTS:
+        raise ValueError(f"unknown prompt contract: {prompt_contract}")
+    if prompt_context not in PROMPT_CONTEXTS:
+        raise ValueError(f"unknown prompt context: {prompt_context}")
+    prompt_profile = find_prompt_profile(bundle)
     if gatherer_configured:
         warnings: list[str] = []
         if bundle.omitted:
@@ -1082,13 +1642,27 @@ def prepare_repo_oracle_llm_input(
             )
         if not bundle.files:
             warnings.append("No UTF-8 text files were available in the source bundle.")
+        prompt = build_gatherer_prompt(
+            question=question,
+            thread_context=thread_context,
+            bundle=bundle,
+        )
         return RepoOracleLLMInput(
             step="gatherer",
-            prompt=build_gatherer_prompt(
-                question=question,
-                thread_context=thread_context,
-                bundle=bundle,
-            ),
+            prompt=prompt,
+            prompt_contract=prompt_contract,
+            prompt_context=prompt_context,
+            prompt_audit={
+                "prompt_contract": prompt_contract,
+                "prompt_context": prompt_context,
+                "prompt_profile_path": prompt_profile.path if prompt_profile is not None else None,
+                "prompt_chars": len(prompt),
+                "source_context_chars": 0,
+                "source_count": 0,
+                "issues": [],
+                "ok": True,
+            },
+            prompt_profile_path=prompt_profile.path if prompt_profile is not None else None,
             source_id=bundle.source_id,
             snapshot=bundle.snapshot,
             source_bundle_path=str(bundle.root),
@@ -1105,14 +1679,35 @@ def prepare_repo_oracle_llm_input(
         thread_context=thread_context,
         max_context_chars=max_context_chars,
     )
+    gathered = _adapt_gathered_for_prompt_contract(
+        gathered,
+        prompt_contract=prompt_contract,
+        prompt_profile=prompt_profile,
+    )
+    prompt = build_repo_oracle_prompt(
+        question=question,
+        thread_context=thread_context,
+        bundle=bundle,
+        gathered=gathered,
+        prompt_contract=prompt_contract,
+        prompt_context=prompt_context,
+        prompt_profile=prompt_profile,
+    )
     return RepoOracleLLMInput(
         step="answer",
-        prompt=build_reasoner_prompt(
+        prompt=prompt,
+        prompt_contract=prompt_contract,
+        prompt_context=prompt_context,
+        prompt_audit=audit_repo_oracle_prompt(
+            prompt=prompt,
+            prompt_contract=prompt_contract,
+            prompt_context=prompt_context,
             question=question,
-            thread_context=thread_context,
             bundle=bundle,
             gathered=gathered,
+            prompt_profile=prompt_profile,
         ),
+        prompt_profile_path=prompt_profile.path if prompt_profile is not None else None,
         source_id=bundle.source_id,
         snapshot=bundle.snapshot,
         source_bundle_path=str(bundle.root),
@@ -1160,9 +1755,16 @@ def run_repo_oracle(
     gatherer_backend: BackendRunner | None = None,
     thread_context: str = "",
     max_context_chars: int = 60_000,
+    prompt_contract: str = PROMPT_CONTRACT_EXPLORATORY,
+    prompt_context: str = PROMPT_CONTEXT_RAW,
 ) -> RepoOracleResult:
     if not question.strip():
         raise ValueError("question is empty")
+    if prompt_contract not in PROMPT_CONTRACTS:
+        raise ValueError(f"unknown prompt contract: {prompt_contract}")
+    if prompt_context not in PROMPT_CONTEXTS:
+        raise ValueError(f"unknown prompt context: {prompt_context}")
+    prompt_profile = find_prompt_profile(bundle)
     gathered = gather_context(
         bundle,
         question=question,
@@ -1170,11 +1772,19 @@ def run_repo_oracle(
         max_context_chars=max_context_chars,
         gatherer_backend=gatherer_backend,
     )
-    prompt = build_reasoner_prompt(
+    gathered = _adapt_gathered_for_prompt_contract(
+        gathered,
+        prompt_contract=prompt_contract,
+        prompt_profile=prompt_profile,
+    )
+    prompt = build_repo_oracle_prompt(
         question=question,
         thread_context=thread_context,
         bundle=bundle,
         gathered=gathered,
+        prompt_contract=prompt_contract,
+        prompt_context=prompt_context,
+        prompt_profile=prompt_profile,
     )
     answer_result = answer_backend(prompt)
     candidate_answer, citation_warnings = normalize_answer_citations(answer_result.answer, gathered.snippets)
@@ -1195,6 +1805,7 @@ def run_repo_oracle(
                 bundle=bundle,
                 gathered=gathered,
                 candidate=candidate_answer,
+                prompt_contract=prompt_contract,
             ),
         )
         verifier_answer = verifier_result.answer

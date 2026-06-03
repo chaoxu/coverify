@@ -30,6 +30,10 @@ from .integration.chat_metadata import (
     parse_chat_metadata,
 )
 from .integration.repo_oracle import (
+    PROMPT_CONTEXT_RAW,
+    PROMPT_CONTEXTS,
+    PROMPT_CONTRACT_EXPLORATORY,
+    PROMPT_CONTRACTS,
     export_cosheaf_source_bundle,
     gather_context,
     load_source_bundle,
@@ -794,6 +798,8 @@ def cmd_chat_reply(args: argparse.Namespace) -> int:
             branch_override=args.branch or None,
             run_dir=Path(args.run_dir),
             max_context_chars=args.max_context_chars,
+            prompt_contract=args.prompt_contract,
+            prompt_context=args.prompt_context,
         ),
     )
 
@@ -1066,6 +1072,8 @@ def cmd_repo_oracle_ask(args: argparse.Namespace) -> int:
         gatherer_backend=gatherer_runner(args),
         thread_context=thread_context,
         max_context_chars=args.max_context_chars,
+        prompt_contract=args.prompt_contract,
+        prompt_context=args.prompt_context,
     )
     if args.json:
         print(json.dumps(result.to_json(), indent=2, sort_keys=True))
@@ -1090,6 +1098,8 @@ def cmd_repo_oracle_prepare_llm(args: argparse.Namespace) -> int:
         thread_context=thread_context,
         max_context_chars=args.max_context_chars,
         gatherer_configured=gatherer_configured(args),
+        prompt_contract=args.prompt_contract,
+        prompt_context=args.prompt_context,
     )
     payload = apply_answer_backend_preview(preview.to_json(), args)
     payload["source_kind"] = "local"
@@ -1283,6 +1293,8 @@ def run_repo_chat_reply(
     branch_override: str | None,
     run_dir: Path,
     max_context_chars: int,
+    prompt_contract: str,
+    prompt_context: str,
 ) -> dict[str, object]:
     issue = client.read_issue(workspace, issue_number)
     timeline = client.read_issue_timeline(workspace, issue_number)
@@ -1317,6 +1329,8 @@ def run_repo_chat_reply(
         gatherer_backend=gatherer_backend,
         thread_context=prior,
         max_context_chars=max_context_chars,
+        prompt_contract=prompt_contract,
+        prompt_context=prompt_context,
     )
     metadata = chat_reply_metadata(
         branch=branch,
@@ -1398,6 +1412,8 @@ def cmd_chat_ask(args: argparse.Namespace) -> int:
         gatherer_backend=gatherer_runner(args),
         thread_context=thread_context,
         max_context_chars=args.max_context_chars,
+        prompt_contract=args.prompt_contract,
+        prompt_context=args.prompt_context,
     )
     metadata = chat_reply_metadata(
         branch=branch,
@@ -1471,6 +1487,8 @@ def cmd_chat_prepare_llm(args: argparse.Namespace) -> int:
         thread_context=thread_context,
         max_context_chars=args.max_context_chars,
         gatherer_configured=gatherer_configured(args),
+        prompt_contract=args.prompt_contract,
+        prompt_context=args.prompt_context,
     )
     payload = apply_answer_backend_preview(preview.to_json(), args)
     payload.update(
@@ -1714,6 +1732,18 @@ def add_source_bundle_args(parser: argparse.ArgumentParser) -> None:
         "--max-file-bytes",
         type=int,
         default=int(env("COVERIFY_REPO_ORACLE_MAX_FILE_BYTES", "1000000") or "1000000"),
+    )
+    parser.add_argument(
+        "--prompt-contract",
+        choices=PROMPT_CONTRACTS,
+        default=env("COVERIFY_PROMPT_CONTRACT", PROMPT_CONTRACT_EXPLORATORY) or PROMPT_CONTRACT_EXPLORATORY,
+        help="repo-oracle prompt contract: exploratory for normal chat, resolution for one strict proof/certificate target",
+    )
+    parser.add_argument(
+        "--prompt-context",
+        choices=PROMPT_CONTEXTS,
+        default=env("COVERIFY_PROMPT_CONTEXT", PROMPT_CONTEXT_RAW) or PROMPT_CONTEXT_RAW,
+        help="repo-oracle context rendering: raw snippets or a compact deterministic digest",
     )
 
 

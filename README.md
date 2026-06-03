@@ -234,6 +234,32 @@ PYTHONPATH=src python3 -m coverify --help
 - Cosheaf primitives: `tree`, `read-file`, `write-file`, `delete-file`,
   `create-branch`, issue commands, PR commands, reviews, and merge.
 
+## Strict Resolution Prompts
+
+For expensive prover/oracle calls, use the strict resolution prompt contract
+and compact context digest:
+
+```bash
+PYTHONPATH=src python3 -m coverify chat prepare-llm \
+  --workspace my-workspace \
+  --prompt-contract resolution \
+  --prompt-context digest \
+  --message "Produce exactly one verifier-ready certificate." \
+  --output-dir /tmp/coverify-prompt-preview \
+  --json
+```
+
+This stops before any LLM call and writes `prompt.md` plus `preview.json`.
+`preview.json` includes `prompt_audit`, `prompt_contract`, `prompt_context`,
+and `prompt_profile_path`.
+
+A project can shape these prompts by adding `COVERIFY_PROMPT.md` at the source
+bundle root, or `.coverify/PROMPT.md`. Coverify treats that file as a local
+prompt profile, injects it ahead of the source digest, and omits it from the
+ordinary gathered context to avoid duplication. Use the profile for project
+specific artifact ranking, forbidden routes, required output shape, and success
+criteria.
+
 ## Lab Jupiter Sync
 
 Project workdirs on `jupiter` usually point their generated `bin/coverify`
