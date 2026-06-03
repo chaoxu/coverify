@@ -87,10 +87,10 @@ bundle.
 The useful distinction is not a large set of modes. Coverify needs one flexible
 exploratory-response contract for chat, answers, route finding, and target
 packaging, plus one strict mathematical-resolution contract for a single
-packaged theorem, counterexample search, construction, witness, bound,
-certificate, obstruction, or key step. Exploration can be useful without proving
-anything. Mathematical resolution should be narrow enough that a strong
-prover/resolver is forced to solve the stated target or report the precise gap.
+packaged target. Exploration can be useful without proving anything.
+Mathematical resolution should be narrow enough that a strong prover/resolver is
+forced to produce one canonical resolution artifact for the stated target or
+report the precise gap.
 
 ### Negative Knowledge Counts
 
@@ -108,7 +108,8 @@ failure class; normal mathematical prose is usually the right format.
 
 Large generated Markdown files, transcripts, floating-point dumps, and raw
 oracle answers are not durable knowledge. They should be distilled into compact
-claims, tables, pseudocode, certificates, source notes, or failed-route notes.
+claims, tables, pseudocode, resolution artifacts, source notes, or failed-route
+notes.
 
 ### Verification Travels With The Answer
 
@@ -156,7 +157,7 @@ repeating work, even if the prose looks different.
   context-building skill, then discarded unless the summary itself should
   become a wiki edit or issue/PR comment.
 - Searches should answer named mathematical questions and return small
-  witnesses, certificates, or counterexamples.
+  resolution artifacts or finite examples.
 - Cleanup should prefer fewer, clearer topic pages over bucket-shaped files.
 - More structure, such as dependent issues or route graphs, is useful only when
   it helps future attempts start from what is already known.

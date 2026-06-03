@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from coverify.integration.review import ReviewDecision, parse_review_decision, review_event_from_oracle
+from coverify.integration.review import (
+    REVIEW_DECISION_LINE,
+    ReviewDecision,
+    parse_review_decision,
+    review_event_from_oracle,
+)
 
 
 class ReviewDecisionTests(unittest.TestCase):
@@ -17,13 +22,16 @@ class ReviewDecisionTests(unittest.TestCase):
         )
 
         self.assertEqual(parse_review_decision(answer), ReviewDecision.REQUEST_CHANGES)
-        self.assertEqual(review_event_from_oracle(answer), "REQUEST_CHANGES")
+        self.assertEqual(review_event_from_oracle(answer), ReviewDecision.REQUEST_CHANGES.value)
 
     def test_maps_approve(self) -> None:
         answer = 'DECISION: APPROVE\n\nFINDINGS:\nI do not see a logical gap.\n'
 
         self.assertEqual(parse_review_decision(answer), ReviewDecision.APPROVE)
-        self.assertEqual(review_event_from_oracle(answer), "APPROVE")
+        self.assertEqual(review_event_from_oracle(answer), ReviewDecision.APPROVE.value)
+
+    def test_normalizes_lowercase_decision(self) -> None:
+        self.assertEqual(parse_review_decision("decision: approve\n"), ReviewDecision.APPROVE)
 
     def test_rejects_missing_or_ambiguous_decision(self) -> None:
         with self.assertRaises(ValueError):
@@ -36,7 +44,7 @@ class ReviewDecisionTests(unittest.TestCase):
             parse_review_decision("DECISION: APPROVE\nDECISION: APPROVE\n")
 
         with self.assertRaises(ValueError):
-            parse_review_decision("DECISION: APPROVE | REQUEST_CHANGES | COMMENT\n")
+            parse_review_decision(f"{REVIEW_DECISION_LINE}\n")
 
 
 if __name__ == "__main__":

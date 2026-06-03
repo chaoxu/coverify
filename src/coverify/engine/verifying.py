@@ -6,8 +6,8 @@ response by delegating to other oracles. It runs a generate -> verify ->
 adjudicate loop:
 
 - the generator produces a candidate response;
-- each verifier acts as an adversarial referee and ends its reply with a
-  single ``VERDICT: PASS | FAIL`` line;
+- each verifier acts as an adversarial referee and ends its reply with the
+  single required verdict line;
 - any FAIL sends the concatenated critiques back to the generator for another
   round (the generator self-revises); the loop stops on the first all-PASS
   round or when ``max_rounds`` is exhausted;
@@ -16,9 +16,10 @@ adjudicate loop:
 
 A broken verifier (the call fails after retries, or its answer has no
 parseable VERDICT line) is recorded as ERROR. In the lenient default ERROR
-counts as PASS for loop control -- we would rather produce something -- but
-the unrun check is journaled so the result stays honest. A ``strict`` oracle
-instead refuses to answer when a required step errors.
+stops the loop like PASS -- we would rather produce something -- but the result
+is not marked verified, and the final adjunct is told to flag what is not
+established. A ``strict`` oracle instead refuses to answer when a required step
+errors.
 
 Each step (generator, each verifier, adjunct) is a ``Step`` = a sub-oracle
 ``BackendRunner`` plus optional custom role instructions, so profiles can mix
@@ -60,12 +61,16 @@ class Verdict(StrEnum):
 
 
 ERROR = "ERROR"
+VERDICT_VALUES = tuple(verdict.value for verdict in Verdict)
+VERDICT_LINE = "VERDICT: " + " | ".join(VERDICT_VALUES)
 
-_VERDICT_RE = re.compile(r"(?im)^\s*VERDICT\s*:\s*(PASS|FAIL)\s*$")
+_VERDICT_RE = re.compile(
+    r"(?im)^\s*VERDICT\s*:\s*(" + "|".join(re.escape(value) for value in VERDICT_VALUES) + r")\s*$",
+)
 
 
 def parse_verdict(answer: str) -> Verdict:
-    """Extract the single ``VERDICT: PASS | FAIL`` line; raise if absent/ambiguous."""
+    """Extract the single required verdict line; raise if absent/ambiguous."""
     found = _VERDICT_RE.findall(answer)
     if len(found) != 1:
         raise ValueError("verifier answer must contain exactly one VERDICT line")
@@ -101,20 +106,22 @@ def build_verifier_context(
 ) -> str:
     guidance = instructions or (
         "Act as a careful, adversarial mathematical referee. Find any logical "
-        "gap, false claim, unjustified step, or computational error in the "
-        "candidate response below. Be skeptical."
+        "gap, false claim, unsupported status label, ignored constraint, "
+        "unjustified step, or computational error in the candidate response "
+        "below. Be skeptical."
     )
     return "\n".join(
         [
-            "# Oracle Task: Verify a response",
+            "# Verification Task: Verify a response",
             guidance,
             "",
             "Write your findings, then output exactly one line:",
             "",
-            "VERDICT: PASS | FAIL",
+            VERDICT_LINE,
             "",
             "Use PASS only if you find no correctness problem. Use FAIL if there is",
-            "any gap or error the author must fix.",
+            "any gap, target drift, ignored forced method, unsupported claim, or",
+            "status-label error the author must fix.",
             "",
             "## Original question",
             original,
@@ -157,7 +164,7 @@ def build_adjudicator_context(
         )
     return "\n".join(
         [
-            "# Oracle Task: Write the final answer",
+            "# Final Response Task: Write the final answer",
             head,
             "",
             "## Original question",
@@ -323,8 +330,8 @@ class VerifyingOracle:
                         critiques.append(result.answer)
 
             final_verdicts = round_verdicts
-            if not round_failed:  # ERROR counts as PASS for loop control (lenient)
-                verified = True
+            if not round_failed:  # ERROR stops retries in lenient mode, but is not verified.
+                verified = _all_verifiers_passed(round_verdicts)
                 break
             critique = "\n\n".join(critiques)
 
@@ -401,6 +408,10 @@ def _verdict_of(result: BackendResult | None) -> str:
         return parse_verdict(result.answer).value
     except ValueError:
         return ERROR
+
+
+def _all_verifiers_passed(verdicts: list[str]) -> bool:
+    return bool(verdicts) and all(verdict == Verdict.PASS.value for verdict in verdicts)
 
 
 def _call_entry(

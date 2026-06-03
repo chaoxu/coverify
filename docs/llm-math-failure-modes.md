@@ -127,8 +127,9 @@ page, check:
 8. If the verifier rejects, does it say what failed and what would make a
    retry different?
 9. If the result matters tomorrow, did it leave a Cosheaf artifact?
-10. Is the status honest: accepted, proposed, obstruction, needs-human, or
-    failed route?
+10. Is the acceptance status honest: accepted, proposed, needs-human, rejected,
+    or failed route? If it claims a resolution artifact, is that type from
+    `src/coverify/math_contract.py`?
 
 The short version:
 

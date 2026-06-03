@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from ..math_contract import RESOLUTION_OUTPUT_TYPE_LIST
+
 
 @dataclass(frozen=True)
 class ResearchEvalCandidate:
@@ -91,11 +93,11 @@ def problem_page(candidate: ResearchEvalCandidate) -> str:
             "",
             "## Eval Protocol",
             "",
-            "- Treat this as a research-level proof task, not an answer-only prompt.",
+            "- Treat this as a research-level mathematical-resolution task, not an answer-only prompt.",
             "- Preserve useful partial progress in Cosheaf.",
             "- Do not silently change the statement or assumptions.",
-            "- If the proof is incomplete, write a compact obstruction or failed-route note.",
-            "- Any accepted proof must pass review before it counts as solved.",
+            "- If resolution is incomplete, write a compact obstruction or failed-route note.",
+            f"- Any accepted {RESOLUTION_OUTPUT_TYPE_LIST} must pass review before it counts as solved.",
             "",
             "## Probes",
             "",
@@ -129,7 +131,7 @@ def issue_body(candidate: ResearchEvalCandidate, page_path: str) -> str:
             "",
             "## Scoring Rubric",
             "",
-            "- Full solved proof: reviewed PR with a correct proof page.",
+            f"- Full resolution: reviewed PR with a correct resolution artifact: {RESOLUTION_OUTPUT_TYPE_LIST}.",
             "- Useful partial progress: reviewed lemma, obstruction, or failed-route note.",
             "- Repair progress: second attempt uses prior issue/PR/review state and avoids repeating a rejected route.",
             "- Failure: answer-only output, repeated known dead end, unsupported statement change, or unreviewed merge.",

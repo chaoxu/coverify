@@ -84,10 +84,8 @@ one exact mathematical target for a later prover/resolver. It must not present
 speculation as established knowledge.
 
 Mathematical resolution is used only when the task is already one exact hard
-target: theorem, conjecture, counterexample search, construction, witness,
-bound, certificate, reduction, obstruction, or key step. It asks for a proof,
-disproof, counterexample, construction/witness, bound/certificate, reduction,
-obstruction, or precise gap, not general brainstorming.
+target. It asks for one resolution artifact from the canonical vocabulary in
+`src/coverify/math_contract.py`, not general brainstorming.
 
 The verifier checks the candidate before publication under the matching
 contract.
@@ -97,8 +95,8 @@ The verifier rejects if:
 - the answer uses forbidden sources
 - repo-specific claims lack source support
 - cited results do not match local hypotheses
-- a proof, construction, counterexample, bound, or certificate skips the key
-  step or changes the target statement
+- the claimed resolution artifact skips the key step, changes the target
+  statement, or does not justify completion
 - exploration is mislabeled as proof
 - the answer hides uncertainty or source conflicts
 

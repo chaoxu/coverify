@@ -144,9 +144,9 @@ What matters:
 Design lessons:
 
 - Keep the useful habit of preserving failed paths and counterexamples.
-- Do not copy the full skill taxonomy into the default loop. Most Rethlas skills are tactics
-  a runner can choose inside the three canonical prompts: explore, attempt,
-  and review.
+- Do not copy the full skill taxonomy into the default loop. Most Rethlas
+  skills are tactics a runner can choose inside exploration, mathematical
+  resolution, or review.
 - If a tactic becomes repetitive and brittle, add a thin wrapper later. Until
   then, keep it as prompt guidance or a reference pattern.
 - Keep adaptive tactic choice agentic. Do not turn Rethlas-style control flow
@@ -440,3 +440,27 @@ Design lessons:
   next oracle call.
 - Do not build a generic reflection loop first. Build a concrete certificate
   target and let the failed verifier cases drive reflection.
+
+AutoResearch analogy:
+
+- This is the mathematical version of an AutoResearch keep/discard loop, but
+  with a verifier-backed mathematical score instead of a validation-loss metric.
+- The outer loop belongs to exploration: read the current project or task
+  state, inspect verifier failures, and choose the next candidate artifact.
+- The inner task belongs to mathematical resolution or a fixed checker: validate
+  one constrained lemma, certificate, reduction, obstruction, or bound update.
+- No new Coverify mode is needed. Golden Cosheaf documents can carry project
+  orientation, local progress measures when they exist, keep/discard rules, and
+  "do not retry" notes. Project-specific checker code can be added later when a
+  task actually needs it.
+- The golden repo, not Coverify, should name the mathematical objects, local
+  scoring rule when one exists, accepted checker, and trial records. External
+  symbolic or computational programs are tools referenced by that guidance, not
+  new Coverify workflow types.
+- Replicating this problem in Coverify alone would mean writing the Gilbert-
+  Pollak orientation page, task issues, and any needed checker instructions or
+  project-specific checker code in Cosheaf, then using the existing exploration
+  and mathematical-resolution contracts. It would not reproduce their result
+  unless the domain-specific
+  symbolic checker and branch-and-bound verifier are also supplied as trusted
+  tools or reviewed artifacts.

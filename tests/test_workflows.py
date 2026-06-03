@@ -7,6 +7,7 @@ from typing import Any
 
 from coverify.engine.backend import BackendResult, run_fixture_backend, run_script_backend
 from coverify.cosheaf.client import CosheafError
+from coverify.integration.review import ReviewDecision
 from coverify.integration.workflows import (
     InfinitePrimesRunOptions,
     build_infinite_primes_context,
@@ -193,7 +194,7 @@ class WorkflowTests(unittest.TestCase):
             )
         self.assertTrue(result["ok"])
         self.assertTrue(result["reviewed"])
-        self.assertEqual(result["review_event"], "APPROVE")
+        self.assertEqual(result["review_event"], ReviewDecision.APPROVE.value)
         self.assertTrue(result["review_approved"])
         self.assertTrue(result["merged"])
         self.assertIn(("create_workspace", ("prime-demo", "coflat")), author.calls)
@@ -290,7 +291,10 @@ class WorkflowTests(unittest.TestCase):
                 )
 
         self.assertTrue(
-            any(call[0] == "review_pull_request" and call[1][2] == "REQUEST_CHANGES" for call in reviewer.calls),
+            any(
+                call[0] == "review_pull_request" and call[1][2] == ReviewDecision.REQUEST_CHANGES.value
+                for call in reviewer.calls
+            ),
         )
         self.assertFalse(any(call[0] == "merge_pull_request" for call in author.calls))
 

@@ -8,13 +8,14 @@ Paper: https://arxiv.org/abs/2604.24021
 
 QED is a fixed multi-stage proof pipeline. It is useful as a reference for
 prompt checklists, but Coverify should not copy its full workflow shape.
-QED stages should map into our three canonical prompt families:
+QED stages should map into Coverify's two output contracts plus review/writing
+surfaces:
 
 | QED component | Coverify interpretation |
 | --- | --- |
 | Literature survey | Explore tactic |
-| Decomposition prover | Attempt tactic or issue decomposition |
-| Single prover | Attempt prompt |
+| Decomposition prover | Explore tactic or packaged resolution target |
+| Single prover | Mathematical-resolution target |
 | Structural verification | Review checklist |
 | Detailed verification | Review checklist |
 | Regulator | Runner policy after review feedback |
@@ -54,8 +55,8 @@ survey. The survey prompt asks for directly applicable theorems, related
 papers, useful lemmas/inequalities, counterexamples, pitfalls, and a
 self-verification pass for citations.
 
-Coverify use: enrich the Explore prompt when a problem likely needs external
-mathematical background.
+Coverify use: enrich the exploratory-response/planner prompt when a problem
+likely needs external mathematical background.
 
 ### Decomposition
 
@@ -64,9 +65,10 @@ rigorous quantitative mathematical statements. It explicitly rejects vague
 descriptions. It marks key steps, lists source nodes, records dependencies, and
 self-critiques plausibility, contradictions, and difficulty.
 
-Coverify use: when Explore produces issues, issue bodies should be precise
-enough to be attempted. When Attempt uses a plan, each proposed subclaim should
-be a real mathematical statement, not only a strategy label.
+Coverify use: when exploration produces issues, issue bodies should be precise
+enough to become mathematical-resolution targets. When a resolution call uses a
+plan, each proposed subclaim should be a real mathematical statement, not only
+a strategy label.
 
 ### Single Prover
 
@@ -74,9 +76,9 @@ QED's prover focuses effort on the hard key steps, forbids changing the
 problem, requires exact use of the decomposition's step IDs, and asks for
 explicit citations when external mathematical results are used.
 
-Coverify use: strengthen Attempt prompt variants for hard problems. The
-runner may ask the oracle to identify and expand the hardest step instead of
-only producing a polished final proof.
+Coverify use: strengthen mathematical-resolution prompt variants for hard
+problems. The runner may ask the oracle to identify and expand the hardest step
+instead of only producing a polished final proof.
 
 ### Structural Verification
 
@@ -94,9 +96,9 @@ QED's detailed verifier checks each proof step, dependencies, key steps,
 coverage, boundary cases, notation consistency, transition validity, and
 computational checks where feasible.
 
-Coverify use: detailed verification is part of the Review prompt or a future
-review mode. It should not become a separate durable workflow object unless we
-need separate reviewer identities or staged cost controls.
+Coverify use: detailed verification is part of the review gate/checklist. It
+should not become a separate durable workflow object unless we need separate
+reviewer identities or staged cost controls.
 
 ### Regulator
 

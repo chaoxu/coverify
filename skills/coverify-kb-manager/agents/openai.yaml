@@ -1,4 +1,4 @@
 interface:
   display_name: "Coverify KB Manager"
   short_description: "Clean up topic-shaped KB pages"
-  default_prompt: "Use $coverify-kb-manager to clean up and consolidate the Cosheaf wiki while preserving useful things tried."
+  default_prompt: "Use $coverify-kb-manager to clean up and consolidate the Cosheaf wiki while preserving useful things tried and truth/status labels."

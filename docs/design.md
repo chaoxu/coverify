@@ -59,8 +59,7 @@ Exploration provides judgment:
 
 - decide which context matters
 - choose routes and tool calls
-- ask for proofs, refutations, constructions, counterexamples, certificates, or
-  computations when useful
+- request a canonical resolution artifact or computation when useful
 - produce or request mathematical arguments
 - verify correctness and status labels
 - decide whether a failed route is worth recording
@@ -76,13 +75,45 @@ Coverify uses two contracts. Do not add a third mode for ordinary answers.
 | Contract | Use When | Allowed Behavior | Required Check |
 | --- | --- | --- | --- |
 | Exploratory response | Chat, source-grounded questions, route exploration, issue triage, status summaries, conjecture shaping, and packaging resolution targets. | Answer directly, explain current source support, compare routes, identify gaps, call tools, propose next tasks, or package exact mathematical targets. Mark speculation and unsupported ideas. | Verifier checks source support, honest uncertainty, citation/link validity, no hidden source use, and no factual claim beyond the evidence. |
-| Mathematical resolution | One exact hard target is ready for a strong tool. This may be a theorem, conjecture, counterexample search, construction, witness, bound, certificate, reduction, obstruction, or key step. | Produce proof, disproof, counterexample, construction/witness, bound/certificate, reduction, obstruction, or precise gap for the stated target. Follow any forced theorem, construction, method, or route constraint. Do not brainstorm or silently change scope. | Verifier checks exact target fidelity, hypotheses, mathematical steps, source use, required-method compliance, failed-route avoidance, and whether the claimed resolution is complete. |
+| Mathematical resolution | One exact hard target is ready for a strong tool. | Produce one requested resolution artifact from the canonical vocabulary in `src/coverify/math_contract.py` for the stated target. Follow any forced theorem, construction, method, or route constraint. Do not brainstorm or silently change scope. | Verifier checks exact target fidelity, hypotheses, mathematical steps, source use, required-method compliance, failed-route avoidance, and whether the claimed resolution is complete. |
 
 A broad "solve this issue" request starts as exploratory response unless it
 already contains a clean mathematical target. Exploration may hand a packaged
 target to the prover/resolver. Normal chat answers are exploratory responses
 with a direct-answer target. "Prover" is acceptable shorthand for the
 mathematical-resolution tool, but the output need not be a proof.
+
+### Score-Driven Bounded Trials
+
+Some mathematical projects are naturally about improving a certified scalar:
+a lower bound, upper bound, certificate size, search depth, number of remaining
+cases, or similar score. These do not require a third output contract.
+
+Problem-specific guidance belongs in the golden Cosheaf repo, not in Coverify
+code. `PROJECT.md` orients the agent to the project, while issues or task pages
+usually define concrete work. Do not invent a project-specific contract before
+the task needs one. A task page should define only what that subproblem needs:
+the fixed checker when one exists, the local progress measure when one exists,
+keep/discard rule, allowed artifacts, source context, and "do not retry" notes.
+If those rules need executable support, add project-specific scripts or checker
+code in the golden repo and point the issue to them.
+Coverify only supplies generic source-bundle access, backend calls, audit
+records, citation validation, and verification gates.
+
+Use exploratory response for the outer loop: read the current project state,
+inspect failures, propose the next trial, and decide what candidate artifact to
+try next. Use mathematical resolution only for one exact proposed artifact or claim.
+The score is meaningful only when a fixed checker, verifier, computation, or
+review gate decides it; do not use an LLM preference score as mathematical
+progress.
+
+When a trial has a verifier, checker, or score, those rules must stay fixed
+during that trial. The agent may propose candidate artifacts, but it may not
+move the scoring rule, allowed source bundle, hypotheses, or acceptance gate.
+Each trial should leave a compact Cosheaf record with the information the issue
+or task page asks for: candidate, local measure or score when relevant,
+keep/discard status, verifier output, and the smallest failing case or
+uncovered region when available.
 
 ## Layers
 
@@ -216,8 +247,8 @@ For mathematical resolution, a verifier should reject when:
 
 - the answer solves a nearby problem instead of the asked one
 - cited source statements do not match local hypotheses
-- a proof, construction, counterexample, bound, or certificate hides the hard
-  step
+- the claimed resolution artifact hides the hard step or does not justify
+  completion
 - evidence is presented with a stronger status label than it deserves
 - relevant failed routes are retried without a material difference
 - uncertainty or conflicting sources are smoothed over as a complete resolution
@@ -280,6 +311,34 @@ For longer mathematical work, use the skills in `skills/`:
 The runner should not merge raw model output as accepted knowledge. Useful
 model output becomes a proposed page, PR, review, comment, or issue with clear
 status.
+
+## Running Real Projects
+
+A real mathematical project should be a Cosheaf workspace plus a local project
+workdir, not a hidden local Coverify run. Coverify may create the workspace,
+scaffold the workdir, seed orientation pages, create issues, answer chats, write
+branches, open PRs, and run oracle calls. The day-to-day Codex session should
+start in the project workdir and use Coverify skills plus the scaffolded
+`bin/coverify` wrapper. The durable project state remains in Cosheaf.
+
+`PROJECT.md` is orientation. It should help agents understand the goal,
+mathematical objects, background, and available tools. Concrete work should
+usually be expressed as issues or task pages. A task can add a checker, score,
+or executable script later when it becomes useful.
+
+Changing Coverify during a project is allowed, but it is harness work:
+
+- If the blocker is missing mathematical knowledge, update the project
+  workspace.
+- If the blocker is a generic Coverify bug or missing generic capability, fix
+  Coverify in this repo, run the Coverify checks, then resume the project.
+- If only generated project wrappers are stale, rerun `scaffold-workdir` with
+  `--refresh-tools` so project docs and local configs are not overwritten.
+- If the blocker is a domain-specific checker or search tool, add that code to
+  the project workspace or a companion project repo and reference it from the
+  issue.
+- When a project result depends on a fresh Coverify change, record the Coverify
+  revision or local patch in the project issue or PR.
 
 ## Current Public Surface
 

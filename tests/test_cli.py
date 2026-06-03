@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import patch
 
 from coverify.cli import build_parser
+from coverify.integration.chat_metadata import CHAT_KIND_REPLY, chat_issue_body, parse_chat_metadata
 
 
 class FakeClient:
@@ -475,8 +476,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["branch"], "agent/math")
         self.assertEqual(payload["issue_number"], 12)
         self.assertEqual(client.created, ("w", "Prove the local theorem.", [4]))
-        self.assertIn('"branch": "agent/math"', client.issue_body)
-        self.assertIn("cosheaf-chat-meta", client.comments[0])
+        self.assertEqual(parse_chat_metadata(client.issue_body)["branch"], "agent/math")
+        self.assertEqual(parse_chat_metadata(client.comments[0])["kind"], CHAT_KIND_REPLY)
         self.assertEqual(client.branch, "agent/math")
 
     def test_chat_reply_uses_pinned_branch_metadata_for_worker_path(self) -> None:
@@ -491,7 +492,7 @@ class CliTests(unittest.TestCase):
                 return {
                     "number": number,
                     "user": {"login": "alice"},
-                    "body": '<!-- cosheaf-chat-meta\n{"kind":"cosheaf-chat","branch":"agent/math"}\n-->\n\nProve the local theorem.',
+                    "body": chat_issue_body("Prove the local theorem.", branch="agent/math"),
                     "labels": [{"id": 4, "name": "chat", "color": "8b5cf6"}],
                 }
 
@@ -550,7 +551,7 @@ class CliTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["branch"], "agent/math")
         self.assertEqual(client.branch, "agent/math")
-        self.assertIn("cosheaf-chat-meta", client.comments[0])
+        self.assertEqual(parse_chat_metadata(client.comments[0])["kind"], CHAT_KIND_REPLY)
 
     def test_ask_oracle_rejects_multiple_prompt_sources(self) -> None:
         args = build_parser().parse_args(["ask-oracle", "--prompt", "one", "two"])
@@ -640,10 +641,59 @@ class CliTests(unittest.TestCase):
             self.assertIn("demo-workspace", (workdir / ".env.example").read_text(encoding="utf-8"))
             self.assertIn("CHATGPT_CLI", (workdir / ".env.example").read_text(encoding="utf-8"))
             self.assertIn("/repo/coverify", (workdir / "bin" / "coverify").read_text(encoding="utf-8"))
+            agents = (workdir / "AGENTS.md").read_text(encoding="utf-8")
+            self.assertIn("Start day-to-day Codex sessions in this directory", agents)
+            self.assertIn("Use Coverify skills", agents)
+            self.assertIn("--refresh-tools", agents)
+            readme = (workdir / "README.md").read_text(encoding="utf-8")
+            self.assertIn("Start Codex in this directory for project work", readme)
+            self.assertIn("bin/coverify chat ask", readme)
+            self.assertIn("scaffold-workdir --refresh-tools", readme)
             chatgpt_config = (workdir / "config" / "qed-chatgpt-oracle.yaml").read_text(encoding="utf-8")
             self.assertIn("chatgpt:", chatgpt_config)
             self.assertIn('provider: "chatgpt"', chatgpt_config)
             self.assertNotIn("qed_chatgpt_codex_shim.py", chatgpt_config)
+
+    def test_scaffold_refresh_tools_updates_bin_without_overwriting_docs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parser = build_parser()
+            initial = parser.parse_args(
+                [
+                    "scaffold-workdir",
+                    "--workspace",
+                    "demo-workspace",
+                    "--works-root",
+                    tmpdir,
+                    "--coverify-checkout",
+                    "/repo/coverify-old",
+                ],
+            )
+            with patch("sys.stdout", io.StringIO()):
+                self.assertEqual(initial.func(initial), 0)
+
+            workdir = Path(tmpdir) / "demo-workspace"
+            (workdir / "README.md").write_text("project notes\n", encoding="utf-8")
+            refresh = parser.parse_args(
+                [
+                    "scaffold-workdir",
+                    "--workspace",
+                    "demo-workspace",
+                    "--works-root",
+                    tmpdir,
+                    "--coverify-checkout",
+                    "/repo/coverify-new",
+                    "--refresh-tools",
+                ],
+            )
+            stdout = io.StringIO()
+
+            with patch("sys.stdout", stdout):
+                self.assertEqual(refresh.func(refresh), 0)
+
+            result = json.loads(stdout.getvalue())
+            self.assertIn("/repo/coverify-new", (workdir / "bin" / "coverify").read_text(encoding="utf-8"))
+            self.assertEqual((workdir / "README.md").read_text(encoding="utf-8"), "project notes\n")
+            self.assertIn(str(workdir / "README.md"), result["skipped_existing"])
 
     def test_seed_research_evals_dispatches_to_client(self) -> None:
         class SeedClient:

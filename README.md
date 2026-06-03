@@ -57,17 +57,108 @@ bundle and label speculation, gaps, and unsupported claims.
 
 **Mathematical resolution** is the strict contract for one exact hard
 mathematical target. The prompt should contain the exact statement, hypotheses,
-allowed context, and relevant failed routes. The expected output is proof,
-disproof, counterexample, construction/witness, bound/certificate, reduction,
-obstruction, or precise gap, followed by independent verification. This is
-where Coverify should spend the strongest tool budget. "Prover" is acceptable
-shorthand for this tool even when the requested artifact is not literally a
-proof.
+allowed context, relevant failed routes, and one requested resolution artifact
+from the canonical vocabulary in `src/coverify/math_contract.py`, followed by
+independent verification. This is where Coverify should spend the strongest
+tool budget. "Prover" is acceptable shorthand for this tool even when the
+requested artifact is not literally a proof.
 
 An ordinary chat answer is not a separate mode; it is an exploratory response
 with a direct-answer target. A broad "solve this issue" request usually starts
 as exploratory response, then hands one packaged resolution target to the
 prover/resolver if the next mathematical target is clear.
+
+## Project Orientation
+
+Coverify does not require each project to fit a fixed progress schema. A
+Cosheaf workspace should give agents a small bootstrap file such as
+`AGENTS.md` that points to the canonical project or task documents. A
+`PROJECT.md` is a useful convention for orientation: the overall goal,
+mathematical objects, available tools, and background that agents should
+understand before doing work. It does not need to predeclare a full working
+contract.
+
+Concrete work usually belongs in issues or task pages. A local issue can define
+the next target, checker, progress measure, trial record format, or acceptance
+rule when that subproblem needs one. If the project needs a real
+project-specific contract, it can add project-specific code, scripts, or
+checker instructions later and point the issue to them. Coverify reads and
+follows this repo-owned guidance; Coverify should not grow domain-specific
+modes for each project, solver, score, or certificate format.
+
+## Running a Project
+
+The normal way to run a mathematical project is to let Coverify create a
+Cosheaf workspace and a local project workdir, then start the day-to-day Codex
+session inside that workdir. From there, the agent uses Coverify skills and the
+local `bin/coverify` wrapper as tools. The durable project state stays in
+Cosheaf.
+
+1. Create or choose a Cosheaf workspace.
+2. Add a short `AGENTS.md` and a `PROJECT.md` that orient agents to the goal,
+   objects, background, and available tools.
+3. Put concrete work in issues or task pages.
+4. Let Coverify answer, explore, write comments, create branches, open PRs, and
+   run packaged mathematical-resolution calls against that workspace.
+5. Keep accepted knowledge, failed routes, checker results, and open questions
+   in Cosheaf, not in hidden runner state.
+
+Example setup:
+
+```bash
+PYTHONPATH=src python3 -m coverify create-workspace \
+  --workspace my-project \
+  --default-md-format coflat
+
+PYTHONPATH=src python3 -m coverify scaffold-workdir \
+  --workspace my-project
+```
+
+Then start Codex in the generated workdir, usually under
+`~/playground/works/my-project`. The scaffolded `bin/coverify` wrapper points
+back to this Coverify checkout through `COVERIFY_CHECKOUT`, so project-local
+agents do not need to run from the Coverify repo.
+
+`bin/coverify` is generated glue, not a copy of Coverify. If the Coverify
+checkout changes at the same path, the wrapper uses the new code automatically.
+If the checkout path changes, set `COVERIFY_CHECKOUT` in `.env.local` or rerun
+`scaffold-workdir` with the new `--coverify-checkout`. If the generated wrapper
+template changes, refresh only the tool wrappers from the project workdir:
+
+```bash
+bin/coverify scaffold-workdir --refresh-tools
+```
+
+Example work loop:
+
+```bash
+bin/coverify create-issue \
+  --title "Explore the next obstruction" \
+  --body-file issue.md
+
+bin/coverify chat ask \
+  --issue 1 \
+  --backend verifying \
+  --message "Read PROJECT.md and this issue, then propose the next useful step."
+```
+
+Coverify skills are the preferred interface for longer runs. Link them from
+the Coverify checkout before starting project-local Codex sessions:
+
+```bash
+python3 scripts/link_skills.py
+```
+
+Changing Coverify while running a project is fine, but it is a different kind
+of work. Treat the project repo and the Coverify repo as separate states:
+
+- If the project needs only mathematical progress, write to Cosheaf.
+- If the run exposes a harness bug or missing generic capability, pause that
+  project step, fix Coverify in this repo, run Coverify's tests, then resume.
+- If the project needs a domain-specific checker or script, put it in the
+  project workspace or companion project repo, not in the default Coverify CLI.
+- Record in the project issue which Coverify revision or local change was used
+  when the result depends on new harness behavior.
 
 Coverify is for workflows such as:
 
@@ -142,7 +233,7 @@ Direct oracle call:
 
 ```bash
 PYTHONPATH=src python3 -m coverify ask-oracle \
-  --prompt "Resolve the current lemma, or state the precise gap." \
+  --prompt "Mathematical-resolution target: prove that if n is even, then n+2 is even. Allowed context: definition of even means n=2k for some integer k. Output type: proof. Do not change the target; if incomplete, state the precise gap." \
   --json
 ```
 

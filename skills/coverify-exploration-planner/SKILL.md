@@ -1,6 +1,6 @@
 ---
 name: coverify-exploration-planner
-description: Plan Coverify mathematical exploration from current Cosheaf knowledge, live issues, PRs, and tried routes. Use when deciding what routes, computations, oracle calls, or issues are worth trying next without repeating failed work.
+description: Plan Coverify mathematical exploration from current Cosheaf knowledge, live issues, PRs, and tried routes. Use when deciding whether to answer directly, compare routes, package resolution targets, call an oracle, or draft issues without repeating failed work.
 ---
 
 # Coverify Exploration Planner
@@ -8,8 +8,9 @@ description: Plan Coverify mathematical exploration from current Cosheaf knowled
 ## Purpose
 
 Use the exploratory-response contract. Turn the current workspace state into a
-source-grounded answer, status summary, route comparison, or small set of
-issue-ready approaches. Exploration is not proof. It should identify what the
+source-grounded answer, status summary, route comparison, packaged
+mathematical-resolution target, or small set of issue-ready approaches.
+Exploration is not proof. It should identify what the
 sources support, what remains speculative, which routes are worth trying, which
 routes to avoid, and which exact resolution targets are ready for strict
 mathematical resolution.

@@ -8,6 +8,8 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+from coverify.integration.review import REVIEW_DECISION_LINE
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECK_SKILLS = ROOT / "scripts" / "check_skills.py"
@@ -44,6 +46,11 @@ class SkillCompletenessTests(unittest.TestCase):
         self.assertEqual(len(names), len(set(names)))
         skill_dirs = sorted(path.name for path in (ROOT / "skills").glob("coverify-*") if (path / "SKILL.md").exists())
         self.assertEqual(sorted(names), skill_dirs)
+
+    def test_review_skill_uses_parser_owned_decision_line(self) -> None:
+        text = (ROOT / "skills" / "coverify-proof-review" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("REVIEW_DECISION_LINE", text)
+        self.assertIn(REVIEW_DECISION_LINE, text)
 
     def test_link_skills_creates_manifest_driven_symlinks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -130,15 +137,3 @@ class SkillCompletenessTests(unittest.TestCase):
             check = check_skills.check_repository(root, [])
         self.assertFalse(check.ok)
         self.assertIn("legacy pre-Coverify skill directory: auto" + "prover-context-builder", check.problems)
-
-    def test_context_and_planner_keep_prior_route_guard(self) -> None:
-        checks = {
-            "coverify-context-builder": ["closest tried route", "materially different"],
-            "coverify-exploration-planner": ["Prior route check", "issue-ready"],
-            "coverify-proof-attempt": ["Things tried", "Do not retry"],
-            "coverify-run-loop": ["PRIOR_ROUTE_CHECK", "THINGS_TRIED_UPDATED"],
-        }
-        for name, phrases in checks.items():
-            text = (ROOT / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
-            for phrase in phrases:
-                self.assertIn(phrase, text)

@@ -11,6 +11,7 @@ from coverify.apps.research_evals import (
     problem_page,
     seed_research_eval_workspace,
 )
+from coverify.math_contract import RESOLUTION_OUTPUT_TYPE_LIST
 
 
 class FakeResearchEvalCosheaf:
@@ -57,10 +58,10 @@ def sample_candidate() -> ResearchEvalCandidate:
         source_url="https://example.test/problem",
         domain="Number Theory / Diophantine equations",
         statement_sketch="Determine all integer solutions to x^2 - x = y^5 - y.",
-        target_artifact="A reviewed proof attempt or obstruction note.",
-        why_good_eval="It requires research-level proof progress.",
+        target_artifact="A reviewed resolution artifact or obstruction note.",
+        why_good_eval="It requires research-level mathematical progress.",
         tier="research-open",
-        one_shot_probe="Attempt a proof.",
+        one_shot_probe="Try for a proof, counterexample, or obstruction.",
         few_shot_probe="Repair using prior Cosheaf state.",
     )
 
@@ -101,7 +102,7 @@ class ResearchEvalTests(unittest.TestCase):
 
         self.assertIn("# Research Eval: researchmath-14k-000-sample", page)
         self.assertIn("Determine all integer solutions", page)
-        self.assertIn("Any accepted proof must pass review", page)
+        self.assertIn(f"Any accepted {RESOLUTION_OUTPUT_TYPE_LIST} must pass review", page)
 
     def test_seed_research_eval_workspace_creates_issues_pages_and_pr(self) -> None:
         client = FakeResearchEvalCosheaf()

@@ -1,4 +1,4 @@
 interface:
   display_name: "Coverify Attempt"
   short_description: "Prepare clean mathematical-resolution targets"
-  default_prompt: "Use $coverify-proof-attempt to prepare a clean mathematical-resolution target from accepted context and relevant tried routes. The prover may be asked for a proof, disproof, counterexample, construction, witness, bound, certificate, reduction, obstruction, or precise gap."
+  default_prompt: "Use $coverify-proof-attempt to prepare one clean mathematical-resolution target from accepted context and relevant tried routes, with one requested output from src/coverify/math_contract.py."

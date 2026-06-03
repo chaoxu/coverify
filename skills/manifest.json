@@ -9,12 +9,12 @@
     {
       "name": "coverify-exploration-planner",
       "required_sections": ["Purpose", "Workflow", "Output", "Issue Quality Bar"],
-      "must_contain": ["Prior route check", "durable knowledge", "issue-ready"]
+      "must_contain": ["Prior route check", "DIRECT_RESPONSE", "PACKAGED_RESOLUTION_TARGETS", "mathematical resolution"]
     },
     {
       "name": "coverify-proof-attempt",
       "required_sections": ["Purpose", "Workflow", "Oracle Prompt Shape"],
-      "must_contain": ["Do not change the problem", "Quarantine raw output", "UNRESOLVED_GAPS", "Things tried", "Do not retry"]
+      "must_contain": ["Do not change the problem", "canonical resolution artifact", "src/coverify/math_contract.py", "Output target", "UNRESOLVED_GAPS", "Things tried", "Do not retry"]
     },
     {
       "name": "coverify-kb-writer",
@@ -24,7 +24,7 @@
     {
       "name": "coverify-proof-review",
       "required_sections": ["Purpose", "Workflow", "Decision Rules", "Output"],
-      "must_contain": ["Findings lead", "REQUEST_CHANGES", "PROBLEM_INTEGRITY", "accepted KB statements"]
+      "must_contain": ["Findings lead", "REVIEW_DECISION_LINE", "PROBLEM_INTEGRITY", "accepted KB statements", "target drift", "unsupported status label"]
     },
     {
       "name": "coverify-kb-manager",

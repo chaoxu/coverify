@@ -22,15 +22,19 @@ from .engine.verifying import (
 )
 from .cosheaf.client import CosheafClient, CosheafConfig
 from .integration.chat import extract_login, extract_turns, run_chat_reply
-from .integration.repo_oracle import (
+from .integration.chat_metadata import (
     answer_with_metadata,
     chat_issue_body,
+    chat_reply_metadata,
+    parse_chat_metadata,
+)
+from .integration.repo_oracle import (
     export_cosheaf_source_bundle,
     gather_context,
     load_source_bundle,
-    parse_chat_metadata,
     run_repo_oracle,
 )
+from .integration.review import REVIEW_DECISION_VALUES, ReviewDecision
 from .integration.workflows import (
     InfinitePrimesRunOptions,
     default_branch_name,
@@ -43,6 +47,9 @@ from .apps.research_evals import (
     seed_research_eval_workspace,
     utc_stamp,
 )
+
+SUB_BACKEND_CHOICES = ("codex", "fixture", "script")
+BACKEND_CHOICES = (*SUB_BACKEND_CHOICES, "verifying")
 
 
 def env(name: str, default: str = "") -> str:
@@ -251,6 +258,7 @@ def cmd_scaffold_workdir(args: argparse.Namespace) -> int:
     coverify_checkout = str(Path(args.coverify_checkout).expanduser())
     qed_root = str(Path(args.qed_root).expanduser())
     force = bool(args.force)
+    refresh_tools = bool(args.refresh_tools)
 
     files: dict[Path, tuple[str, bool]] = {
         workdir / ".gitignore": (
@@ -635,17 +643,38 @@ def cmd_scaffold_workdir(args: argparse.Namespace) -> int:
         workdir / "AGENTS.md": (
             f"# {workspace} Coverify Workspace\n\n"
             f"This directory is a local operating workspace for the Cosheaf workspace `{workspace}`.\n\n"
+            "Start day-to-day Codex sessions in this directory. Use Coverify skills for longer\n"
+            "runs when they are linked into Codex, and use `bin/coverify` for Cosheaf and\n"
+            "oracle operations.\n\n"
+            "`bin/coverify` is generated glue around the checkout named by `COVERIFY_CHECKOUT`.\n"
+            "If the wrapper template changes, refresh generated tools from this directory with\n"
+            "`bin/coverify scaffold-workdir --workspace "
+            f"{workspace} --refresh-tools`.\n\n"
             "Use Forgejo/Cosheaf vocabulary directly: issue, branch, PR, review, merge, close.\n"
             "Durable mathematical state lives in Cosheaf, not in this directory.\n\n"
-            "Prefer `bin/coverify` for Cosheaf operations and `bin/qed-coverify` for QED-backed oracle calls.\n\n"
+            "`PROJECT.md` should orient agents to the project. Concrete work should live in\n"
+            "issues or task pages. If a task needs a checker, score script, or search tool,\n"
+            "put that project-specific code in the project repo or a companion repo and\n"
+            "reference it from the issue.\n\n"
             "Do not store credentials here. Put local auth in `.env.local` or your shell.\n",
             False,
         ),
         workdir / "README.md": (
             f"# {workspace}\n\n"
             f"Local operating workspace for the Cosheaf project `{workspace}`.\n\n"
+            "Start Codex in this directory for project work. The `bin/coverify` wrapper\n"
+            "runs the Coverify checkout named by `COVERIFY_CHECKOUT`, so the project can\n"
+            "use Coverify commands without being inside the Coverify repo.\n\n"
+            "If Coverify changes at the same checkout path, `bin/coverify` uses the new code\n"
+            "automatically. If the generated wrappers need to be refreshed, run\n"
+            "`bin/coverify scaffold-workdir --refresh-tools` from this directory. If the\n"
+            "checkout path changed, update `COVERIFY_CHECKOUT` in `.env.local` first.\n\n"
             "List open issues:\n\n"
             "```bash\nbin/coverify list-issues --state open\n```\n\n"
+            "Ask a project-scoped question:\n\n"
+            "```bash\nbin/coverify chat ask --issue 1 --backend verifying \\\n"
+            "  --message \"Read PROJECT.md and this issue, then propose the next useful step.\"\n"
+            "```\n\n"
             "Run QED through Coverify:\n\n"
             "```bash\nbin/qed-coverify \"Prove that there are infinitely many prime numbers.\"\n```\n",
             False,
@@ -654,8 +683,10 @@ def cmd_scaffold_workdir(args: argparse.Namespace) -> int:
 
     written: list[str] = []
     skipped: list[str] = []
+    bin_dir = workdir / "bin"
     for path, (content, executable) in files.items():
-        if write_scaffold_file(path, content, force=force, executable=executable):
+        should_force = force or (refresh_tools and path.parent == bin_dir)
+        if write_scaffold_file(path, content, force=should_force, executable=executable):
             written.append(str(path))
         else:
             skipped.append(str(path))
@@ -743,6 +774,7 @@ def cmd_chat_reply(args: argparse.Namespace) -> int:
             number=args.issue,
             oracle=backend_runner(args),
             bot_login=bot_login,
+            oracle_provider=args.backend,
         )
         return print_json(
             {"status": result.status, "posted": result.posted, "reply": result.reply}
@@ -1209,18 +1241,17 @@ def run_repo_chat_reply(
         thread_context=prior,
         max_context_chars=max_context_chars,
     )
-    metadata = {
-        "kind": "coverify-chat-reply",
-        "branch": branch,
-        "source_id": result.source_id,
-        "snapshot": result.snapshot,
-        "verification": result.verification,
-        "tier": result.tier,
-        "sources": result.sources,
-        "warnings": result.warnings,
-        "gatherer_provider": result.gatherer_provider,
-        "gatherer_call_id": result.gatherer_call_id,
-    }
+    metadata = chat_reply_metadata(
+        branch=branch,
+        source_id=result.source_id,
+        snapshot=result.snapshot,
+        verification=result.verification,
+        tier=result.tier,
+        sources=result.sources,
+        warnings=result.warnings,
+        gatherer_provider=result.gatherer_provider,
+        gatherer_call_id=result.gatherer_call_id,
+    )
     comment_body = answer_with_metadata(result.answer, metadata)
     comment = client.comment_issue(workspace, issue_number, comment_body)
     return {
@@ -1291,16 +1322,15 @@ def cmd_chat_ask(args: argparse.Namespace) -> int:
         thread_context=thread_context,
         max_context_chars=args.max_context_chars,
     )
-    metadata = {
-        "kind": "coverify-chat-reply",
-        "branch": branch,
-        "source_id": repo_result.source_id,
-        "snapshot": repo_result.snapshot,
-        "verification": repo_result.verification,
-        "tier": repo_result.tier,
-        "sources": repo_result.sources,
-        "warnings": repo_result.warnings,
-    }
+    metadata = chat_reply_metadata(
+        branch=branch,
+        source_id=repo_result.source_id,
+        snapshot=repo_result.snapshot,
+        verification=repo_result.verification,
+        tier=repo_result.tier,
+        sources=repo_result.sources,
+        warnings=repo_result.warnings,
+    )
     comment = client.comment_issue(args.workspace, issue_number, answer_with_metadata(repo_result.answer, metadata))
     result = {
         **repo_result.to_json(),
@@ -1412,10 +1442,10 @@ def add_workspace_arg(parser: argparse.ArgumentParser) -> None:
 
 
 def add_backend_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--backend", choices=("codex", "fixture", "script", "verifying"), default=env("COVERIFY_BACKEND", "codex"))
+    parser.add_argument("--backend", choices=BACKEND_CHOICES, default=env("COVERIFY_BACKEND", "codex"))
     parser.add_argument(
         "--verify-inner-backend",
-        choices=("codex", "fixture", "script"),
+        choices=SUB_BACKEND_CHOICES,
         default=env("COVERIFY_VERIFY_INNER_BACKEND", "codex"),
         help="underlying oracle used for generator/verifier/adjunct when --backend=verifying",
     )
@@ -1439,7 +1469,7 @@ def add_backend_args(parser: argparse.ArgumentParser) -> None:
         "--verify-strict",
         action="store_true",
         default=env("COVERIFY_VERIFY_STRICT") in {"1", "true", "yes"},
-        help="refuse to answer if a verifier errors out, instead of treating ERROR as PASS",
+        help="refuse to answer if a verifier errors out, instead of returning an unverified final answer",
     )
     parser.add_argument(
         "--verify-quiet-adjunct",
@@ -1481,6 +1511,12 @@ def add_repo_oracle_args(
         parser.add_argument("--thread-file", default="", help="prior thread context file, or '-' for stdin")
     if include_json:
         parser.add_argument("--json", action="store_true", help="print structured result JSON")
+    add_source_bundle_args(parser)
+    add_repo_verifier_args(parser)
+    add_repo_gatherer_args(parser)
+
+
+def add_source_bundle_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--max-context-chars",
         type=int,
@@ -1491,9 +1527,12 @@ def add_repo_oracle_args(
         type=int,
         default=int(env("COVERIFY_REPO_ORACLE_MAX_FILE_BYTES", "1000000") or "1000000"),
     )
+
+
+def add_repo_verifier_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--verifier-backend",
-        choices=("codex", "fixture", "script"),
+        choices=SUB_BACKEND_CHOICES,
         default=env("COVERIFY_REPO_ORACLE_VERIFIER_BACKEND"),
         help="extra verifier backend required unless --backend=verifying",
     )
@@ -1503,9 +1542,12 @@ def add_repo_oracle_args(
         "--verifier-reasoning-effort",
         default=env("COVERIFY_REPO_ORACLE_VERIFIER_REASONING_EFFORT"),
     )
+
+
+def add_repo_gatherer_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--gatherer-backend",
-        choices=("codex", "fixture", "script"),
+        choices=SUB_BACKEND_CHOICES,
         default=env("COVERIFY_REPO_ORACLE_GATHERER_BACKEND"),
         help="optional LLM/backend planner that selects repo snippets before answering",
     )
@@ -1518,28 +1560,8 @@ def add_repo_oracle_args(
 
 
 def add_gather_eval_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--max-context-chars",
-        type=int,
-        default=int(env("COVERIFY_REPO_ORACLE_MAX_CONTEXT_CHARS", "60000") or "60000"),
-    )
-    parser.add_argument(
-        "--max-file-bytes",
-        type=int,
-        default=int(env("COVERIFY_REPO_ORACLE_MAX_FILE_BYTES", "1000000") or "1000000"),
-    )
-    parser.add_argument(
-        "--gatherer-backend",
-        choices=("codex", "fixture", "script"),
-        default=env("COVERIFY_REPO_ORACLE_GATHERER_BACKEND"),
-        help="optional LLM/backend planner that selects repo snippets before answering",
-    )
-    parser.add_argument("--gatherer-command", default=env("COVERIFY_REPO_ORACLE_GATHERER_COMMAND"))
-    parser.add_argument("--gatherer-model", default=env("COVERIFY_REPO_ORACLE_GATHERER_MODEL"))
-    parser.add_argument(
-        "--gatherer-reasoning-effort",
-        default=env("COVERIFY_REPO_ORACLE_GATHERER_REASONING_EFFORT"),
-    )
+    add_source_bundle_args(parser)
+    add_repo_gatherer_args(parser)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1569,6 +1591,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scaffold.add_argument("--qed-root", default=env("QED_ROOT", str(Path.home() / "playground" / "QED")))
     scaffold.add_argument("--force", action="store_true", help="overwrite existing scaffold files")
+    scaffold.add_argument("--refresh-tools", action="store_true", help="overwrite generated bin wrappers only")
     scaffold.set_defaults(func=cmd_scaffold_workdir)
 
     member = sub.add_parser("set-member", help="set a Cosheaf workspace member role")
@@ -1739,7 +1762,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_auth(review_pr)
     add_workspace_arg(review_pr)
     review_pr.add_argument("--pr", type=int, required=True)
-    review_pr.add_argument("--event", choices=("APPROVE", "REQUEST_CHANGES", "COMMENT"), required=True)
+    review_pr.add_argument("--event", choices=REVIEW_DECISION_VALUES, required=True)
     review_pr.add_argument("--body", default="")
     review_pr.add_argument("--body-file", default="")
     review_pr.set_defaults(func=cmd_review_pr)

@@ -83,6 +83,11 @@ unknown mathematics.
   progress while still allowing post-hoc judging.
 - **T4 genuinely open tasks**: only after T0-T3 are stable.
   Purpose: measure useful progress, not solved/unsolved status.
+- **T5 bounded trials with local measures**: subproblems with a fixed checker
+  or meaningful scalar score, such as improving a certified bound or shrinking
+  an uncovered case set.
+  Purpose: test AutoResearch-style keep/discard loops without adding a new
+  Coverify mode or domain-specific Coverify code.
 
 ## Metrics
 
@@ -109,6 +114,9 @@ Secondary metrics:
 
 Avoid using final-proof success as the only score. On hard mathematics, a
 correct obstruction, sharpened lemma, or rejected false path is real progress.
+For score-driven tasks, the score counts only when it is produced by a fixed
+checker, verifier, computation, or review gate that the agent is not allowed to
+change during the trial.
 
 ## Protocol
 
@@ -119,7 +127,18 @@ Each task starts as a Cosheaf issue with:
 - forbidden assumptions
 - budget
 - review rubric
-- expected artifact type
+- expected output contract: exploratory response or mathematical resolution
+- for mathematical resolution, expected resolution artifact type from
+  `src/coverify/math_contract.py`
+- for bounded trials, any local checker, scalar score, keep/discard rule, and
+  verifier-certified improvement criterion that the task actually has
+
+For T5 tasks, the golden Cosheaf repo should own the needed guidance as
+ordinary knowledge-base content: project orientation, issues or task pages,
+checker instructions when a checker exists, accepted/rejected trial notes, and
+project-specific checker code when the task eventually needs it. Coverify should
+not grow a special Gilbert-Pollak command, AutoResearch command, or per-domain
+loop.
 
 Each run must leave at least one durable artifact:
 
@@ -128,6 +147,9 @@ Each run must leave at least one durable artifact:
 - issue comment explaining a dead end
 - label such as `needs-human`
 - decomposition into clearer subissues
+- trial note with candidate, local measure or score when relevant,
+  keep/discard/crash status, checker output, and smallest failing case or
+  uncovered region when available
 
 For fair comparison:
 

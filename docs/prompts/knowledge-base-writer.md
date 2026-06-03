@@ -9,5 +9,8 @@ content without adding new mathematics.
 
 Writing decisions stay agentic. Use Python for formatting checks and
 validation, not for deciding which mathematical claims deserve promotion.
+Facts, resolution artifacts, speculation, gaps, and failed routes must be
+labeled honestly; correctness-relevant claims should go to review before they
+become accepted knowledge.
 
 This file is a compatibility shim for older docs and PRs.

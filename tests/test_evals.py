@@ -6,6 +6,7 @@ from pathlib import Path
 
 from coverify.engine.backend import BackendResult
 from coverify.apps.evals import EvalCase, grade_answer, load_eval_cases, run_eval_cases
+from coverify.integration.review import ReviewDecision
 
 
 class EvalTests(unittest.TestCase):
@@ -44,13 +45,13 @@ class EvalTests(unittest.TestCase):
             task_set="T1",
             prompt="",
             grader="review_decision",
-            expect={"decision": "REQUEST_CHANGES"},
+            expect={"decision": ReviewDecision.REQUEST_CHANGES.value},
         )
 
-        passed, detail = grade_answer(case, "Reasoning...\nDECISION: REQUEST_CHANGES\n")
+        passed, detail = grade_answer(case, f"Reasoning...\nDECISION: {ReviewDecision.REQUEST_CHANGES.value}\n")
 
         self.assertEqual(passed, True)
-        self.assertIn("REQUEST_CHANGES", detail)
+        self.assertIn(ReviewDecision.REQUEST_CHANGES.value, detail)
 
     def test_run_eval_cases_records_backend_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -10,6 +10,7 @@ from coverify.integration.chat import (
     extract_turns,
     run_chat_reply,
 )
+from coverify.math_contract import RESOLUTION_OUTPUT_TYPE_LIST
 
 
 class FakeClient:
@@ -39,6 +40,16 @@ def fake_oracle(prompt: str) -> BackendResult:
         answer="ORACLE REPLY",
         artifact_dir=Path("/tmp/x"),
         provider="verifying",
+        oracle_call_id="x",
+    )
+
+
+def unverified_oracle(prompt: str) -> BackendResult:
+    unverified_oracle.seen = prompt  # type: ignore[attr-defined]
+    return BackendResult(
+        answer="UNCHECKED REPLY",
+        artifact_dir=Path("/tmp/x"),
+        provider="script",
         oracle_call_id="x",
     )
 
@@ -110,6 +121,30 @@ class RunChatReplyTests(unittest.TestCase):
         self.assertEqual(result.status, "skipped_no_user")
         self.assertEqual(client.comments, [])
 
+    def test_legacy_reply_requires_verifying_oracle(self) -> None:
+        client = FakeClient(
+            issue={"user": {"login": "alice"}, "body": "Prove X."},
+            timeline=[],
+        )
+        called = False
+
+        def plain_oracle(prompt: str) -> BackendResult:
+            nonlocal called
+            called = True
+            return unverified_oracle(prompt)
+
+        with self.assertRaisesRegex(RuntimeError, "requires a verifying oracle"):
+            run_chat_reply(
+                client=client,
+                workspace="w",
+                number=7,
+                oracle=plain_oracle,
+                bot_login="bot",
+                oracle_provider="script",
+            )
+        self.assertFalse(called)
+        self.assertEqual(client.comments, [])
+
     def test_prompt_includes_all_turns(self) -> None:
         turns = extract_turns(
             {"user": {"login": "alice"}, "body": "Q1"},
@@ -117,6 +152,10 @@ class RunChatReplyTests(unittest.TestCase):
             "bot",
         )
         prompt = build_chat_prompt(turns)
+        self.assertIn("exploratory-response contract", prompt)
+        self.assertIn("mathematical resolution", prompt)
+        self.assertIn(RESOLUTION_OUTPUT_TYPE_LIST, prompt)
+        self.assertIn("Do not present exploration as", prompt)
         self.assertIn("Q1", prompt)
         self.assertIn("A1", prompt)
         self.assertIn("Q2", prompt)

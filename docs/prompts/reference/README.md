@@ -4,11 +4,15 @@ This directory collects prompt patterns from other mathematical-agent systems.
 These files are references for humans and runners, not canonical Coverify
 workflow definitions.
 
-Coverify's canonical prompt surface remains:
+Coverify has two output contracts plus review and writing gates:
 
-1. Explore current Cosheaf state and produce issue-ready directions.
-2. Attempt one well-defined proof/disproof/obstruction.
-3. Review proposed knowledge through the PR gate.
+1. Explore current Cosheaf state: answer directly, route-find, call tools, or
+   package exact resolution targets.
+2. Resolve one exact mathematical target into one canonical resolution artifact
+   from `src/coverify/math_contract.py`.
+
+Review, verification, and knowledge-base writing gate what becomes durable
+knowledge; they are not a third answer mode.
 
 External systems often split those activities into many named agents or
 skills. That can be useful as a checklist, but it should not force us into a

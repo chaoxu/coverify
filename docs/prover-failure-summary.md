@@ -2,7 +2,7 @@
 
 This note is about using a language model as a mathematical prover: give it a
 problem, definitions, known results, examples, or candidate lemmas, and ask it
-to produce a proof, counterexample, reduction, certificate idea, or obstruction.
+for one requested resolution artifact from `src/coverify/math_contract.py`.
 
 If the prover were strong enough, much of the surrounding harness would matter
 less. A reliable prover should follow instructions, read the supplied material,
@@ -14,8 +14,10 @@ Current LLM provers do not obey it reliably. Their failures are predictable, and
 many can be reduced by tightening the prompt or the invocation protocol. They
 cannot all be eliminated by prompting alone.
 
-## General Contract
+## Noncanonical Checklist
 
+This is a prover-side checklist, not a separate Coverify output contract. The
+canonical resolution-artifact vocabulary lives in `src/coverify/math_contract.py`.
 Do not treat proof-shaped prose as proof. A good prover invocation should ask
 the model to:
 
@@ -42,9 +44,9 @@ the model to:
 | Treats retrieval as proof | The prover finds a relevant-looking paper or theorem and treats it as applicable without checking conditions. | Separate retrieved material, usable theorem, and verified-applicable theorem. Require applicability checks before use. | Prompting helps if source quality is good. |
 | Fails to search for counterexamples | The claim is fragile, but the prover keeps trying to prove it instead of testing small, boundary, or degenerate cases. | Frame tasks as "prove or refute". Require sanity checks, small cases, and boundary cases before a proof attempt. | Very effective in early exploration. |
 | Repeats a failed route | A later attempt uses new prose but relies on the same bad invariant, reduction, or missing lemma. | Feed the failed route back explicitly and forbid reuse unless there is a new lemma, assumption, or counterexample analysis. | Needs prior failure history; a single prompt cannot fix it. |
-| Confuses evidence with proof | Computations, examples, diagrams, numerical checks, or search results are written as if they prove the theorem. | Require labels: proof, evidence, experiment, conjecture. Computation proves only when paired with a checkable certificate or exhaustive argument. | Prompting helps; full resolution needs a certificate or independent verification. |
-| Overstates certainty | A plausible sketch is presented as a complete proof; unresolved steps are hidden. | Require status labels such as proved, plausible, gap, needs verification, or counterexample found. Reward honest failure. | Helps, but the model may still over-polish. |
-| Produces hard-to-check output | Statements are ambiguous, notation drifts, dependencies are implicit, or sources are vague. | Require a fixed structure: statement, definitions, dependencies, proof, hard step, open gaps, sources. | Prompting can improve this substantially. |
+| Confuses evidence with proof | Computations, examples, diagrams, numerical checks, or search results are written as if they prove the theorem. | Require separate trust/status labels and resolution-artifact type. Computation proves only when paired with a checkable certificate or exhaustive argument. | Prompting helps; full resolution needs a certificate or independent verification. |
+| Overstates certainty | A plausible sketch is presented as a complete proof; unresolved steps are hidden. | Require status labels such as accepted, proposed, conjectural, unresolved gap, needs verification, or failed route. Reward honest failure. | Helps, but the model may still over-polish. |
+| Produces hard-to-check output | Statements are ambiguous, notation drifts, dependencies are implicit, or sources are vague. | Require a fixed structure: statement, definitions, dependencies, resolution artifact, hard step, open gaps, sources. | Prompting can improve this substantially. |
 | Locally plausible but globally incomplete | Individual paragraphs look right, but not all cases, branches, or subgoals are closed. | Require a complete case split or subgoal list, status for every subgoal, and a final coverage check. | Helps, but complex proofs still need verification. |
 | Misses boundary cases | The proof handles the generic case but skips empty, zero, equality, extreme-parameter, or degenerate cases. | Require an explicit boundary-case list and a sentence closing each case. | Usually prompt-addressable. |
 | Notation or definition drift | The same symbol changes meaning, or a source term is imported with the wrong local definition. | Require a notation table and source-to-current terminology mapping. | Helps, but long proofs still drift. |
@@ -93,7 +95,7 @@ computational checks, formal checks, independent review, or a separate verifier.
 You are a mathematical prover, not a writing assistant.
 
 Task:
-1. Restate the theorem to prove or refute exactly.
+1. Restate the target statement exactly.
 2. List all assumptions, definitions, and conclusions.
 3. If the claim may be false, search first for counterexamples and boundary cases.
 4. Use only the supplied sources unless explicitly told otherwise.
@@ -101,16 +103,17 @@ Task:
    - the exact theorem statement;
    - the source location;
    - why every hypothesis holds here.
-6. Give a proof plan and identify the hardest original step.
-7. Expand the hardest step. Do not hide key reasoning behind "clear",
+6. State the requested resolution artifact type from `src/coverify/math_contract.py`.
+7. Give a plan and identify the hardest original step.
+8. Expand the hardest step. Do not hide key reasoning behind "clear",
    "standard", or "straightforward".
-8. Mark every auxiliary lemma as proved, cited, pending, conjectural, or failed.
-9. After the proof, check:
-   - Did you prove the original theorem rather than a nearby theorem?
+9. Mark every auxiliary lemma as proved, cited, pending, conjectural, or failed.
+10. After the resolution attempt, check:
+   - Did you resolve the original target rather than a nearby target?
    - Are all cases covered?
    - Do all cited results satisfy their hypotheses?
    - Are any gaps still open?
-10. If you cannot complete the proof, state the failure point directly. Do not
+11. If you cannot complete the target, state the failure point directly. Do not
     package a sketch as a complete proof.
 ```
 

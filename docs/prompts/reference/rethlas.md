@@ -98,9 +98,10 @@ Coverify use: map these to Cosheaf artifacts. Examples:
 Rethlas chooses tactics based on current state. This is the main idea worth
 keeping. The tactics themselves do not need to become Coverify skills.
 
-Coverify use: an Explore prompt can ask the runner to consider these tactics
-while producing issue-ready approaches. An Attempt prompt can ask for examples,
-counterexamples, decomposition, or literature checks only when relevant.
+Coverify use: an exploratory-response prompt can ask the runner to consider
+these tactics while producing issue-ready approaches. A mathematical-resolution
+target can ask for examples, counterexamples, decomposition, or literature
+checks only when relevant to the exact target.
 
 ### Counterexample Discipline
 
@@ -108,8 +109,9 @@ Counterexample construction is treated as first-class. If a candidate
 counterexample refutes a branch, Rethlas records its assumptions, failed
 conclusion, and impact.
 
-Coverify use: when an Attempt output disproves a claim or kills a direction,
-turn it into a reviewable obstruction artifact rather than losing it in logs.
+Coverify use: when a mathematical-resolution output disproves a claim or kills
+a direction, turn it into a reviewable obstruction artifact rather than losing
+it in logs.
 
 ### Verification Repair
 

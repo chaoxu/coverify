@@ -20,14 +20,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..engine.backend import BackendResult, BackendRunner
-from ..engine.verifying import ERROR, parse_verdict
+from ..engine.verifying import ERROR, VERDICT_LINE, Verdict, parse_verdict
+from ..math_contract import RESOLUTION_OUTPUT_TYPES, RESOLUTION_OUTPUT_TYPE_LIST
 
+VERIFICATION_PASSED = "passed"
+VERIFICATION_FAILED = "failed"
+VERIFICATION_ERROR = "error"
 
-CHAT_META_MARKER = "cosheaf-chat-meta"
-CHAT_META_RE = re.compile(
-    rf"<!--\s*{re.escape(CHAT_META_MARKER)}\s*(\{{.*?\}})\s*-->",
-    re.DOTALL,
-)
 
 STOPWORDS = {
     "about",
@@ -54,17 +53,15 @@ STOPWORDS = {
 }
 
 STRONG_TERMS = {
-    "prove",
-    "proof",
+    *RESOLUTION_OUTPUT_TYPES,
     "derive",
+    "disprove",
+    "gap",
+    "prove",
     "theorem",
     "lemma",
-    "counterexample",
-    "disprove",
     "verify",
     "correct",
-    "obstruction",
-    "bound",
 }
 
 
@@ -175,38 +172,6 @@ def sha256_bytes(data: bytes) -> str:
 
 def sha256_text(text: str) -> str:
     return sha256_bytes(text.encode("utf-8"))
-
-
-def parse_chat_metadata(body: str) -> dict[str, Any]:
-    match = CHAT_META_RE.search(body)
-    if not match:
-        return {}
-    try:
-        parsed = json.loads(match.group(1))
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def strip_chat_metadata(body: str) -> str:
-    return CHAT_META_RE.sub("", body).strip()
-
-
-def chat_metadata_comment(metadata: dict[str, object]) -> str:
-    return "<!-- " + CHAT_META_MARKER + "\n" + json.dumps(metadata, indent=2, sort_keys=True) + "\n-->"
-
-
-def chat_issue_body(message: str, *, branch: str) -> str:
-    return "\n\n".join(
-        [
-            chat_metadata_comment({"kind": "cosheaf-chat", "branch": branch}),
-            message.strip(),
-        ],
-    ).strip()
-
-
-def answer_with_metadata(answer: str, metadata: dict[str, object]) -> str:
-    return "\n\n".join([answer.rstrip(), chat_metadata_comment(metadata)]).strip() + "\n"
 
 
 def _tracked_files(root: Path) -> list[Path] | None:
@@ -527,17 +492,19 @@ def build_gatherer_prompt(
         [
             "# Coverify Repo-Snapshot Gatherer",
             "",
-            "Choose the repo passages needed to answer the user's mathematical question.",
-            "You are only preparing context, not answering the question.",
+            "Choose the repo passages needed for an exploratory response or a",
+            "packaged mathematical-resolution target. You are only preparing",
+            "context, not answering the question.",
             "",
             "Allowed sources are the current source bundle directory only. You may",
             "inspect files inside that directory directly. Do not request issues, PRs,",
             "git history, web pages, sibling repos, local notes, or hidden memory.",
             "",
-            "Prefer canonical ledger/status pages, theorem statements, examples,",
-            "proofs, obstruction notes, and active-front sections over introductory",
-            "frontmatter. For broad status questions, include the actual bound tables",
-            "and active-front/future-work sections when they exist.",
+            "Prefer canonical ledger/status pages, theorem statements, definitions,",
+            "examples, resolution-artifact notes, failed-route notes, and forced method constraints",
+            "over introductory",
+            "frontmatter. For broad status questions, include the actual tables and",
+            "active-front/future-work sections when they exist.",
             "",
             "Return only JSON with this shape:",
             '{"passages":[{"path":"file.md","line_start":10,"line_end":40,"purpose":"why this passage is needed"}],"notes":["optional gaps or caveats"]}',
@@ -824,35 +791,87 @@ def normalize_answer_citations(answer: str, snippets: list[SourceSnippet]) -> tu
     if pattern is None:
         return answer, []
     warnings: list[str] = []
+    markdown_link_pattern = re.compile(r"\[(?P<label>[^\]\n]*)\]\((?P<href>[^)\n]*)\)")
 
-    def replace(match: re.Match[str]) -> str:
+    def normalized_ref_for(match: re.Match[str]) -> str | None:
         path = match.group("path")
         start_raw = match.group("colon_start") or match.group("hash_start")
         end_raw = match.group("colon_end") or match.group("hash_end") or start_raw
         if start_raw is None or end_raw is None:
             warnings.append(f"Invalid citation {match.group(0)!r}: line range was missing.")
-            return match.group(0)
+            return None
         start = int(start_raw)
         end = int(end_raw)
         if end < start:
             warnings.append(f"Invalid descending citation {match.group(0)!r}.")
-            return match.group(0)
+            return None
         snippet = _containing_snippet(snippets, path, start, end)
         if snippet is None:
             warnings.append(f"Invalid citation {match.group(0)!r}: line range was not in gathered context.")
-            return match.group(0)
+            return None
         normalized_range = (
             f"L{snippet.line_start}"
             if snippet.line_start == snippet.line_end
             else f"L{snippet.line_start}-{snippet.line_end}"
         )
-        normalized_ref = f"{path}#{normalized_range}"
+        return f"{path}#{normalized_range}"
+
+    def replace_markdown_link(match: re.Match[str]) -> str:
+        label = match.group("label")
+        href = match.group("href")
+        label_citation = pattern.fullmatch(label)
+        href_citation = pattern.fullmatch(href)
+        if label_citation is None and href_citation is None:
+            if pattern.search(label) or pattern.search(href):
+                warnings.append(
+                    f"Invalid citation link {match.group(0)!r}: source refs inside Markdown links must be exact standalone source links.",
+                )
+            return match.group(0)
+
+        source_match = href_citation or label_citation
+        assert source_match is not None
+        normalized_ref = normalized_ref_for(source_match)
+        if normalized_ref is None:
+            return match.group(0)
+        if label_citation is not None:
+            label_ref = normalized_ref_for(label_citation)
+            if label_ref is None:
+                return match.group(0)
+            if label_ref != normalized_ref:
+                warnings.append(
+                    f"Invalid citation link {match.group(0)!r}: label and href resolve to different source ranges.",
+                )
+                return match.group(0)
+
+        normalized = f"[{normalized_ref}]({normalized_ref})"
+        if normalized != match.group(0):
+            warnings.append(f"Normalized citation link {match.group(0)!r} to {normalized!r}.")
+        return normalized
+
+    normalized_answer = markdown_link_pattern.sub(replace_markdown_link, answer)
+    markdown_link_content_spans = [
+        (link.start("label"), link.end("label"))
+        for link in markdown_link_pattern.finditer(normalized_answer)
+    ] + [
+        (link.start("href"), link.end("href"))
+        for link in markdown_link_pattern.finditer(normalized_answer)
+    ]
+
+    def inside_markdown_link(match: re.Match[str]) -> bool:
+        return any(start <= match.start() and match.end() <= end for start, end in markdown_link_content_spans)
+
+    def replace(match: re.Match[str]) -> str:
+        if inside_markdown_link(match):
+            return match.group(0)
+        normalized_ref = normalized_ref_for(match)
+        if normalized_ref is None:
+            return match.group(0)
         normalized = f"[{normalized_ref}]({normalized_ref})"
         if normalized != match.group(0):
             warnings.append(f"Normalized citation {match.group(0)!r} to {normalized!r}.")
         return normalized
 
-    normalized_answer = pattern.sub(replace, answer)
+    normalized_answer = pattern.sub(replace, normalized_answer)
     for path in sorted({snippet.path for snippet in snippets}, key=len, reverse=True):
         code_ref_pattern = re.compile(
             rf"`(?P<ref>(?:\[{re.escape(path)}#L\d+(?:-\d+)?\]\({re.escape(path)}#L\d+(?:-\d+)?\)|{re.escape(path)}#L\d+(?:-\d+)?))`",
@@ -890,11 +909,13 @@ def build_reasoner_prompt(
             "Repo-specific claims must be supported by the source bundle. If files",
             "conflict, report the conflict unless the source bundle resolves it.",
             "Do not present exploration as proof or as any stronger status than",
-            "the evidence supports. If the user asks for a proof, disproof,",
-            "counterexample, construction, witness, bound, certificate, reduction,",
-            "obstruction, or key step, either give a complete resolution under the",
-            "stated hypotheses or report the precise gap and strongest justified",
-            "partial progress.",
+            "the evidence supports. If the gathered sources already settle a",
+            "routine question, you may explain the resolution. If the user asks",
+            "for a hard exact target, do not silently run mathematical resolution",
+            "inside this exploratory response; package a strict target with the",
+            "statement, hypotheses, allowed context, forced constraints, and",
+            f"output type: {RESOLUTION_OUTPUT_TYPE_LIST}. Otherwise report the",
+            "precise gap and strongest justified partial progress.",
             "If the user requires a particular theorem, construction shape, proof",
             "method, route, or other constraint, treat that as part of the target;",
             "do not switch methods silently.",
@@ -955,11 +976,10 @@ def build_verifier_prompt(
             "smoothed over as settled knowledge.",
             "Reject if exploration, a plausible route, a partial argument, a",
             "construction attempt, or a computational-looking artifact is presented",
-            "with a stronger status label than the evidence supports. For requested",
-            "proofs, refutations, counterexamples, constructions, witnesses, bounds,",
-            "certificates, reductions, obstructions, or key steps, reject if the",
+            "with a stronger status label than the evidence supports. For a requested",
+            f"resolution artifact ({RESOLUTION_OUTPUT_TYPE_LIST}), reject if the",
             "target statement or hypotheses changed, if the hard step is hidden, or",
-            "if the candidate does not clearly state the precise gap.",
+            "if the candidate does not clearly justify completion or state the precise gap.",
             "Reject if the user required a particular theorem, construction shape,",
             "proof method, route, or other constraint and the candidate did not",
             "follow it.",
@@ -974,7 +994,7 @@ def build_verifier_prompt(
             "",
             "Write findings, then output exactly one line:",
             "",
-            "VERDICT: PASS | FAIL",
+            VERDICT_LINE,
             "",
             "## Source bundle",
             f"- source_id: {bundle.source_id}",
@@ -1005,14 +1025,20 @@ def verification_from_metadata(result: BackendResult) -> str | None:
         return None
     if metadata.get("provider") != "verifying" and result.provider != "verifying":
         return None
-    value = metadata.get("verified")
-    if value is True:
-        return "passed"
-    if value is False:
-        return "failed"
     verdicts = metadata.get("final_verdicts")
-    if isinstance(verdicts, list) and verdicts:
-        return "passed" if all(v == "PASS" for v in verdicts) else "failed"
+    value = metadata.get("verified")
+    if isinstance(verdicts, list):
+        if not verdicts:
+            return VERIFICATION_ERROR if value is False else None
+        if all(v == Verdict.PASS.value for v in verdicts):
+            return VERIFICATION_ERROR if value is False else VERIFICATION_PASSED
+        if any(v == Verdict.FAIL.value for v in verdicts):
+            return VERIFICATION_FAILED
+        return VERIFICATION_ERROR
+    if value is True:
+        return VERIFICATION_PASSED
+    if value is False:
+        return VERIFICATION_FAILED
     return None
 
 
@@ -1048,7 +1074,7 @@ def run_repo_oracle(
     verifier_result: BackendResult | None = None
     verifier_answer: str | None = None
     if invalid_citations:
-        verification = "failed"
+        verification = VERIFICATION_FAILED
         verifier_answer = "\n".join(invalid_citations)
     elif verification is None:
         if verifier_backend is None:
@@ -1067,9 +1093,15 @@ def run_repo_oracle(
             verdict = parse_verdict(verifier_result.answer).value
         except ValueError:
             verdict = ERROR
-        verification = "passed" if verdict == "PASS" else "failed" if verdict == "FAIL" else "error"
+        verification = (
+            VERIFICATION_PASSED
+            if verdict == Verdict.PASS.value
+            else VERIFICATION_FAILED
+            if verdict == Verdict.FAIL.value
+            else VERIFICATION_ERROR
+        )
 
-    ok = verification == "passed"
+    ok = verification == VERIFICATION_PASSED
     final_answer = candidate_answer
     warnings = [*gathered.warnings, *citation_warnings]
     if not ok:

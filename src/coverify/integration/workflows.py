@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..engine.backend import BackendResult, BackendRunner, audit_summary
-from .review import review_event_from_oracle
+from .review import REVIEW_DECISION_LINE, ReviewDecision, review_event_from_oracle
 
 
 @dataclass(frozen=True)
@@ -40,7 +40,7 @@ def build_infinite_primes_context(workspace: str, existing_files: list[str]) -> 
     files_text = "\n".join(f"- {path}" for path in existing_files) or "- none"
     return "\n".join(
         [
-            "# Mathematical Oracle Task: Infinitely Many Primes",
+            "# Mathematical Resolution Task: Infinitely Many Primes",
             "",
             "You are given a Cosheaf workspace context pack.",
             "",
@@ -61,6 +61,9 @@ def build_infinite_primes_context(workspace: str, existing_files: list[str]) -> 
             "  will turn useful proof text into a math document later.",
             "- Use the standard Euclid argument: assume finitely many primes,",
             "  form `N = p_1 p_2 ... p_n + 1`, and derive a new prime divisor.",
+            "- Treat the Euclid argument as a forced method. Do not switch to a",
+            "  different proof; if the forced method cannot be followed, report the",
+            "  precise gap instead.",
             "",
         ],
     )
@@ -230,20 +233,23 @@ def validate_infinite_primes_page(page: str) -> None:
 def build_infinite_primes_review_prompt(page: str, proposal_audit: str, writer_report: str) -> str:
     return "\n".join(
         [
-            "# Oracle Task: Review Infinitely Many Primes PR",
+            "# Mathematical Review Task: Infinitely Many Primes PR",
             "",
             "Act as a careful mathematical referee and knowledge-base reviewer.",
             "Decide whether the proposed Cosheaf PR is safe to merge.",
             "",
             "Output exactly one decision line:",
             "",
-            "DECISION: APPROVE | REQUEST_CHANGES | COMMENT",
+            REVIEW_DECISION_LINE,
             "",
             "Use APPROVE only if you do not see a logical gap and the page is",
-            "safe to merge as accepted knowledge. Use REQUEST_CHANGES if there",
-            "is a correctness gap, missing justification, notation problem that",
-            "affects correctness, or if the PR is not decidable from the supplied",
-            "evidence. Use COMMENT only for non-blocking notes.",
+            "safe to merge as accepted knowledge. Also check target fidelity, the",
+            "forced Euclid method, and whether the writer's trust labels match the",
+            "evidence. Use REQUEST_CHANGES if there is a correctness gap, missing",
+            "justification, notation problem that affects correctness, unsupported",
+            "status label, ignored forced method, target drift, or if the PR is not",
+            "decidable from the supplied evidence. Use COMMENT only for non-blocking",
+            "notes.",
             "",
             "Then include FINDINGS, NONTRIVIAL_DEPENDENCIES, BLOCKING_CHANGES,",
             "and VERDICT sections explaining why.",
@@ -395,7 +401,7 @@ def run_infinite_primes_workflow(
             ),
         )
         reviewed = True
-        review_approved = review_event == "APPROVE"
+        review_approved = review_event == ReviewDecision.APPROVE.value
 
     merged = False
     if options.merge:

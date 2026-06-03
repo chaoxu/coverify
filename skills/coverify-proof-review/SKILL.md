@@ -35,12 +35,19 @@ computations; do not turn correctness review into deterministic planner code.
 
 ## Decision Rules
 
-- `APPROVE`: no logical gap; task satisfied; references and computations check.
-- `REQUEST_CHANGES`: fatal gap, fixable correctness omission, notation problem
-  affecting correctness, unsupported citation, or undecidable claim.
+- `APPROVE`: no logical gap; task satisfied; references, status labels,
+  forced constraints, and computations check.
+- `REQUEST_CHANGES`: fatal gap, fixable correctness omission, target drift,
+  ignored forced fact, theorem, method, route, or construction constraint,
+  unsupported status label, speculation presented as accepted knowledge,
+  notation problem affecting correctness, unsupported citation, or undecidable
+  claim.
 - `COMMENT`: non-blocking notes only.
 
 ## Output
+
+The decision line is owned by `REVIEW_DECISION_LINE` in
+`src/coverify/integration/review.py`. Use its current expanded form:
 
 ```text
 DECISION: APPROVE | REQUEST_CHANGES | COMMENT

@@ -8,10 +8,12 @@ from typing import Callable
 
 from coverify.engine.backend import BackendResult
 from coverify.engine.verifying import (
+    ERROR,
     Step,
     StrictVerificationError,
     Verdict,
     VerifyingOracle,
+    build_verifier_context,
     builtin_profile,
     parse_verdict,
     verifying_config_from_dict,
@@ -125,7 +127,7 @@ class VerifyingOracleTests(unittest.TestCase):
         meta = read_metadata(result)
         self.assertTrue(meta["verified"])
         self.assertEqual(meta["rounds"], 2)
-        self.assertEqual(meta["final_verdicts"], ["PASS"])
+        self.assertEqual(meta["final_verdicts"], [Verdict.PASS.value])
 
     def test_budget_exhaustion_still_answers(self) -> None:
         oracle = self.make_oracle(
@@ -141,20 +143,21 @@ class VerifyingOracleTests(unittest.TestCase):
         self.assertFalse(meta["verified"])
         self.assertEqual(meta["rounds"], 2)
 
-    def test_broken_verifier_counts_as_pass(self) -> None:
+    def test_broken_verifier_stops_loop_but_is_not_verified(self) -> None:
         oracle = self.make_oracle(
             step(lambda _c, _n: "an answer"),
             [Step(runner=broken_runner)],
-            step(lambda _c, _n: "final"),
+            step(lambda ctx, _n: "flagged" if "still had unresolved reviewer concerns" in ctx else "final"),
             max_rounds=3,
         )
         result = oracle("Question.")
 
         meta = read_metadata(result)
-        self.assertTrue(meta["verified"])  # ERROR counts as PASS for loop control
+        self.assertEqual(result.answer, "flagged")
+        self.assertFalse(meta["verified"])
         self.assertEqual(meta["rounds"], 1)
         verifier_entries = [e for e in read_journal(result) if e["role"] == "verifier"]
-        self.assertEqual(verifier_entries[0]["verdict"], "ERROR")
+        self.assertEqual(verifier_entries[0]["verdict"], ERROR)
 
     def test_unparseable_verdict_is_error(self) -> None:
         oracle = self.make_oracle(
@@ -165,7 +168,21 @@ class VerifyingOracleTests(unittest.TestCase):
         )
         result = oracle("Question.")
 
-        self.assertEqual(read_metadata(result)["final_verdicts"], ["ERROR"])
+        self.assertEqual(read_metadata(result)["final_verdicts"], [ERROR])
+        self.assertFalse(read_metadata(result)["verified"])
+
+    def test_no_verifier_does_not_mark_verified(self) -> None:
+        oracle = self.make_oracle(
+            step(lambda _c, _n: "an answer"),
+            [],
+            step(lambda ctx, _n: "flagged" if "still had unresolved reviewer concerns" in ctx else "final"),
+            max_rounds=1,
+        )
+        result = oracle("Question.")
+
+        self.assertEqual(result.answer, "flagged")
+        self.assertEqual(read_metadata(result)["final_verdicts"], [])
+        self.assertFalse(read_metadata(result)["verified"])
 
     def test_writes_journal_and_metadata(self) -> None:
         oracle = self.make_oracle(
@@ -222,6 +239,14 @@ class VerifyingOracleTests(unittest.TestCase):
             max_rounds=1,
         )("Q.")
         self.assertIn("CHECK ARITHMETIC ONLY", captured["ctx"])
+
+    def test_default_verifier_context_checks_status_and_constraints(self) -> None:
+        ctx = build_verifier_context("Prove X using route R.", "Candidate response.")
+
+        self.assertIn("unsupported status label", ctx)
+        self.assertIn("ignored forced method", ctx)
+        self.assertIn("target drift", ctx)
+        self.assertIn("## Candidate response", ctx)
 
     def test_resume_reuses_journaled_steps(self) -> None:
         gen, gen_state = make_writing_runner(lambda _c, _n: "answer", self.root / "g")

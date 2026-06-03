@@ -19,9 +19,8 @@ Use two output contracts:
 
 - Exploratory response for normal chat, source-grounded answers, route
   exploration, issue triage, status summaries, and packaging resolution targets.
-- Mathematical resolution only for one exact theorem, conjecture,
-  counterexample search, construction, witness, bound, certificate, obstruction,
-  reduction, or key step.
+- Mathematical resolution only for one exact target with one requested
+  resolution artifact from `src/coverify/math_contract.py`.
 
 A broad issue starts as exploratory response unless it already contains a clean
 resolution target. A normal chat answer is exploratory response with a
@@ -37,7 +36,7 @@ direct-answer target.
    - use mathematical resolution only after packaging one exact target.
 4. **Choose one action**:
    - use `$coverify-exploration-planner` for direct source-grounded answers,
-     unclear routes, issue triage, or obligation packaging,
+     unclear routes, issue triage, or resolution target packaging,
    - use `$coverify-proof-attempt` for one clean mathematical question under
      the mathematical-resolution contract,
      defaulting to text-in/text-out rather than code,

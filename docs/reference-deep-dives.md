@@ -676,10 +676,12 @@ These experiments are the practical bridge from the papers to our harness.
    explicitly checks problem integrity, citation grounding, hard-step detail,
    and local correctness.
 
-3. Rethlas tactic prompt only.
-   Add examples, counterexamples, theorem search, subgoal decomposition, and
-   key-failure synthesis as optional tactics inside the attempt prompt. Do not
-   add a deterministic tactic scheduler. Measure whether outputs improve.
+3. Rethlas tactic packaging.
+   Let exploration consider examples, counterexamples, theorem search, subgoal
+   decomposition, and key-failure synthesis while packaging exact resolution
+   targets. Put a tactic into the resolution prompt only when it is a forced
+   constraint for one target. Do not add a deterministic tactic scheduler.
+   Measure whether outputs improve.
 
 4. Trusted-verifier simulation.
    Treat an independent strong model as the verifier, but log all pass/fail

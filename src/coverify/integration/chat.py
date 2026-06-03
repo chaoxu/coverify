@@ -15,7 +15,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..engine.backend import BackendRunner
-from .repo_oracle import strip_chat_metadata
+from ..math_contract import RESOLUTION_OUTPUT_TYPE_LIST
+from .chat_metadata import strip_chat_metadata
 
 
 @dataclass(frozen=True)
@@ -92,8 +93,14 @@ def extract_turns(issue: Any, timeline: Any, bot_login: str) -> list[Turn]:
 
 def build_chat_prompt(turns: list[Turn]) -> str:
     lines = [
-        "You are answering an ongoing mathematical discussion thread. Read the",
-        "whole conversation and respond to the most recent message from the user.",
+        "You are responding to an ongoing mathematical discussion thread under",
+        "Coverify's exploratory-response contract. Read the whole conversation",
+        "and respond to the most recent user message.",
+        "",
+        "Ground mathematical facts in the thread or clearly label them as general",
+        "background, speculation, gap, or needs verification. If the user asks for",
+        f"a hard exact target, package it as mathematical resolution: {RESOLUTION_OUTPUT_TYPE_LIST}.",
+        "Do not present exploration as accepted knowledge.",
         "",
     ]
     for turn in turns:
@@ -109,6 +116,7 @@ def run_chat_reply(
     number: int,
     oracle: BackendRunner,
     bot_login: str,
+    oracle_provider: str = "verifying",
 ) -> ChatReplyResult:
     issue = client.read_issue(workspace, number)
     timeline = client.read_issue_timeline(workspace, number)
@@ -119,6 +127,10 @@ def run_chat_reply(
     if turns[-1].role == "assistant":
         return ChatReplyResult("skipped_already_replied", posted=False, reply=None)
 
+    if oracle_provider != "verifying":
+        raise RuntimeError("legacy chat-reply requires a verifying oracle backend")
     result = oracle(build_chat_prompt(turns))
+    if result.provider != "verifying":
+        raise RuntimeError("legacy chat-reply requires a verifying oracle backend")
     client.comment_issue(workspace, number, result.answer)
     return ChatReplyResult("replied", posted=True, reply=result.answer)

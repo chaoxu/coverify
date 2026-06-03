@@ -8,18 +8,21 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from coverify.engine.backend import run_script_backend
+from coverify.engine.backend import BackendResult, run_script_backend
+from coverify.engine.verifying import Verdict
 from coverify.integration.repo_oracle import (
+    VERIFICATION_ERROR,
+    VERIFICATION_FAILED,
+    VERIFICATION_PASSED,
     build_gatherer_prompt,
     build_reasoner_prompt,
     build_verifier_prompt,
-    chat_issue_body,
     gather_context,
     load_source_bundle,
-    parse_chat_metadata,
     run_repo_oracle,
-    strip_chat_metadata,
+    verification_from_metadata,
 )
+from coverify.math_contract import RESOLUTION_OUTPUT_TYPE_LIST
 
 
 def write_script(path: Path, body: str) -> Path:
@@ -84,12 +87,6 @@ print(json.dumps({
 
 
 class RepoOracleTests(unittest.TestCase):
-    def test_chat_metadata_round_trips_and_strips_from_visible_body(self) -> None:
-        body = chat_issue_body("Prove the reserve lemma.", branch="agent/reserve")
-
-        self.assertEqual(parse_chat_metadata(body)["branch"], "agent/reserve")
-        self.assertEqual(strip_chat_metadata(body), "Prove the reserve lemma.")
-
     def test_source_bundle_uses_tracked_files_when_given_git_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -223,6 +220,8 @@ class RepoOracleTests(unittest.TestCase):
 
         self.assertIn(f"- root: {bundle.root}", prompt)
         self.assertIn("inspect files inside that directory directly", prompt)
+        self.assertIn("mathematical-resolution target", prompt)
+        self.assertIn("forced method constraints", prompt)
         self.assertIn('"passages"', prompt)
         self.assertIn('"line_start"', prompt)
         self.assertNotIn('"requests"', prompt)
@@ -250,12 +249,13 @@ class RepoOracleTests(unittest.TestCase):
 
         self.assertIn("Repo-Snapshot Exploratory Response", reasoner_prompt)
         self.assertIn("mathematical-resolution targets", reasoner_prompt)
-        self.assertIn("counterexample, construction, witness", reasoner_prompt)
+        self.assertIn("do not silently run mathematical resolution", reasoner_prompt)
+        self.assertIn(RESOLUTION_OUTPUT_TYPE_LIST, reasoner_prompt)
         self.assertIn("any stronger status than", reasoner_prompt)
         self.assertIn("the evidence supports", reasoner_prompt)
         self.assertIn("exploratory-response contract", verifier_prompt)
         self.assertIn("construction attempt", verifier_prompt)
-        self.assertIn("certificates, reductions, obstructions", verifier_prompt)
+        self.assertIn(RESOLUTION_OUTPUT_TYPE_LIST, verifier_prompt)
         self.assertIn("required a particular theorem", verifier_prompt)
 
     def test_gatherer_passage_ranges_are_extracted_exactly(self) -> None:
@@ -450,7 +450,7 @@ print(json.dumps({
             )
 
         self.assertTrue(result.ok)
-        self.assertEqual(result.verification, "passed")
+        self.assertEqual(result.verification, VERIFICATION_PASSED)
         self.assertEqual(result.tier, "strong")
         self.assertIn("new reserve-overlap closure claim", result.answer)
         self.assertEqual(
@@ -525,6 +525,73 @@ print(json.dumps({
         self.assertTrue(result.ok)
         self.assertIn("facts.md#L1-3", result.answer)
 
+    def test_repo_oracle_preserves_already_normalized_markdown_source_links(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "source"
+            root.mkdir()
+            (root / "facts.md").write_text(
+                "Header\n\nLocal fact A is accepted.\n",
+                encoding="utf-8",
+            )
+            answer_script = write_script(
+                Path(tmpdir) / "answer.py",
+                "#!/usr/bin/env python3\nprint('See [facts.md#L1-3](facts.md#L1-3).')\n",
+            )
+            verifier_script = write_script(Path(tmpdir) / "verify.py", PASS_VERIFIER_SCRIPT)
+
+            result = run_repo_oracle(
+                bundle=load_source_bundle(root),
+                question="What is local fact A?",
+                answer_backend=lambda prompt: run_script_backend(
+                    prompt,
+                    command=f"{sys.executable} {answer_script}",
+                    artifact_root=Path(tmpdir) / "runs",
+                ),
+                verifier_backend=lambda prompt: run_script_backend(
+                    prompt,
+                    command=f"{sys.executable} {verifier_script}",
+                    artifact_root=Path(tmpdir) / "runs",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("See [facts.md#L1-3](facts.md#L1-3).", result.answer)
+        self.assertNotIn("[[facts.md", result.answer)
+        self.assertFalse(any("Normalized citation" in warning for warning in result.warnings))
+
+    def test_repo_oracle_rejects_source_refs_hidden_inside_markdown_links(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "source"
+            root.mkdir()
+            (root / "facts.md").write_text(
+                "Header\n\nLocal fact A is accepted.\n",
+                encoding="utf-8",
+            )
+            answer_script = write_script(
+                Path(tmpdir) / "answer.py",
+                "#!/usr/bin/env python3\nprint('See [facts.md#L99 details](https://example.test) and [details](facts.md#L99?x=1).')\n",
+            )
+            verifier_script = write_script(Path(tmpdir) / "verify.py", PASS_VERIFIER_SCRIPT)
+
+            result = run_repo_oracle(
+                bundle=load_source_bundle(root),
+                question="What is local fact A?",
+                answer_backend=lambda prompt: run_script_backend(
+                    prompt,
+                    command=f"{sys.executable} {answer_script}",
+                    artifact_root=Path(tmpdir) / "runs",
+                ),
+                verifier_backend=lambda prompt: run_script_backend(
+                    prompt,
+                    command=f"{sys.executable} {verifier_script}",
+                    artifact_root=Path(tmpdir) / "runs",
+                ),
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.verification, VERIFICATION_FAILED)
+        self.assertTrue(any("Invalid citation link" in warning for warning in result.warnings))
+
     def test_repo_oracle_rejects_citations_outside_gathered_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "source"
@@ -552,7 +619,7 @@ print(json.dumps({
             )
 
         self.assertFalse(result.ok)
-        self.assertEqual(result.verification, "failed")
+        self.assertEqual(result.verification, VERIFICATION_FAILED)
         self.assertIn("Invalid citation", result.answer)
 
     def test_repo_oracle_returns_refusal_when_verifier_fails(self) -> None:
@@ -585,8 +652,74 @@ print(json.dumps({
             )
 
         self.assertFalse(result.ok)
-        self.assertEqual(result.verification, "failed")
+        self.assertEqual(result.verification, VERIFICATION_FAILED)
         self.assertIn("could not confidently verify", result.answer)
+
+    def test_verifying_metadata_error_verdict_maps_to_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_dir = Path(tmpdir)
+            (artifact_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "provider": "verifying",
+                        "verified": False,
+                        "final_verdicts": ["ERROR"],
+                    },
+                ),
+                encoding="utf-8",
+            )
+            result = BackendResult(
+                answer="Unverified answer.",
+                artifact_dir=artifact_dir,
+                provider="verifying",
+                oracle_call_id="verifying-test",
+            )
+
+            self.assertEqual(verification_from_metadata(result), VERIFICATION_ERROR)
+
+    def test_verifying_metadata_without_verdicts_maps_to_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_dir = Path(tmpdir)
+            (artifact_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "provider": "verifying",
+                        "verified": False,
+                        "final_verdicts": [],
+                    },
+                ),
+                encoding="utf-8",
+            )
+            result = BackendResult(
+                answer="Unchecked answer.",
+                artifact_dir=artifact_dir,
+                provider="verifying",
+                oracle_call_id="verifying-test",
+            )
+
+            self.assertEqual(verification_from_metadata(result), VERIFICATION_ERROR)
+
+    def test_verifying_metadata_false_overrides_pass_verdict(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_dir = Path(tmpdir)
+            (artifact_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "provider": "verifying",
+                        "verified": False,
+                        "final_verdicts": [Verdict.PASS.value],
+                    },
+                ),
+                encoding="utf-8",
+            )
+            result = BackendResult(
+                answer="Contradictory metadata answer.",
+                artifact_dir=artifact_dir,
+                provider="verifying",
+                oracle_call_id="verifying-test",
+            )
+
+            self.assertEqual(verification_from_metadata(result), VERIFICATION_ERROR)
 
     def test_repo_oracle_cli_emits_json_for_other_tools(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -632,7 +765,7 @@ print(json.dumps({
             payload = json.loads(completed.stdout)
 
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["verification"], "passed")
+        self.assertEqual(payload["verification"], VERIFICATION_PASSED)
         self.assertEqual(payload["source_id"], "cli-smoke")
         self.assertEqual(payload["tier"], "strong")
 

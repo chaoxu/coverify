@@ -1,4 +1,4 @@
 interface:
   display_name: "Coverify Loop"
   short_description: "Run the lightweight progress loop"
-  default_prompt: "Use $coverify-run-loop to make durable Cosheaf progress by building context, choosing one action, writing state, verifying, and measuring completeness."
+  default_prompt: "Use $coverify-run-loop to make durable Cosheaf progress by building context, choosing exploratory response or mathematical resolution, writing state, verifying, and measuring completeness."
