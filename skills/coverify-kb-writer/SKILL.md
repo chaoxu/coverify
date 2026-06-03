@@ -30,6 +30,10 @@ significance with deterministic code.
 6. Link accepted pages or block ids as mathematical evidence. Link issues and
    PRs only as workflow pointers.
 7. Mark correctness-relevant claims for `$coverify-proof-review`.
+8. Do not hard-wrap ordinary prose paragraphs at arbitrary source-column
+   widths. Keep each normal prose paragraph on one logical source line, while
+   preserving intentional line breaks for headings, lists, tables, display
+   math, and fenced code.
 
 ## Failed Routes
 

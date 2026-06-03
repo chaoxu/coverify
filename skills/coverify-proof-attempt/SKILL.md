@@ -76,6 +76,9 @@ Requirements:
 - Do not write code or rely on unprovided computation.
 - Do not retry a listed failed route unless the prompt states what is
   materially new.
+- Do not hard-wrap normal prose paragraphs at arbitrary source-column widths;
+  keep each paragraph on one logical source line. Intentional line breaks for
+  headings, lists, tables, display math, and fenced code are fine.
 - Give a complete argument when possible.
 - If incomplete, state the gap and strongest justified partial progress.
 ```

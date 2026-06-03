@@ -32,7 +32,10 @@ mechanical.
    reproduce an accepted KB claim or active issue check with a named question,
    compact command, compact output, and clear owner. Delete, close, or leave
    off main one-off route scaffolds after distilling their result.
-8. Produce a reviewable PR with a migration map, correctness-relevant changes,
+8. Do not introduce arbitrary hard-wrapped prose while rewriting Markdown.
+   Keep normal prose paragraphs as one logical source line, with intentional
+   line breaks only for headings, lists, tables, display math, and fenced code.
+9. Produce a reviewable PR with a migration map, correctness-relevant changes,
    issue/PR update plan, and live-check result.
 
 ## Output
