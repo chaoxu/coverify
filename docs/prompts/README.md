@@ -15,3 +15,8 @@ Current prompt references:
 See [Reference Prompt Collection](reference/README.md) for paper-derived
 patterns from QED, Rethlas, and future external systems. Reference patterns may
 inspire skills or code later, but they are not workflow state by themselves.
+
+When adapting these prompts, keep judgment in agentic preparation or oracle
+calls. Move behavior into Python only for stable mechanics such as schema
+validation, range extraction, citation normalization, audit recording, and
+verifier gates.

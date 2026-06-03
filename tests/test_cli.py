@@ -324,6 +324,78 @@ class CliTests(unittest.TestCase):
         self.assertEqual(report["passed_cases"], 1)
         self.assertEqual(report["passed_requirements"], 2)
 
+    def test_checked_in_poa_gather_eval_fixture_runs(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        cases = repo_root / "evals" / "gather" / "poa-network-game-clean.jsonl"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "source"
+            root.mkdir()
+            (root / "ledger.md").write_text(
+                "\n".join(
+                    [
+                        "# Ledger",
+                        "## Current Working Bound Table",
+                        "| Problem | Workspace lower bound | Current status |",
+                        "| Directed TTSP with arbitrary terminal pairs | at least $27/19$ | active |",
+                        "| Symmetric undirected SP-underlay | at least $20/13$ | active |",
+                        "| Undirected SP-underlay arbitrary terminals | at least $15/7$ | active |",
+                        "## Active Fronts",
+                        "- improve directed TTSP bounds.",
+                    ],
+                ),
+                encoding="utf-8",
+            )
+            (root / "directed-ttsp.md").write_text(
+                "\n".join(
+                    [
+                        "# Directed TTSP",
+                        "## Directed TTSP interaction inequality route",
+                        "This is the target route.",
+                        "## Directed TTSP internal-terminal lower-bound example",
+                        "This example is not the best lower bound for the broad arbitrary-terminal directed TTSP row.",
+                        "A small grammar cannot improve the inherited $27/19$ arbitrary-terminal lower bound.",
+                        "## Interaction inequality for series of parallel bundles",
+                        "Any counterexample must therefore use TTSP structure not covered by this series-of-bundles class.",
+                    ],
+                ),
+                encoding="utf-8",
+            )
+            (root / "undirected-sp-underlay.md").write_text(
+                "\n".join(
+                    [
+                        "# Undirected SP Underlay",
+                        "## Undirected common-terminal instances need not orient to directed TTSP",
+                        "This is the model caveat.",
+                        "## Symmetric ladder lower bound of 20/13",
+                        "The accepted symmetric example has ratio 20/13.",
+                        "## Diamond lower bound of 15/7",
+                        "The broad arbitrary-terminal row has ratio 15/7.",
+                        "## Accepted ladder pattern cannot be retuned past 20/13",
+                        "Retuning the accepted pattern cannot improve the bound.",
+                    ],
+                ),
+                encoding="utf-8",
+            )
+            parser = build_parser()
+            args = parser.parse_args(
+                [
+                    "repo-oracle",
+                    "eval-gather",
+                    "--source-bundle",
+                    str(root),
+                    "--cases",
+                    str(cases),
+                ],
+            )
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                self.assertEqual(args.func(args), 0)
+
+        report = json.loads(stdout.getvalue())
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["passed_cases"], 4)
+        self.assertEqual(report["passed_requirements"], 15)
+
     def test_chat_ask_creates_branch_scoped_issue_and_posts_verified_answer(self) -> None:
         class ChatClient:
             def __init__(self) -> None:

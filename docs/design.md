@@ -38,6 +38,9 @@ knowledge, normally by branch, PR, review, and merge.
   when context packs ask a backend to write or review Cosheaf pages.
 - [References And Future Notes](references.md) records paper-inspired design
   lessons and future learning notes.
+- [LLM Math Failure Modes](llm-math-failure-modes.md) is the checklist of
+  model, verifier, citation, source, and product failures the architecture must
+  guard against.
 
 ## Roles
 
@@ -59,6 +62,33 @@ knowledge, normally by branch, PR, review, and merge.
 - **Reviewer** is a distinct Cosheaf identity plus an oracle-backed review
   policy. A reviewer identity submits the review result to Cosheaf; the
   correctness judgment should come from the review oracle, not from the runner.
+
+## Agentic Preparation Principle
+
+Do not turn every hard planning question into more Python orchestration code.
+If a step requires judgment, context selection, route choice, or deciding what
+evidence matters, prefer an agentic preparation step or oracle call over a new
+deterministic planner.
+
+The harness should provide small, stable mechanisms: source-bundle export,
+backend invocation, audit bundles, schema checks, path/range validation,
+citation normalization, and verifier gates. The agent or oracle should inspect
+the allowed context and decide what matters. Local code should then validate the
+agent's output mechanically.
+
+For repo-snapshot chat, the preferred shape is:
+
+```text
+question + thread + allowed source-bundle root
+  -> agentic prepare_context over bundle files
+  -> mechanical range extraction and citation validation
+  -> answerer
+  -> independent verifier
+  -> response/comment
+```
+
+Add deterministic code only when the behavior is stable, replayable, and
+genuinely simpler than asking an agent to inspect the allowed context.
 
 ## Roles and Layers
 

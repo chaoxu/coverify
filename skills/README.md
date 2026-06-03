@@ -21,3 +21,7 @@ Adding or removing a skill requires:
 
 The prompt docs under `docs/prompts/` are compatibility shims for older links.
 Operational behavior belongs here.
+
+Skill behavior should stay agentic when it involves judgment. Add Python only
+for stable tool surfaces, audit recording, and mechanical validation of paths,
+ranges, citations, schemas, and verifier results.

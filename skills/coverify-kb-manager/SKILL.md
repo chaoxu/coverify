@@ -10,6 +10,11 @@ description: Clean up and consolidate an Coverify Cosheaf wiki and related route
 Improve the accepted knowledge base itself without adding new mathematics.
 Prefer a smaller, clearer wiki over preserving old file boundaries.
 
+Cleanup decisions are agentic. Use tools for stable checks such as broken
+links, duplicated files, generated artifacts, and reproducible commands; do not
+add deterministic planner code to decide topic structure unless the rule is
+mechanical.
+
 ## Workflow
 
 1. Use `$coverify-context-builder` to read the current tree, canonical topic

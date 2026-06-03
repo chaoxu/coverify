@@ -372,7 +372,18 @@ def _score_file(file: SourceFile, tokens: list[str]) -> int:
     return score
 
 
-def _window_score(lines: list[str], tokens: list[str], index: int, context_lines: int) -> int:
+def _normalized_phrase(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+def _window_score(
+    lines: list[str],
+    tokens: list[str],
+    index: int,
+    context_lines: int,
+    *,
+    query: str = "",
+) -> int:
     start = max(0, index - context_lines)
     end = min(len(lines), index + context_lines + 1)
     text = "\n".join(lines[start:end]).lower()
@@ -382,12 +393,28 @@ def _window_score(lines: list[str], tokens: list[str], index: int, context_lines
     line = lines[index].lower()
     if line.startswith("#"):
         score += 2
+        query_tokens = set(_tokens(query))
+        heading_tokens = set(_tokens(line))
+        if query_tokens:
+            if query_tokens <= heading_tokens:
+                score += 30
+            score += 3 * len(query_tokens & heading_tokens)
+    query_phrase = _normalized_phrase(query)
+    line_phrase = _normalized_phrase(line)
+    if query_phrase and query_phrase in line_phrase:
+        score += 50
     if "|" in line:
         score += 1
     return score
 
 
-def _snippet_for(file: SourceFile, tokens: list[str], *, context_lines: int = 48) -> SourceSnippet:
+def _snippet_for(
+    file: SourceFile,
+    tokens: list[str],
+    *,
+    context_lines: int = 48,
+    query: str = "",
+) -> SourceSnippet:
     lines = file.content.splitlines()
     match_index = 0
     best_score = -1
@@ -395,7 +422,7 @@ def _snippet_for(file: SourceFile, tokens: list[str], *, context_lines: int = 48
         lowered = line.lower()
         if not any(token in lowered for token in tokens):
             continue
-        score = _window_score(lines, tokens, index, context_lines)
+        score = _window_score(lines, tokens, index, context_lines, query=query)
         if score > best_score:
             best_score = score
             match_index = index
@@ -407,6 +434,19 @@ def _snippet_for(file: SourceFile, tokens: list[str], *, context_lines: int = 48
         line_end=max(start + 1, end),
         text="\n".join(lines[start:end]),
         score=_score_file(file, tokens),
+    )
+
+
+def _snippet_range(file: SourceFile, *, line_start: int, line_end: int, score: int) -> SourceSnippet:
+    lines = file.content.splitlines()
+    start = max(1, line_start)
+    end = min(len(lines), line_end)
+    return SourceSnippet(
+        path=file.path,
+        line_start=start,
+        line_end=max(start, end),
+        text="\n".join(lines[start - 1 : end]),
+        score=score,
     )
 
 
@@ -487,10 +527,11 @@ def build_gatherer_prompt(
             "# Coverify Repo-Snapshot Gatherer",
             "",
             "Choose the repo passages needed to answer the user's mathematical question.",
-            "You are only selecting context, not answering the question.",
+            "You are only preparing context, not answering the question.",
             "",
-            "Allowed sources are the current source bundle only. Do not request issues,",
-            "PRs, git history, web pages, sibling repos, local notes, or hidden memory.",
+            "Allowed sources are the current source bundle directory only. You may",
+            "inspect files inside that directory directly. Do not request issues, PRs,",
+            "git history, web pages, sibling repos, local notes, or hidden memory.",
             "",
             "Prefer canonical ledger/status pages, theorem statements, examples,",
             "proofs, obstruction notes, and active-front sections over introductory",
@@ -498,12 +539,15 @@ def build_gatherer_prompt(
             "and active-front/future-work sections when they exist.",
             "",
             "Return only JSON with this shape:",
-            '{"requests":[{"path":"file.md","queries":["section title, theorem id, phrase, or target fact"]}],"notes":["optional"]}',
+            '{"passages":[{"path":"file.md","line_start":10,"line_end":40,"purpose":"why this passage is needed"}],"notes":["optional gaps or caveats"]}',
             "",
-            "Each request path must be one of the catalog paths. Keep the list small;",
-            "usually 4-10 files/queries are enough.",
+            "Each passage path must be one of the catalog paths. Use exact 1-based",
+            "inclusive line ranges from the source files. Keep the list small; usually",
+            "4-10 passages are enough. Prefer a wider exact section range over many",
+            "tiny adjacent ranges.",
             "",
             "## Source bundle",
+            f"- root: {bundle.root}",
             f"- source_id: {bundle.source_id}",
             f"- snapshot: {bundle.snapshot}",
             "",
@@ -545,12 +589,89 @@ def _snippets_from_gatherer_plan(
     by_path = {file.path: file for file in bundle.files}
     requests = plan.get("requests")
     if not isinstance(requests, list):
-        raise ValueError("gatherer JSON must contain a requests list")
+        requests = []
     selected: list[SourceSnippet] = []
     warnings: list[str] = []
     seen: set[tuple[str, int, int]] = set()
     used = 0
     fallback_tokens = _tokens(question)
+
+    def add_snippet(snippet: SourceSnippet) -> bool:
+        nonlocal used
+        for existing_index, existing in enumerate(selected):
+            if not (
+                existing.path == snippet.path
+                and existing.line_start <= snippet.line_end
+                and snippet.line_start <= existing.line_end
+            ):
+                continue
+            new_start = min(existing.line_start, snippet.line_start)
+            new_end = max(existing.line_end, snippet.line_end)
+            if new_start == existing.line_start and new_end == existing.line_end:
+                return True
+            merged_snippet = _snippet_range(
+                by_path[snippet.path],
+                line_start=new_start,
+                line_end=new_end,
+                score=max(existing.score, snippet.score),
+            )
+            additional_cost = len(merged_snippet.text) - len(existing.text)
+            if selected and used + additional_cost > max_context_chars:
+                warnings.append("Gatherer-selected context exceeded max_context_chars; later requests were skipped.")
+                return False
+            selected[existing_index] = merged_snippet
+            used += max(0, additional_cost)
+            return True
+        key = (snippet.path, snippet.line_start, snippet.line_end)
+        if key in seen:
+            return True
+        cost = len(snippet.text) + len(snippet.path) + 80
+        if selected and used + cost > max_context_chars:
+            warnings.append("Gatherer-selected context exceeded max_context_chars; later requests were skipped.")
+            return False
+        selected.append(snippet)
+        seen.add(key)
+        used += cost
+        return True
+
+    passages = plan.get("passages")
+    if isinstance(passages, list):
+        for item in passages:
+            if not isinstance(item, dict):
+                warnings.append("Ignored non-object gatherer passage.")
+                continue
+            path = item.get("path")
+            line_start = item.get("line_start")
+            line_end = item.get("line_end")
+            if not isinstance(path, str) or path not in by_path:
+                warnings.append(f"Ignored gatherer passage for unavailable path {path!r}.")
+                continue
+            if not isinstance(line_start, int) or not isinstance(line_end, int):
+                warnings.append(f"Ignored gatherer passage for {path!r}: line_start and line_end must be integers.")
+                continue
+            if line_start < 1 or line_end < line_start:
+                warnings.append(f"Ignored gatherer passage for {path!r}: invalid line range {line_start}-{line_end}.")
+                continue
+            file = by_path[path]
+            if line_start > file.line_count:
+                warnings.append(f"Ignored gatherer passage for {path!r}: line_start is past end of file.")
+                continue
+            snippet = _snippet_range(
+                file,
+                line_start=line_start,
+                line_end=min(line_end, file.line_count),
+                score=_score_file(file, fallback_tokens),
+            )
+            if not add_snippet(snippet):
+                return selected, warnings
+            if len(selected) >= max_files:
+                return selected, warnings
+        if selected:
+            return selected, warnings
+
+    if not requests:
+        raise ValueError("gatherer JSON must contain a passages or requests list")
+
     for item in requests:
         if not isinstance(item, dict):
             warnings.append("Ignored non-object gatherer request.")
@@ -565,24 +686,9 @@ def _snippets_from_gatherer_plan(
             queries = [question]
         for query in queries:
             tokens = _tokens(query) or fallback_tokens
-            snippet = _snippet_for(by_path[path], tokens)
-            if any(
-                existing.path == snippet.path
-                and existing.line_start <= snippet.line_end
-                and snippet.line_start <= existing.line_end
-                for existing in selected
-            ):
-                continue
-            key = (snippet.path, snippet.line_start, snippet.line_end)
-            if key in seen:
-                continue
-            cost = len(snippet.text) + len(snippet.path) + 80
-            if selected and used + cost > max_context_chars:
-                warnings.append("Gatherer-selected context exceeded max_context_chars; later requests were skipped.")
+            snippet = _snippet_for(by_path[path], tokens, query=query)
+            if not add_snippet(snippet):
                 return selected, warnings
-            selected.append(snippet)
-            seen.add(key)
-            used += cost
             if len(selected) >= max_files:
                 return selected, warnings
     return selected, warnings
@@ -709,7 +815,8 @@ def normalize_answer_citations(answer: str, snippets: list[SourceSnippet]) -> tu
     The model only receives snippets, not full files. Letting it cite narrower
     line ranges invites plausible-but-shaky citations, so answers may only cite
     exact snippet ranges. Citations inside a snippet are widened to that snippet
-    range and rendered as Cosheaf Markdown path refs (`path.md#L10-40`);
+    range and rendered as clickable Cosheaf Markdown links
+    (`[path.md#L10-40](path.md#L10-40)`);
     citations outside gathered context are reported as invalid.
     """
     pattern = _citation_pattern(snippets)
@@ -738,14 +845,17 @@ def normalize_answer_citations(answer: str, snippets: list[SourceSnippet]) -> tu
             if snippet.line_start == snippet.line_end
             else f"L{snippet.line_start}-{snippet.line_end}"
         )
-        normalized = f"{path}#{normalized_range}"
+        normalized_ref = f"{path}#{normalized_range}"
+        normalized = f"[{normalized_ref}]({normalized_ref})"
         if normalized != match.group(0):
             warnings.append(f"Normalized citation {match.group(0)!r} to {normalized!r}.")
         return normalized
 
     normalized_answer = pattern.sub(replace, answer)
     for path in sorted({snippet.path for snippet in snippets}, key=len, reverse=True):
-        code_ref_pattern = re.compile(rf"`(?P<ref>{re.escape(path)}#L\d+(?:-\d+)?)`")
+        code_ref_pattern = re.compile(
+            rf"`(?P<ref>(?:\[{re.escape(path)}#L\d+(?:-\d+)?\]\({re.escape(path)}#L\d+(?:-\d+)?\)|{re.escape(path)}#L\d+(?:-\d+)?))`",
+        )
 
         def unwrap_code_ref(match: re.Match[str]) -> str:
             warnings.append(f"Unwrapped code-formatted source ref {match.group(0)!r}.")
@@ -794,10 +904,12 @@ def build_reasoner_prompt(
             "## Required answer behavior",
             "- Write Markdown suitable for a Cosheaf issue comment.",
             "- Use short headings and bullet lists when they improve scanability.",
-            "- Use TeX math syntax (`$...$` or `$$...$$`) for formulas.",
-            "- Cite repo-specific facts only with exact gathered snippet ranges as bare Cosheaf file refs, e.g. `path.md#L10-40`.",
+            "- Use TeX math syntax (`$...$` or `$$...$$`) for formulas, bounds, inequalities, and named constants; do not flatten mathematical status into plain prose.",
+            "- Prefer Cosheaf semantic references such as `[@thm:main]`, `[@eq:bound]`, or narrative `@sec:status` when the source defines stable ids for the relevant theorem, equation, heading, example, or status block.",
+            "- Use exact gathered source-range links only as fallback evidence when no stable semantic id exists, e.g. `[model-and-bound-ledger.md#L56-80](model-and-bound-ledger.md#L56-80)`.",
+            "- Put either a semantic `[@id]` reference or a fallback source-range link in every table row or bullet that states a repo-specific bound, witness, obstruction, or next-step status.",
             "- Do not wrap source refs in backticks and do not use `path.md:10-40` in the final answer.",
-            "- Do not invent narrower line citations; if the snippet header is `a.md:10-40`, cite `a.md#L10-40`.",
+            "- Do not invent narrower line citations; if the snippet header is `a.md:10-40`, cite `[a.md#L10-40](a.md#L10-40)`.",
             "- Standard mathematical facts do not need citations.",
             "- If support is missing, say what is missing.",
             "- Do not write or propose direct repo edits.",
@@ -828,6 +940,10 @@ def build_verifier_prompt(
             "headers after converting `path.md#Lx-y` references back to line ranges.",
             "Reject final answers that are not Markdown suitable for a Cosheaf issue",
             "comment or that use `path.md:x-y` instead of `path.md#Lx-y` source refs.",
+            "Reject broad status answers that omit TeX notation for mathematical",
+            "bounds, or that state repo-specific bounds/witnesses/next steps without",
+            "a Cosheaf semantic `[@id]`/`@id` reference or a clickable Markdown link",
+            "to an exact source range.",
             "",
             "Write findings, then output exactly one line:",
             "",

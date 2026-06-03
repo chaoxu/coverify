@@ -11,6 +11,10 @@ Prepare one clean reasoning task for an oracle or focused proof attempt. The
 runner owns context and artifact handling; the oracle owns mathematical
 reasoning when available.
 
+Preparation can be agentic over the allowed context. Do not add harness code to
+choose proof routes or relevant lemmas unless the behavior is a stable
+mechanical check.
+
 ## Workflow
 
 1. Use `$coverify-context-builder` to gather the exact problem, accepted

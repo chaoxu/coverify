@@ -27,6 +27,14 @@ documents.
    create a durable context file unless the summary itself should become wiki
    knowledge or coordination state.
 
+## Agentic Boundary
+
+When context selection needs judgment, let the agent inspect the allowed
+Cosheaf/source-bundle material and decide what matters. Do not propose new
+deterministic planner code unless the rule is stable and mechanical. Prefer:
+agentic preparation -> mechanical validation of paths, ranges, citations, and
+schemas -> oracle or reviewer.
+
 ## Lightweight Shape
 
 Use only the headings that help:

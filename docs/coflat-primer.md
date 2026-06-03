@@ -16,6 +16,11 @@ The full format lives in Cosheaf/Coflat `FORMAT.md`. A context-building helper
 or workflow skill may include parts of this primer when it asks a model backend
 to write or review Coflat Markdown.
 
+This primer is formatting context, not a planning recipe. If a run needs to
+decide which Coflat pages or blocks matter, use agentic preparation over the
+allowed material and then mechanically validate paths, block ids, citations,
+and output shape.
+
 ## Coflat Formatting Capsule
 
 Use this short guideline in knowledge-base writer calls, cleanup passes, or

@@ -69,6 +69,12 @@ Context building is an orchestrator responsibility. A context pack is a
 temporary working excerpt for one run, oracle call, review, or edit; it is not
 the source of truth and should not become a second knowledge base.
 
+When context building requires judgment, keep it agentic. The runner or oracle
+should inspect the allowed material and decide what matters; the harness should
+validate the prepared output mechanically. Do not add deterministic planning
+code just to approximate what an agent can read directly from an allowed source
+bundle.
+
 ### Negative Knowledge Counts
 
 A failed route is knowledge when it changes what future work should do. A

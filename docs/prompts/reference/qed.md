@@ -20,6 +20,9 @@ QED stages should map into our three canonical prompt families:
 | Regulator | Runner policy after review feedback |
 | Proof-effort summary | Durable progress/report artifact |
 
+Use these mappings as agent/oracle prompt guidance first. Do not add a Python
+stage for each QED stage unless the stage has become a stable mechanical check.
+
 ## Prompt Inventory
 
 Upstream prompt links:
@@ -119,3 +122,5 @@ long run. The summary should be reviewable and searchable.
 - Do not create a coverify-owned attempt tree separate from Cosheaf.
 - Do not use QED's regulator as a hidden workflow authority. Runner decisions
   should leave Cosheaf artifacts.
+- Do not turn QED's planner roles into deterministic Coverify planner code when
+  an agent can inspect the allowed context and propose the decomposition.

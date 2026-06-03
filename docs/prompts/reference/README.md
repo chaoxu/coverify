@@ -14,6 +14,10 @@ External systems often split those activities into many named agents or
 skills. That can be useful as a checklist, but it should not force us into a
 larger workflow model.
 
+When reusing a reference pattern, preserve the boundary: adaptive judgment goes
+into agentic preparation or oracle prompts; Python only gets stable mechanical
+validation.
+
 ## Sources
 
 - [QED](qed.md): fixed multi-stage proof pipeline with literature survey,

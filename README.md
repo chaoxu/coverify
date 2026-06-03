@@ -30,9 +30,14 @@ The design target:
 - mathematical reasoning and correctness decisions should be delegated to
   oracle calls whenever possible; Codex-as-runner mainly prepares context,
   operates tools, records artifacts, and maps oracle outputs to Cosheaf state
+- when a step needs judgment, prefer agentic preparation over another
+  deterministic Python planning layer; Python should expose tools, validate
+  paths/ranges/citations, record audits, and gate outputs with verification
 
 ## Documents
 
+- [Agent Guidance](AGENTS.md): repo-local instruction to prefer agentic
+  preparation with mechanical validation instead of adding planner code.
 - [Skills](skills): durable Coverify operational skills. These are the
   orchestration entry points for context building, exploration planning, proof
   attempts, KB writing, PR review, KB management, and the lightweight run loop.
@@ -59,6 +64,12 @@ The design target:
 - [Coflat Primer](docs/coflat-primer.md): markdown/document-format context.
 - [References And Future Notes](docs/references.md): paper-inspired design
   lessons and future learning notes.
+- [Research-Agent Paper Deep Dives](docs/reference-deep-dives.md): detailed
+  paper-by-paper notes on mathematical agent systems and their evidence.
+- [LLM Math Failure Modes](docs/llm-math-failure-modes.md): consolidated
+  prover, verifier, and harness failure modes.
+- [Prover-Side Failure Modes](docs/prover-failure-summary.md): shareable
+  summary of prover-side failures and prompt/protocol mitigations.
 
 ## Current State
 
@@ -124,10 +135,10 @@ Common environment variables:
 
 ```bash
 COSHEAF_API_URL=http://localhost:3030/api/v1
-COSHEAF_TOKEN=...
-COSHEAF_USERNAME=...
-COSHEAF_PASSWORD=...
-COSHEAF_REVIEW_TOKEN=...
+COSHEAF_TOKEN=<token>
+COSHEAF_USERNAME=<username>
+COSHEAF_PASSWORD=<password>
+COSHEAF_REVIEW_TOKEN=<review-token>
 COVERIFY_BACKEND=codex
 COVERIFY_CODEX_MODEL=gpt-5.5
 COVERIFY_CODEX_REASONING_EFFORT=xhigh
@@ -171,6 +182,12 @@ Smoke eval:
 PYTHONPATH=src python3 -m coverify run-eval \
   --backend fixture \
   --cases evals/smoke.jsonl
+```
+
+Local test suite:
+
+```bash
+PYTHONPATH=src python3 -m unittest discover -s tests
 ```
 
 QED backend adapter:

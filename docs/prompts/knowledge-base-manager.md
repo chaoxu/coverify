@@ -7,4 +7,7 @@ Use that skill for topic-shaped KB cleanup, consolidation, deleting bulky
 generated Markdown, merging duplicate notes, repairing links, and making future
 runs easier.
 
+Cleanup planning is agentic; code should only enforce stable mechanics such as
+link checks, path validation, or repeatable generated-file cleanup.
+
 This file is a compatibility shim for older docs and PRs.

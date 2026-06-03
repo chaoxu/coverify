@@ -11,6 +11,10 @@ Gate correctness-relevant knowledge before merge. Review is about whether the
 submitted PR is safe to accept, not about improving the proof or exploring new
 routes.
 
+Review judgment belongs to the reviewer/oracle. Use code for mechanical checks
+such as path existence, cited ranges, schema shape, and reproducible
+computations; do not turn correctness review into deterministic planner code.
+
 ## Workflow
 
 1. Build review context: original problem or task, PR diff, full submitted

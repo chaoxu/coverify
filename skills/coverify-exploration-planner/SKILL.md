@@ -11,6 +11,12 @@ Turn the current workspace state into a small set of issue-ready approaches.
 Planning is not proof. It should identify routes worth trying and routes to
 avoid.
 
+Planning should remain agentic. Do not turn route choice, context selection, or
+"what evidence matters" into new deterministic harness code unless the behavior
+is already stable and mechanical. The harness may validate paths, line ranges,
+schemas, citations, and verifier verdicts; the planner should make the adaptive
+choice.
+
 ## Workflow
 
 1. Use `$coverify-context-builder` first unless a fresh context summary is

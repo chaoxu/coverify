@@ -26,6 +26,9 @@ The core hypotheses:
 - A reviewed knowledge base reduces repeated failed attempts.
 - PR review gates reduce false-positive proof acceptance.
 - Context packs built from accepted artifacts outperform private run history.
+- Agentic context preparation over allowed source bundles should outperform
+  hard-coded gather/planning heuristics, while mechanical validation should
+  keep paths, ranges, citations, and verifier gates trustworthy.
 - A runner can improve over multiple bounded sessions because useful output is
   merged back into the workspace.
 - External systems such as QED can be used as strategies without becoming the
@@ -51,6 +54,10 @@ for all baselines.
 QED should be treated as a strategy provider, not as a competitor that must be
 kept outside the system. If QED produces a useful proof plan, obstruction, or
 partial proof, the right Coverify behavior is to preserve and review it.
+
+When an experiment exposes missing judgment, first try an agentic preparation
+or oracle call that can inspect the allowed materials. Add deterministic
+harness code only when the behavior is stable, replayable, and mechanical.
 
 ## Task Sets
 
@@ -130,6 +137,9 @@ For fair comparison:
 - Route mathematical attempts and correctness decisions through oracle calls
   whenever possible; runner-only reasoning should be measured as a degraded
   fallback, not the intended system behavior.
+- Keep adaptive context selection agentic. The harness may validate prepared
+  paths, line ranges, citations, schemas, audit records, and verifier verdicts,
+  but it should not accumulate planner code to guess what an agent can read.
 - Store raw outputs only as audit/provenance evidence, not as support for
   mathematical claims.
 - Require PR approval before counting a proof as accepted.

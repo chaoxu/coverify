@@ -10,6 +10,7 @@ from pathlib import Path
 
 from coverify.engine.backend import run_script_backend
 from coverify.integration.repo_oracle import (
+    build_gatherer_prompt,
     chat_issue_body,
     gather_context,
     load_source_bundle,
@@ -67,10 +68,12 @@ GATHERER_SCRIPT = """#!/usr/bin/env python3
 import json
 
 print(json.dumps({
-    "requests": [
+    "passages": [
         {
             "path": "poa-bound-summary.md",
-            "queries": ["Current Working Bound Table", "Active Fronts"],
+            "line_start": 73,
+            "line_end": 84,
+            "purpose": "canonical status table and active fronts",
         }
     ],
     "notes": ["select canonical status ledger"]
@@ -200,6 +203,159 @@ class RepoOracleTests(unittest.TestCase):
         self.assertIn("Current Working Bound Table", combined)
         self.assertIn("Active Fronts", combined)
         self.assertIn("at least $5/3$", combined)
+
+    def test_gatherer_prompt_invites_agentic_source_bundle_inspection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "ledger.md").write_text("# Ledger\n\n## Current Working Bound Table\n", encoding="utf-8")
+            bundle = load_source_bundle(root, source_id="seeded:prompt")
+
+            prompt = build_gatherer_prompt(
+                question="What is the status?",
+                thread_context="",
+                bundle=bundle,
+            )
+
+        self.assertIn(f"- root: {bundle.root}", prompt)
+        self.assertIn("inspect files inside that directory directly", prompt)
+        self.assertIn('"passages"', prompt)
+        self.assertIn('"line_start"', prompt)
+        self.assertNotIn('"requests"', prompt)
+
+    def test_gatherer_passage_ranges_are_extracted_exactly(self) -> None:
+        script = """#!/usr/bin/env python3
+import json
+
+print(json.dumps({
+    "passages": [
+        {
+            "path": "ledger.md",
+            "line_start": 4,
+            "line_end": 6,
+            "purpose": "selected exact range",
+        }
+    ]
+}))
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "source"
+            root.mkdir()
+            (root / "ledger.md").write_text(
+                "\n".join(["line 1", "line 2", "line 3", "target a", "target b", "target c", "line 7"]),
+                encoding="utf-8",
+            )
+            gatherer_script = write_script(Path(tmpdir) / "gather.py", script)
+            bundle = load_source_bundle(root, source_id="seeded:passages")
+
+            gathered = gather_context(
+                bundle,
+                question="What is the target?",
+                gatherer_backend=lambda prompt: run_script_backend(
+                    prompt,
+                    command=f"{sys.executable} {gatherer_script}",
+                    artifact_root=Path(tmpdir) / "runs",
+                ),
+            )
+
+        self.assertEqual(len(gathered.snippets), 1)
+        self.assertEqual(gathered.snippets[0].line_start, 4)
+        self.assertEqual(gathered.snippets[0].line_end, 6)
+        self.assertEqual(gathered.snippets[0].text, "target a\ntarget b\ntarget c")
+        self.assertEqual(gathered.gatherer_plan["passages"][0]["purpose"], "selected exact range")
+
+    def test_llm_gatherer_exact_heading_query_beats_generic_frontmatter(self) -> None:
+        script = """#!/usr/bin/env python3
+import json
+
+print(json.dumps({
+    "requests": [
+        {
+            "path": "undirected-sp-underlay.md",
+            "queries": ["Canonical 15/7 Diamond Lower Bound"],
+        }
+    ]
+}))
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "source"
+            root.mkdir()
+            (root / "undirected-sp-underlay.md").write_text(
+                "\n".join(
+                    [
+                        "# Undirected SP-Underlay PoA Notes",
+                        "",
+                        "This overview mentions lower bounds and underlay models.",
+                        "",
+                        *[f"Intro lower-bound filler {i}" for i in range(60)],
+                        "## Canonical 15/7 Diamond Lower Bound",
+                        "",
+                        "The diamond construction is the required arbitrary-terminal source.",
+                    ],
+                ),
+                encoding="utf-8",
+            )
+            gatherer_script = write_script(Path(tmpdir) / "gather.py", script)
+            bundle = load_source_bundle(root, source_id="seeded:diamond")
+
+            gathered = gather_context(
+                bundle,
+                question="Explain the 15/7 diamond lower bound.",
+                gatherer_backend=lambda prompt: run_script_backend(
+                    prompt,
+                    command=f"{sys.executable} {gatherer_script}",
+                    artifact_root=Path(tmpdir) / "runs",
+                ),
+            )
+
+        self.assertEqual(len(gathered.snippets), 1)
+        self.assertIn("Canonical 15/7 Diamond Lower Bound", gathered.snippets[0].text)
+        self.assertIn("diamond construction is the required arbitrary-terminal source", gathered.snippets[0].text)
+
+    def test_llm_gatherer_overlapping_section_queries_are_merged(self) -> None:
+        script = """#!/usr/bin/env python3
+import json
+
+print(json.dumps({
+    "requests": [
+        {
+            "path": "directed-ttsp.md",
+            "queries": ["Symmetric Directed TTSP Bounds", "Internal-Terminal 4/3 Example"],
+        }
+    ]
+}))
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "source"
+            root.mkdir()
+            (root / "directed-ttsp.md").write_text(
+                "\n".join(
+                    [
+                        "# Directed TTSP",
+                        "## Symmetric Directed TTSP Bounds",
+                        "The accepted symmetric lower bound is 27/19.",
+                        *[f"Filler line {i}" for i in range(50)],
+                        "## Internal-Terminal 4/3 Example",
+                        "This example is not the best lower bound for the broad arbitrary-terminal directed TTSP row.",
+                    ],
+                ),
+                encoding="utf-8",
+            )
+            gatherer_script = write_script(Path(tmpdir) / "gather.py", script)
+            bundle = load_source_bundle(root, source_id="seeded:overlap")
+
+            gathered = gather_context(
+                bundle,
+                question="What is the directed arbitrary-terminal status?",
+                gatherer_backend=lambda prompt: run_script_backend(
+                    prompt,
+                    command=f"{sys.executable} {gatherer_script}",
+                    artifact_root=Path(tmpdir) / "runs",
+                ),
+            )
+
+        self.assertEqual(len(gathered.snippets), 1)
+        self.assertIn("The accepted symmetric lower bound is 27/19.", gathered.snippets[0].text)
+        self.assertIn("not the best lower bound for the broad arbitrary-terminal", gathered.snippets[0].text)
 
     def test_proof_requests_are_strong_even_when_wording_is_simple(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

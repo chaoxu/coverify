@@ -16,6 +16,11 @@ Promote a candidate only when it passes all three checks:
 If a problem is solved cleanly in one shot, keep it as smoke or calibration. If
 the reviewer cannot give actionable feedback, reject it for now.
 
+Eval design should test agentic preparation, not reward extra harness code.
+When a candidate needs judgment about relevant context, let the preparer or
+oracle inspect the allowed material and return a bounded artifact. The harness
+should validate paths, ranges, citations, schemas, and verdicts mechanically.
+
 ## Coflat Shape
 
 Each promoted eval should create:
@@ -35,6 +40,11 @@ QED can be used as a backend strategy before a candidate is promoted to a full
 Cosheaf eval. The Coverify operator should still choose when to call QED,
 prepare the problem/context as LaTeX, and interpret QED's output before writing
 anything durable.
+
+Do not add a deterministic planner just to prepare QED inputs unless the
+preparation rule is stable and mechanical. Prefer an agentic preparation step
+that reads the allowed problem material, then validate the generated files and
+citations before invoking the backend.
 
 Use `scripts/qed_backend.py` through `--backend script`, passing the adapter as
 an absolute path because script backends run from their audit artifact

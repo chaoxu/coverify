@@ -10,6 +10,11 @@ description: Run the lightweight Coverify orchestration loop end to end. Use whe
 Keep the system simple: the orchestrator chooses the next useful action, skills
 nudge that choice, and review or verification checks the result.
 
+Prefer agentic preparation over more workflow code. If the next step requires
+judgment, ask an agent or oracle to inspect the allowed context and produce a
+bounded artifact; use Python only for stable tool calls, audit recording, and
+mechanical validation.
+
 ## Loop
 
 1. **Refresh state**: read the issue/task, topic pages, open PRs, and relevant

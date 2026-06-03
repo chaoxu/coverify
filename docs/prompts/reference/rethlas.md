@@ -9,6 +9,25 @@ generation agent and a verification agent. The generation agent writes and
 repairs proof blueprints. The verification agent checks those blueprints and
 returns structured feedback.
 
+The 2026 Rethlas/Archon paper should be read as a two-level system, not just a
+prompt collection:
+
+- **Rethlas** is the informal discovery loop. It uses a generation agent,
+  model-based verification agent, theorem retrieval, web/reference lookup,
+  working memory, and tactic prompts such as examples, counterexamples,
+  decomposition, direct proving, recursive proving, and failure synthesis.
+- **Archon** is the formalization loop. It takes informal proof material and
+  builds a Lean 4 project, using a Plan Agent plus one or more Lean Agents,
+  LeanSearch, Lean diagnostics, informal-agent calls when stuck, and final
+  checks for compilation with no `sorry`, no added axioms, and no escape
+  hatches.
+- The Rethlas verifier is not the final correctness guarantee. It is a
+  model-based reviewer used to improve candidate informal proofs. The durable
+  guarantee in the paper comes from Archon/Lean.
+- The reported success therefore should not be interpreted as evidence that a
+  large prompt taxonomy alone is enough. The stronger lesson is the separation
+  between proposer, reviewer/planner, and a hard acceptance gate.
+
 No license file was visible at the repository root when this digest was
 created, so this file records links and design notes rather than copying full
 upstream prompts.
@@ -28,6 +47,9 @@ Important patterns:
 - Treat search as support for reasoning, not a substitute for reasoning.
 - Use verifier feedback to repair, backtrack, or change strategy.
 - Stop only after a verified proof blueprint exists.
+
+Coverify should reuse these as agentic tactic prompts and review checks, not as
+a mandate to implement a local deterministic control loop.
 
 ## Skill Inventory
 
@@ -103,3 +125,9 @@ repairs the branch or records the obstruction in Cosheaf.
 - Do not create a separate local memory hierarchy as durable project state.
 - Do not require recursive proving or parallel subagents in v1.
 - Do not treat search results as accepted knowledge before review.
+- Do not implement Rethlas-style tactic selection as Python planner code unless
+  a narrow tactic has become a stable mechanical operation.
+- Do not treat Rethlas's model-based verification loop as equivalent to a
+  formal or trusted verifier. If Coverify replaces Lean with a natural
+  verifier, that verifier needs an explicit pass/fail contract and calibration
+  evals before it can promote claims to accepted knowledge.

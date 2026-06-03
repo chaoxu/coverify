@@ -7,7 +7,8 @@
 > surface. The goal is not to rebuild Codex or Claude Code.
 > **Repos:** `coverify` owns the harness and oracle/verifier orchestration.
 > `cosheaf` owns repos, branches, issues, PRs, rendered documents, and the chat
-> UI. **Prod host:** `jupiter`; `saturn` is dev only.
+> UI. Worker placement is deployment-specific and intentionally outside the
+> public harness design.
 
 ## 1. Product goal
 
@@ -42,7 +43,7 @@ plus allowed files into a small sequence of role calls:
 
 ```text
 user goal + source bundle + thread context
-  -> gather relevant context
+  -> agentically prepare relevant context
   -> frame the mathematical question
   -> choose a reasoning role
   -> verify the candidate answer
@@ -149,11 +150,15 @@ ChatGPT project, a one-shot model API, a local script, or a fixture.
 
 ### Gatherer
 
-Finds the relevant material in the source bundle and frames the task.
+Finds the relevant material in the source bundle and frames the task. For
+Codex-backed runs, this should be an agentic `prepare_context` step, not a large
+deterministic planner in the harness. The preparer gets the allowed
+source-bundle root, inspects files directly, and returns exact passages plus any
+missing-context warnings.
 
 For v1, it should output:
 
-- Relevant excerpts or summaries with file paths.
+- Relevant excerpts or exact file/line passages.
 - Missing-context warnings.
 - Conflicts found in the source files.
 - A short framed question for the reasoner.
@@ -162,6 +167,10 @@ For v1, it should output:
 The gatherer can be an agent, but it must be restricted to the source bundle. It
 must not have network, Forgejo/Cosheaf API tokens, or filesystem access outside
 the bundle. This should be enforced by the runner, not only by prompt text.
+
+Do not add more code just to guess what an agent could read directly. The
+harness should validate prepared paths, line ranges, schemas, and citations
+mechanically, then pass the prepared context to the answerer and verifier.
 
 ### Reasoner
 
@@ -282,7 +291,7 @@ use.
 - Backend abstraction: `coverify/src/coverify/engine/backend.py`.
 - CLI/profile wiring: `coverify/src/coverify/cli.py`.
 - Strong backend script path: `coverify/scripts/chatgpt_oracle_backend.py`.
-- Prod host for worker/oracles: `jupiter`.
+- Production worker/oracle placement: deployment-specific.
 
 ## 12. Operator and Codex usage contract
 
@@ -345,7 +354,7 @@ The JSON result should be stable enough for other harnesses:
   "branch": "main",
   "snapshot": "abc123",
   "issue_number": 42,
-  "comment_url": "https://cosheaf.lab/owner/repo/chat/42#comment-99",
+  "comment_url": "https://cosheaf.example/owner/repo/chat/42#comment-99",
   "sources": [
     {
       "path": "notes/foo.md",
