@@ -148,8 +148,29 @@ class RepoOracleTests(unittest.TestCase):
 
         self.assertEqual(prepared.step, "answer")
         self.assertIn("# Coverify Repo-Snapshot Exploratory Response", prepared.prompt)
+        self.assertIn("Do not hard-wrap normal prose paragraphs", prepared.prompt)
         self.assertTrue(prepared.selected_snippets_known)
         self.assertEqual([source["path"] for source in prepared.sources], ["reserve.md"])
+
+    def test_verifier_prompt_rejects_hard_wrapped_prose(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "reserve.md").write_text("Reserve credits cancel overlap debt.", encoding="utf-8")
+            bundle = load_source_bundle(root)
+            gathered = gather_context(
+                bundle,
+                question="Why does reserve overlap debt cancel?",
+            )
+
+        prompt = build_verifier_prompt(
+            question="Why does reserve overlap debt cancel?",
+            thread_context="",
+            bundle=bundle,
+            gathered=gathered,
+            candidate="Reserve credits cancel overlap debt.",
+        )
+
+        self.assertIn("hard-wrap normal prose paragraphs", prompt)
 
     def test_gather_context_uses_best_window_not_first_generic_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

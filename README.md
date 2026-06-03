@@ -234,6 +234,21 @@ PYTHONPATH=src python3 -m coverify --help
 - Cosheaf primitives: `tree`, `read-file`, `write-file`, `delete-file`,
   `create-branch`, issue commands, PR commands, reviews, and merge.
 
+## Lab Jupiter Sync
+
+Project workdirs on `jupiter` usually point their generated `bin/coverify`
+wrapper at `/home/chaoxu/playground/coverify`. After changing this checkout on
+another fleet host, sync and verify that lab copy with:
+
+```bash
+scripts/jupiter-sync.sh release
+```
+
+The helper uses the canonical host name `jupiter`, preserves runtime-only
+directories such as `.coverify` and `.venv`, and verifies the remote checkout
+with the normal Coverify checks. Use `sync` to copy without verification or
+`verify` to check the current `jupiter` copy.
+
 ## Examples
 
 Direct oracle call:

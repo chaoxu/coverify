@@ -226,6 +226,11 @@ Each backend call records:
 - prompt and answer hashes
 - source bundle metadata when relevant
 
+Generated Markdown should not hard-wrap normal prose paragraphs at arbitrary
+source-column widths. Prompts should ask writers to keep each ordinary prose
+paragraph on one logical source line, while preserving intentional line breaks
+for headings, lists, tables, TeX blocks, and fenced code.
+
 The `verifying` backend composes generator, verifier, and adjudicator calls. It
 is useful for smoke tests and bounded self-checking, but it is not a substitute
 for source-backed proof, formal verification, or human review on hard claims.
@@ -334,6 +339,9 @@ Changing Coverify during a project is allowed, but it is harness work:
   Coverify in this repo, run the Coverify checks, then resume the project.
 - If only generated project wrappers are stale, rerun `scaffold-workdir` with
   `--refresh-tools` so project docs and local configs are not overwritten.
+- If the Coverify checkout itself is stale on `jupiter`, sync and verify it
+  with `scripts/jupiter-sync.sh release` before running `jupiter` project
+  workdirs that depend on the new harness behavior.
 - If the blocker is a domain-specific checker or search tool, add that code to
   the project workspace or a companion project repo and reference it from the
   issue.
