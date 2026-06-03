@@ -213,12 +213,19 @@ PYTHONPATH=src python3 -m coverify --help
 - `ask-oracle`: send one prompt to a configured backend and record an audit
   bundle. Use it for either contract when the prompt already contains the
   needed context and rules.
+- `repo-oracle prepare-llm`: prepare the gatherer, answer, or verifying
+  generator input against a local source bundle without calling a backend.
 - `repo-oracle ask`: produce a source-grounded exploratory response against a
   local source bundle.
 - `repo-oracle gather`: inspect which source passages the gatherer selects.
 - `repo-oracle eval-gather`: run JSONL checks for context-preparation quality.
+- `chat prepare-llm`: authenticate, read Cosheaf, export the branch source
+  bundle, and show the LLM input that `chat ask` would need next without
+  creating issues, comments, or backend calls.
 - `chat ask`: create or append to a branch-scoped chat issue and respond under
   the exploratory-response contract.
+- `verifying prepare-llm`: prepare the generator, verifier, or adjudicator
+  input from a verifying prompt and optional resume artifact.
 - `chat-reply`: read a Cosheaf issue thread, run the oracle, and post a reply.
 - `run-eval`: run JSONL eval cases against a fixture, script, or enabled Codex
   backend.
@@ -262,6 +269,21 @@ Evaluate gather quality:
 PYTHONPATH=src python3 -m coverify repo-oracle eval-gather \
   --source-bundle /path/to/source-bundle \
   --cases evals/gather/sample-math-workspace.jsonl
+```
+
+Inspect the exact LLM input before running:
+
+```bash
+PYTHONPATH=src python3 -m coverify chat prepare-llm \
+  --workspace my-workspace \
+  --issue 23 \
+  --backend verifying \
+  --message "What should the next proof target be?" \
+  --json
+
+PYTHONPATH=src python3 -m coverify verifying prepare-llm \
+  --resume .coverify/runs/20260603T120000Z-verifying-abc123 \
+  --json
 ```
 
 Reply to a Cosheaf issue chat:

@@ -200,6 +200,32 @@ class Step:
     instructions: str | None = None
 
 
+@dataclass(frozen=True)
+class VerifyingLLMInput:
+    """A verifying-oracle prompt prepared without calling an inner backend."""
+
+    step: str
+    prompt: str
+    round: int | None = None
+    verifier_index: int | None = None
+    resume_dir: str | None = None
+    complete: bool = False
+
+    def to_json(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "step": self.step,
+            "prompt": self.prompt,
+            "complete": self.complete,
+        }
+        if self.round is not None:
+            out["round"] = self.round
+        if self.verifier_index is not None:
+            out["verifier_index"] = self.verifier_index
+        if self.resume_dir is not None:
+            out["resume_dir"] = self.resume_dir
+        return out
+
+
 class _ResumeCache:
     """Serves journaled sub-call answers so a resumed run skips completed steps."""
 
@@ -237,6 +263,133 @@ def _journal_key(entry: dict[str, Any]) -> tuple:
     if role == "generator":
         return (role, entry["round"])
     return (role,)
+
+
+def _load_journal_entries(resume_dir: Path | None) -> dict[tuple, dict[str, Any]]:
+    if resume_dir is None:
+        return {}
+    journal_path = resume_dir / "journal.json"
+    if not journal_path.exists():
+        return {}
+    entries = json.loads(journal_path.read_text(encoding="utf-8"))
+    if not isinstance(entries, list):
+        raise ValueError(f"verifying journal must be a list: {journal_path}")
+    out: dict[tuple, dict[str, Any]] = {}
+    for entry in entries:
+        if isinstance(entry, dict) and "role" in entry:
+            out[_journal_key(entry)] = entry
+    return out
+
+
+def _entry_answer(entry: dict[str, Any] | None) -> str | None:
+    if entry is None or "error" in entry:
+        return None
+    artifact_dir = entry.get("artifact_dir")
+    if not isinstance(artifact_dir, str):
+        return None
+    answer_path = Path(artifact_dir) / "answer.md"
+    if not answer_path.exists():
+        return None
+    return answer_path.read_text(encoding="utf-8")
+
+
+def prepare_verifying_llm_input(
+    original: str,
+    config: "VerifyingConfig",
+    *,
+    resume_dir: Path | None = None,
+    quiet_adjunct: bool = False,
+) -> VerifyingLLMInput:
+    """Build the first unmaterialized inner prompt without invoking a backend.
+
+    This mirrors the generate -> verify -> adjudicate control flow using only
+    journaled answers in ``resume_dir``. Missing or failed journal entries mark
+    the role whose prompt is ready for inspection.
+    """
+    if not original.strip():
+        raise ValueError("verifying oracle prompt is empty")
+    if config.max_rounds < 1:
+        raise ValueError("max_rounds must be at least 1")
+    if resume_dir is not None and not resume_dir.exists():
+        raise ValueError(f"resume dir does not exist: {resume_dir}")
+
+    entries = _load_journal_entries(resume_dir)
+    history: list[str] = []
+    critique = ""
+    verified = False
+
+    for round_index in range(config.max_rounds):
+        prior_answer = history[-1] if history else ""
+        generator_prompt = build_generator_context(
+            original,
+            prior_answer,
+            critique,
+            config.generator.instructions,
+        )
+        generator_answer = _entry_answer(entries.get(("generator", round_index)))
+        if generator_answer is None:
+            return VerifyingLLMInput(
+                step="generator",
+                prompt=generator_prompt,
+                round=round_index,
+                resume_dir=str(resume_dir) if resume_dir is not None else None,
+            )
+        history.append(generator_answer)
+
+        round_failed = False
+        critiques: list[str] = []
+        round_verdicts: list[str] = []
+        for verifier_index, verifier in enumerate(config.verifiers):
+            verifier_prompt = build_verifier_context(
+                original,
+                generator_answer,
+                verifier.instructions,
+            )
+            entry = entries.get(("verifier", round_index, verifier_index))
+            verifier_answer = _entry_answer(entry)
+            if verifier_answer is None:
+                return VerifyingLLMInput(
+                    step="verifier",
+                    prompt=verifier_prompt,
+                    round=round_index,
+                    verifier_index=verifier_index,
+                    resume_dir=str(resume_dir) if resume_dir is not None else None,
+                )
+            raw_verdict = entry.get("verdict") if entry is not None else None
+            verdict = str(raw_verdict) if raw_verdict else ERROR
+            if verdict not in (*VERDICT_VALUES, ERROR):
+                verdict = ERROR
+            round_verdicts.append(verdict)
+            if verdict == Verdict.FAIL.value:
+                round_failed = True
+                critiques.append(verifier_answer)
+
+        if not round_failed:
+            verified = _all_verifiers_passed(round_verdicts)
+            break
+        critique = "\n\n".join(critiques)
+
+    latest = history[-1] if history else "(no answer was produced)"
+    adjudicator_prompt = build_adjudicator_context(
+        original,
+        latest,
+        verified,
+        quiet=config.quiet_adjunct or quiet_adjunct,
+        instructions=config.adjudicator.instructions,
+    )
+    adjudicator_answer = _entry_answer(entries.get(("adjudicator",)))
+    if adjudicator_answer is None:
+        return VerifyingLLMInput(
+            step="adjudicator",
+            prompt=adjudicator_prompt,
+            resume_dir=str(resume_dir) if resume_dir is not None else None,
+        )
+    return VerifyingLLMInput(
+        step="complete",
+        prompt="",
+        resume_dir=str(resume_dir) if resume_dir is not None else None,
+        complete=True,
+    )
 
 
 class StrictVerificationError(RuntimeError):

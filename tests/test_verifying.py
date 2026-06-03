@@ -16,6 +16,7 @@ from coverify.engine.verifying import (
     build_verifier_context,
     builtin_profile,
     parse_verdict,
+    prepare_verifying_llm_input,
     verifying_config_from_dict,
 )
 
@@ -279,6 +280,76 @@ class VerifyingOracleTests(unittest.TestCase):
         # all three steps served from the journal: no new runner was invoked
         self.assertEqual((gen2_state["n"], ver2_state["n"], adj2_state["n"]), (0, 0, 0))
         self.assertEqual(resumed.answer, "final answer")
+
+    def test_prepare_verifying_llm_input_follows_resume_journal(self) -> None:
+        config = verifying_config_from_dict({"max_rounds": 1})
+        resume = self.root / "resume"
+        resume.mkdir()
+        (resume / "prompt.md").write_text("Prove Q.", encoding="utf-8")
+
+        prepared = prepare_verifying_llm_input("Prove Q.", config, resume_dir=resume)
+        self.assertEqual(prepared.step, "generator")
+        self.assertEqual(prepared.round, 0)
+        self.assertEqual(prepared.prompt, "Prove Q.")
+
+        gen_dir = self.root / "gen"
+        gen_dir.mkdir()
+        (gen_dir / "answer.md").write_text("Candidate proof.", encoding="utf-8")
+        (resume / "journal.json").write_text(
+            json.dumps([
+                {"role": "generator", "round": 0, "artifact_dir": str(gen_dir)},
+            ]),
+            encoding="utf-8",
+        )
+        prepared = prepare_verifying_llm_input("Prove Q.", config, resume_dir=resume)
+        self.assertEqual(prepared.step, "verifier")
+        self.assertEqual(prepared.verifier_index, 0)
+        self.assertIn("## Candidate response\nCandidate proof.", prepared.prompt)
+
+        ver_dir = self.root / "ver"
+        ver_dir.mkdir()
+        (ver_dir / "answer.md").write_text("Looks correct.\nVERDICT: PASS", encoding="utf-8")
+        (resume / "journal.json").write_text(
+            json.dumps(
+                [
+                    {"role": "generator", "round": 0, "artifact_dir": str(gen_dir)},
+                    {
+                        "role": "verifier",
+                        "round": 0,
+                        "index": 0,
+                        "artifact_dir": str(ver_dir),
+                        "verdict": "PASS",
+                    },
+                ],
+            ),
+            encoding="utf-8",
+        )
+        prepared = prepare_verifying_llm_input("Prove Q.", config, resume_dir=resume)
+        self.assertEqual(prepared.step, "adjudicator")
+        self.assertIn("passed all reviewer checks", prepared.prompt)
+
+        adj_dir = self.root / "adj"
+        adj_dir.mkdir()
+        (adj_dir / "answer.md").write_text("Final.", encoding="utf-8")
+        (resume / "journal.json").write_text(
+            json.dumps(
+                [
+                    {"role": "generator", "round": 0, "artifact_dir": str(gen_dir)},
+                    {
+                        "role": "verifier",
+                        "round": 0,
+                        "index": 0,
+                        "artifact_dir": str(ver_dir),
+                        "verdict": "PASS",
+                    },
+                    {"role": "adjudicator", "artifact_dir": str(adj_dir)},
+                ],
+            ),
+            encoding="utf-8",
+        )
+        prepared = prepare_verifying_llm_input("Prove Q.", config, resume_dir=resume)
+        self.assertTrue(prepared.complete)
+        self.assertEqual(prepared.step, "complete")
 
 
 class VerifyingConfigTests(unittest.TestCase):

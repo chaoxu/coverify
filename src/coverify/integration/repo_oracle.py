@@ -166,6 +166,37 @@ class RepoOracleResult:
         return out
 
 
+@dataclass(frozen=True)
+class RepoOracleLLMInput:
+    """A repo-oracle prompt prepared without calling a backend."""
+
+    step: str
+    prompt: str
+    source_id: str
+    snapshot: str
+    source_bundle_path: str
+    tier: str
+    sources: list[dict[str, object]]
+    warnings: list[str]
+    selected_snippets_known: bool
+    gatherer_configured: bool
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "step": self.step,
+            "prompt": self.prompt,
+            "source_id": self.source_id,
+            "snapshot": self.snapshot,
+            "source_bundle_path": self.source_bundle_path,
+            "tier": self.tier,
+            "sources": self.sources,
+            "warnings": self.warnings,
+            "selected_snippets_known": self.selected_snippets_known,
+            "gatherer_configured": self.gatherer_configured,
+            "prompt_sha256": sha256_text(self.prompt),
+        }
+
+
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -1012,6 +1043,80 @@ def build_verifier_prompt(
             "## Candidate response",
             candidate,
         ],
+    )
+
+
+def _source_snippet_metadata(snippets: list[SourceSnippet]) -> list[dict[str, object]]:
+    return [
+        {
+            "path": snippet.path,
+            "line_start": snippet.line_start,
+            "line_end": snippet.line_end,
+            "score": snippet.score,
+            "text": snippet.text,
+        }
+        for snippet in snippets
+    ]
+
+
+def prepare_repo_oracle_llm_input(
+    *,
+    bundle: SourceBundle,
+    question: str,
+    thread_context: str = "",
+    max_context_chars: int = 60_000,
+    gatherer_configured: bool = False,
+) -> RepoOracleLLMInput:
+    """Prepare the first repo-oracle LLM input without invoking any backend."""
+    if not question.strip():
+        raise ValueError("question is empty")
+    if gatherer_configured:
+        warnings: list[str] = []
+        if bundle.omitted:
+            warnings.append(
+                f"{len(bundle.omitted)} non-text or too-large file(s) were listed in the source bundle but not injected.",
+            )
+        if not bundle.files:
+            warnings.append("No UTF-8 text files were available in the source bundle.")
+        return RepoOracleLLMInput(
+            step="gatherer",
+            prompt=build_gatherer_prompt(
+                question=question,
+                thread_context=thread_context,
+                bundle=bundle,
+            ),
+            source_id=bundle.source_id,
+            snapshot=bundle.snapshot,
+            source_bundle_path=str(bundle.root),
+            tier=classify_tier(question),
+            sources=[],
+            warnings=warnings,
+            selected_snippets_known=False,
+            gatherer_configured=True,
+        )
+
+    gathered = deterministic_gather_context(
+        bundle,
+        question=question,
+        thread_context=thread_context,
+        max_context_chars=max_context_chars,
+    )
+    return RepoOracleLLMInput(
+        step="answer",
+        prompt=build_reasoner_prompt(
+            question=question,
+            thread_context=thread_context,
+            bundle=bundle,
+            gathered=gathered,
+        ),
+        source_id=bundle.source_id,
+        snapshot=bundle.snapshot,
+        source_bundle_path=str(bundle.root),
+        tier=gathered.tier,
+        sources=_source_snippet_metadata(gathered.snippets),
+        warnings=gathered.warnings,
+        selected_snippets_known=True,
+        gatherer_configured=False,
     )
 
 

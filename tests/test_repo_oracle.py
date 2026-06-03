@@ -19,6 +19,7 @@ from coverify.integration.repo_oracle import (
     build_verifier_prompt,
     gather_context,
     load_source_bundle,
+    prepare_repo_oracle_llm_input,
     run_repo_oracle,
     verification_from_metadata,
 )
@@ -115,6 +116,40 @@ class RepoOracleTests(unittest.TestCase):
 
         self.assertEqual([snippet.path for snippet in gathered.snippets], ["reserve.md"])
         self.assertEqual(gathered.tier, "light")
+
+    def test_prepare_repo_oracle_llm_input_stops_at_gatherer_when_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "reserve.md").write_text("Reserve credits cancel overlap debt.", encoding="utf-8")
+            bundle = load_source_bundle(root)
+
+            prepared = prepare_repo_oracle_llm_input(
+                bundle=bundle,
+                question="Why does reserve overlap debt cancel?",
+                gatherer_configured=True,
+            )
+
+        self.assertEqual(prepared.step, "gatherer")
+        self.assertIn("# Coverify Repo-Snapshot Gatherer", prepared.prompt)
+        self.assertFalse(prepared.selected_snippets_known)
+        self.assertEqual(prepared.sources, [])
+
+    def test_prepare_repo_oracle_llm_input_builds_deterministic_answer_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "reserve.md").write_text("Reserve credits cancel overlap debt.", encoding="utf-8")
+            (root / "unrelated.md").write_text("Banana color notes.", encoding="utf-8")
+            bundle = load_source_bundle(root)
+
+            prepared = prepare_repo_oracle_llm_input(
+                bundle=bundle,
+                question="Why does reserve overlap debt cancel?",
+            )
+
+        self.assertEqual(prepared.step, "answer")
+        self.assertIn("# Coverify Repo-Snapshot Exploratory Response", prepared.prompt)
+        self.assertTrue(prepared.selected_snippets_known)
+        self.assertEqual([source["path"] for source in prepared.sources], ["reserve.md"])
 
     def test_gather_context_uses_best_window_not_first_generic_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -18,6 +18,7 @@ from .engine.verifying import (
     VerifyingOracle,
     builtin_profile,
     load_verifying_config,
+    prepare_verifying_llm_input,
     verifying_config_from_dict,
 )
 from .cosheaf.client import CosheafClient, CosheafConfig
@@ -32,7 +33,9 @@ from .integration.repo_oracle import (
     export_cosheaf_source_bundle,
     gather_context,
     load_source_bundle,
+    prepare_repo_oracle_llm_input,
     run_repo_oracle,
+    sha256_text,
 )
 from .integration.review import REVIEW_DECISION_VALUES, ReviewDecision
 from .integration.workflows import (
@@ -979,6 +982,58 @@ def has_message_source(args: argparse.Namespace) -> bool:
     )
 
 
+def gatherer_configured(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "gatherer_backend", "") or "")
+
+
+def apply_answer_backend_preview(payload: dict[str, object], args: argparse.Namespace) -> dict[str, object]:
+    if payload.get("step") != "answer":
+        payload["answer_backend"] = getattr(args, "backend", "")
+        return payload
+    answer_prompt = str(payload.get("prompt") or "")
+    payload["answer_backend"] = getattr(args, "backend", "")
+    if getattr(args, "backend", "") != "verifying":
+        return payload
+
+    verifying_input = prepare_verifying_llm_input(
+        answer_prompt,
+        resolve_verifying_config(args),
+        quiet_adjunct=getattr(args, "verify_quiet_adjunct", False),
+    )
+    payload["answer_backend_prompt_sha256"] = sha256_text(answer_prompt)
+    payload["step"] = verifying_input.step
+    payload["prompt"] = verifying_input.prompt
+    payload["prompt_sha256"] = sha256_text(verifying_input.prompt)
+    payload["verifying"] = {
+        key: value
+        for key, value in verifying_input.to_json().items()
+        if key != "prompt"
+    }
+    return payload
+
+
+def emit_llm_input_preview(payload: dict[str, object], args: argparse.Namespace) -> int:
+    payload = dict(payload)
+    payload["backend_invoked"] = False
+    output_dir = getattr(args, "output_dir", "") or ""
+    if output_dir:
+        root = Path(output_dir)
+        root.mkdir(parents=True, exist_ok=True)
+        prompt_path = root / "prompt.md"
+        preview_path = root / "preview.json"
+        prompt_path.write_text(str(payload.get("prompt") or ""), encoding="utf-8")
+        payload["artifact_dir"] = str(root)
+        payload["prompt_path"] = str(prompt_path)
+        payload["preview_path"] = str(preview_path)
+        preview_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    if getattr(args, "json", False):
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        prompt = str(payload.get("prompt") or "")
+        print(prompt, end="" if prompt.endswith("\n") else "\n")
+    return 0
+
+
 def cmd_ask_oracle(args: argparse.Namespace) -> int:
     result = run_ask_oracle(
         prompt=read_oracle_prompt(args),
@@ -1017,6 +1072,28 @@ def cmd_repo_oracle_ask(args: argparse.Namespace) -> int:
     else:
         print(result.answer, end="" if result.answer.endswith("\n") else "\n")
     return 0
+
+
+def cmd_repo_oracle_prepare_llm(args: argparse.Namespace) -> int:
+    question = read_message_input(args)
+    thread_context = ""
+    if args.thread_file:
+        thread_context = sys.stdin.read() if args.thread_file == "-" else Path(args.thread_file).read_text(encoding="utf-8")
+    bundle = load_source_bundle(
+        Path(args.source_bundle),
+        source_id=args.source_id or None,
+        max_file_bytes=args.max_file_bytes,
+    )
+    preview = prepare_repo_oracle_llm_input(
+        bundle=bundle,
+        question=question,
+        thread_context=thread_context,
+        max_context_chars=args.max_context_chars,
+        gatherer_configured=gatherer_configured(args),
+    )
+    payload = apply_answer_backend_preview(preview.to_json(), args)
+    payload["source_kind"] = "local"
+    return emit_llm_input_preview(payload, args)
 
 
 def cmd_repo_oracle_gather(args: argparse.Namespace) -> int:
@@ -1349,6 +1426,68 @@ def cmd_chat_ask(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_chat_prepare_llm(args: argparse.Namespace) -> int:
+    client = authed_client_from_args(args)
+    question = read_message_input(args)
+    if not question.strip():
+        raise SystemExit("message is required")
+    branch = args.branch or "main"
+    issue_number = args.issue
+    thread_context = ""
+    would_write = {
+        "ensure_chat_label": issue_number is None,
+        "create_issue": issue_number is None,
+        "append_user_comment": issue_number is not None,
+        "post_reply_comment": True,
+    }
+    if issue_number is not None:
+        issue = client.read_issue(args.workspace, issue_number)
+        issue_branch = branch_from_issue_body(issue)
+        if issue_branch:
+            if args.branch and issue_branch != args.branch:
+                raise SystemExit(f"chat issue is pinned to branch {issue_branch!r}, not {args.branch!r}")
+            branch = issue_branch
+        elif args.branch:
+            branch = args.branch
+        timeline = client.read_issue_timeline(args.workspace, issue_number)
+        turns = extract_turns(issue, timeline, args.bot_user)
+        thread_context = "\n\n".join(
+            f"## {'User' if turn.role == 'user' else 'Assistant'}\n{turn.body}"
+            for turn in turns
+        )
+
+    source_root = Path(args.run_dir) / "source-bundles"
+    source_root.mkdir(parents=True, exist_ok=True)
+    issue_part = str(issue_number) if issue_number is not None else "new"
+    bundle = export_cosheaf_source_bundle(
+        client=client,
+        workspace=args.workspace,
+        branch=branch,
+        root=source_root / f"{args.workspace}-preview-{issue_part}-{branch.replace('/', '_')}",
+    )
+    preview = prepare_repo_oracle_llm_input(
+        bundle=bundle,
+        question=question,
+        thread_context=thread_context,
+        max_context_chars=args.max_context_chars,
+        gatherer_configured=gatherer_configured(args),
+    )
+    payload = apply_answer_backend_preview(preview.to_json(), args)
+    payload.update(
+        {
+            "source_kind": "cosheaf",
+            "workspace": args.workspace,
+            "branch": branch,
+            "issue_number": issue_number,
+            "question": question,
+            "title": args.title or chat_title_from(question),
+            "cosheaf_writes_performed": False,
+            "durable_cosheaf_writes_in_full_run": would_write,
+        },
+    )
+    return emit_llm_input_preview(payload, args)
+
+
 def cmd_chat_gather(args: argparse.Namespace) -> int:
     client = authed_client_from_args(args)
     branch = args.branch or "main"
@@ -1394,6 +1533,46 @@ def cmd_chat_gather(args: argparse.Namespace) -> int:
         gatherer_backend=gatherer_runner(args),
     )
     return print_gathered_context(bundle, gathered)
+
+
+def read_verifying_prepare_prompt(args: argparse.Namespace) -> str:
+    sources = sum(
+        bool(source)
+        for source in (
+            getattr(args, "message", []),
+            getattr(args, "prompt", ""),
+            getattr(args, "prompt_file", ""),
+        )
+    )
+    if sources > 1:
+        raise SystemExit("provide only one prompt source: message args, --prompt, or --prompt-file")
+    if getattr(args, "prompt_file", ""):
+        if args.prompt_file == "-":
+            return sys.stdin.read()
+        return Path(args.prompt_file).read_text(encoding="utf-8")
+    if getattr(args, "prompt", ""):
+        return args.prompt
+    if getattr(args, "message", []):
+        return " ".join(args.message)
+    if getattr(args, "resume", ""):
+        prompt_path = Path(args.resume) / "prompt.md"
+        if not prompt_path.exists():
+            raise SystemExit(f"resume dir does not contain prompt.md: {args.resume}")
+        return prompt_path.read_text(encoding="utf-8")
+    return sys.stdin.read()
+
+
+def cmd_verifying_prepare_llm(args: argparse.Namespace) -> int:
+    prepared = prepare_verifying_llm_input(
+        read_verifying_prepare_prompt(args),
+        resolve_verifying_config(args),
+        resume_dir=Path(args.resume) if args.resume else None,
+        quiet_adjunct=args.verify_quiet_adjunct,
+    )
+    payload = prepared.to_json()
+    payload["provider"] = "verifying"
+    payload["prompt_sha256"] = sha256_text(prepared.prompt)
+    return emit_llm_input_preview(payload, args)
 
 
 def cmd_run_eval(args: argparse.Namespace) -> int:
@@ -1516,6 +1695,15 @@ def add_repo_oracle_args(
     add_repo_gatherer_args(parser)
 
 
+def add_llm_prepare_output_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--json", action="store_true", help="print structured prepared-input JSON")
+    parser.add_argument(
+        "--output-dir",
+        default="",
+        help="write prompt.md and preview.json to this directory",
+    )
+
+
 def add_source_bundle_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--max-context-chars",
@@ -1557,6 +1745,40 @@ def add_repo_gatherer_args(parser: argparse.ArgumentParser) -> None:
         "--gatherer-reasoning-effort",
         default=env("COVERIFY_REPO_ORACLE_GATHERER_REASONING_EFFORT"),
     )
+
+
+def add_verifying_prepare_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("message", nargs="*", help="prompt text; stdin is used when omitted")
+    parser.add_argument("--prompt", default="", help="prompt text")
+    parser.add_argument("--prompt-file", default="", help="prompt file, or '-' for stdin")
+    parser.add_argument(
+        "--resume",
+        default="",
+        help="verifying artifact dir with prompt.md and optional journal.json",
+    )
+    parser.add_argument(
+        "--verify-max-rounds",
+        type=int,
+        default=int(env("COVERIFY_VERIFY_MAX_ROUNDS", "3") or "3"),
+        help="max generate->verify rounds for interpreting the journal",
+    )
+    parser.add_argument(
+        "--verify-profile",
+        default=env("COVERIFY_VERIFY_PROFILE", "default"),
+        help="built-in verifying profile (default, strict)",
+    )
+    parser.add_argument(
+        "--verify-config",
+        default=env("COVERIFY_VERIFY_CONFIG"),
+        help="path to a JSON verifying-oracle config",
+    )
+    parser.add_argument(
+        "--verify-quiet-adjunct",
+        action="store_true",
+        default=env("COVERIFY_VERIFY_QUIET_ADJUNCT") in {"1", "true", "yes"},
+        help="prepare a quiet final adjunct prompt",
+    )
+    add_llm_prepare_output_args(parser)
 
 
 def add_gather_eval_args(parser: argparse.ArgumentParser) -> None:
@@ -1797,6 +2019,16 @@ def build_parser() -> argparse.ArgumentParser:
     add_backend_args(repo_ask)
     add_repo_oracle_args(repo_ask)
     repo_ask.set_defaults(func=cmd_repo_oracle_ask)
+    repo_prepare = repo_oracle_sub.add_parser(
+        "prepare-llm",
+        help="prepare the repo-oracle LLM input without calling a backend",
+    )
+    repo_prepare.add_argument("--source-bundle", required=True, help="directory containing allowed source files")
+    repo_prepare.add_argument("--source-id", default="", help="stable source bundle id")
+    add_backend_args(repo_prepare)
+    add_repo_oracle_args(repo_prepare, include_json=False)
+    add_llm_prepare_output_args(repo_prepare)
+    repo_prepare.set_defaults(func=cmd_repo_oracle_prepare_llm)
     repo_gather = repo_oracle_sub.add_parser("gather", help="inspect repo context gathering")
     repo_gather.add_argument("--source-bundle", required=True, help="directory containing allowed source files")
     repo_gather.add_argument("--source-id", default="", help="stable source bundle id")
@@ -1823,6 +2055,20 @@ def build_parser() -> argparse.ArgumentParser:
     add_backend_args(chat_ask)
     add_repo_oracle_args(chat_ask)
     chat_ask.set_defaults(func=cmd_chat_ask)
+    chat_prepare = chat_sub.add_parser(
+        "prepare-llm",
+        help="prepare the chat LLM input without calling a backend or posting",
+    )
+    add_common_auth(chat_prepare)
+    add_workspace_arg(chat_prepare)
+    chat_prepare.add_argument("--branch", default="")
+    chat_prepare.add_argument("--issue", type=int, default=None)
+    chat_prepare.add_argument("--title", default="")
+    chat_prepare.add_argument("--bot-user", default=env("COVERIFY_BOT_USER", "coverify"))
+    add_backend_args(chat_prepare)
+    add_repo_oracle_args(chat_prepare, include_json=False)
+    add_llm_prepare_output_args(chat_prepare)
+    chat_prepare.set_defaults(func=cmd_chat_prepare_llm)
     chat_gather = chat_sub.add_parser("gather", help="export a branch and inspect gathered chat context without posting")
     add_common_auth(chat_gather)
     add_workspace_arg(chat_gather)
@@ -1832,6 +2078,15 @@ def build_parser() -> argparse.ArgumentParser:
     add_backend_args(chat_gather)
     add_repo_oracle_args(chat_gather)
     chat_gather.set_defaults(func=cmd_chat_gather)
+
+    verifying = sub.add_parser("verifying", help="verifying-oracle inspection commands")
+    verifying_sub = verifying.add_subparsers(dest="verifying_command", required=True)
+    verifying_prepare = verifying_sub.add_parser(
+        "prepare-llm",
+        help="prepare a verifying-oracle inner LLM input without calling a backend",
+    )
+    add_verifying_prepare_args(verifying_prepare)
+    verifying_prepare.set_defaults(func=cmd_verifying_prepare_llm)
 
     run_eval = sub.add_parser("run-eval", help="run JSONL eval cases against a backend")
     run_eval.add_argument("--cases", required=True, help="JSONL eval case file")

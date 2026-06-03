@@ -480,6 +480,170 @@ class CliTests(unittest.TestCase):
         self.assertEqual(parse_chat_metadata(client.comments[0])["kind"], CHAT_KIND_REPLY)
         self.assertEqual(client.branch, "agent/math")
 
+    def test_repo_oracle_prepare_llm_writes_artifact_without_invoking_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            source = tmp / "source"
+            source.mkdir()
+            (source / "facts.md").write_text("Local fact A is accepted.", encoding="utf-8")
+            output_dir = tmp / "preview"
+            args = build_parser().parse_args(
+                [
+                    "repo-oracle",
+                    "prepare-llm",
+                    "--source-bundle",
+                    str(source),
+                    "--backend",
+                    "script",
+                    "--backend-command",
+                    f"{sys.executable} -c 'raise SystemExit(99)'",
+                    "--output-dir",
+                    str(output_dir),
+                    "--json",
+                    "--message",
+                    "What is local fact A?",
+                ],
+            )
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                self.assertEqual(args.func(args), 0)
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["step"], "answer")
+            self.assertFalse(payload["backend_invoked"])
+            self.assertEqual(payload["source_kind"], "local")
+            self.assertTrue((output_dir / "prompt.md").exists())
+            self.assertTrue((output_dir / "preview.json").exists())
+            self.assertIn(
+                "# Coverify Repo-Snapshot Exploratory Response",
+                (output_dir / "prompt.md").read_text(encoding="utf-8"),
+            )
+
+    def test_repo_oracle_prepare_llm_stops_at_configured_gatherer_without_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            source = tmp / "source"
+            source.mkdir()
+            (source / "facts.md").write_text("Local fact A is accepted.", encoding="utf-8")
+            args = build_parser().parse_args(
+                [
+                    "repo-oracle",
+                    "prepare-llm",
+                    "--source-bundle",
+                    str(source),
+                    "--gatherer-backend",
+                    "script",
+                    "--json",
+                    "--message",
+                    "What is local fact A?",
+                ],
+            )
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                self.assertEqual(args.func(args), 0)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["step"], "gatherer")
+        self.assertFalse(payload["backend_invoked"])
+        self.assertFalse(payload["selected_snippets_known"])
+        self.assertIn("# Coverify Repo-Snapshot Gatherer", payload["prompt"])
+
+    def test_chat_prepare_llm_does_not_create_issue_or_comment(self) -> None:
+        class PreviewClient:
+            def __init__(self) -> None:
+                self.reads: list[str] = []
+
+            def ensure_label(self, *_args, **_kwargs):
+                raise AssertionError("prepare-llm must not ensure labels")
+
+            def create_issue(self, *_args, **_kwargs):
+                raise AssertionError("prepare-llm must not create issues")
+
+            def comment_issue(self, *_args, **_kwargs):
+                raise AssertionError("prepare-llm must not comment")
+
+            def list_workspace_files(self, workspace: str, *, branch: str = "main") -> dict[str, object]:
+                self.reads.append(f"tree:{workspace}:{branch}")
+                return {"files": [{"path": "docs/local.md"}]}
+
+            def read_file(self, workspace: str, path: str, *, branch: str = "main") -> dict[str, str]:
+                self.reads.append(f"file:{workspace}:{branch}:{path}")
+                return {"content": "A local lemma implies the requested theorem."}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            client = PreviewClient()
+            args = build_parser().parse_args(
+                [
+                    "chat",
+                    "prepare-llm",
+                    "--token",
+                    "tok",
+                    "--workspace",
+                    "w",
+                    "--branch",
+                    "agent/math",
+                    "--backend",
+                    "verifying",
+                    "--verify-inner-backend",
+                    "script",
+                    "--run-dir",
+                    str(Path(tmpdir) / "runs"),
+                    "--json",
+                    "--message",
+                    "Prove the local theorem.",
+                ],
+            )
+            stdout = io.StringIO()
+            with (
+                patch("coverify.cli.authed_client_from_args", return_value=client),
+                patch("sys.stdout", stdout),
+            ):
+                self.assertEqual(args.func(args), 0)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["step"], "generator")
+        self.assertEqual(payload["workspace"], "w")
+        self.assertEqual(payload["branch"], "agent/math")
+        self.assertFalse(payload["backend_invoked"])
+        self.assertFalse(payload["cosheaf_writes_performed"])
+        self.assertTrue(payload["durable_cosheaf_writes_in_full_run"]["create_issue"])
+        self.assertEqual(client.reads, ["tree:w:agent/math", "file:w:agent/math:docs/local.md"])
+
+    def test_verifying_prepare_llm_cli_reads_resume_prompt_and_journal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            resume = root / "verifying-run"
+            resume.mkdir()
+            (resume / "prompt.md").write_text("Prove Q.", encoding="utf-8")
+            gen_dir = root / "gen"
+            gen_dir.mkdir()
+            (gen_dir / "answer.md").write_text("Candidate proof.", encoding="utf-8")
+            (resume / "journal.json").write_text(
+                json.dumps([
+                    {"role": "generator", "round": 0, "artifact_dir": str(gen_dir)},
+                ]),
+                encoding="utf-8",
+            )
+            args = build_parser().parse_args(
+                [
+                    "verifying",
+                    "prepare-llm",
+                    "--resume",
+                    str(resume),
+                    "--json",
+                ],
+            )
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                self.assertEqual(args.func(args), 0)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["step"], "verifier")
+        self.assertFalse(payload["backend_invoked"])
+        self.assertEqual(payload["round"], 0)
+        self.assertEqual(payload["verifier_index"], 0)
+        self.assertIn("Candidate proof.", payload["prompt"])
+
     def test_chat_reply_uses_pinned_branch_metadata_for_worker_path(self) -> None:
         class ReplyClient:
             def __init__(self) -> None:
