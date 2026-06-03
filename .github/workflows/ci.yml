@@ -22,5 +22,14 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e .
 
+      - name: Check skill manifest
+        run: python scripts/check_skills.py
+
+      - name: Check CLI help
+        run: coverify --help
+
+      - name: Check Python syntax
+        run: python -m compileall -q src scripts
+
       - name: Run tests
         run: PYTHONPATH=src python -m unittest discover -s tests

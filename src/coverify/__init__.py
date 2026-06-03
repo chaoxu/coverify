@@ -1,4 +1,4 @@
-"""Coverify v1 CLI harness."""
+"""Coverify CLI tools."""
 
 __all__ = ["__version__"]
 

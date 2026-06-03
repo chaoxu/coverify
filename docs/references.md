@@ -72,7 +72,7 @@ Design lessons:
 - Retry feedback should explain in ordinary prose whether the failure came
   from execution, the plan, or the overall strategy when that distinction is
   useful. Do not turn this into a required failure taxonomy.
-- Do not copy QED's fixed multi-agent pipeline into v1.
+- Do not copy QED's fixed multi-agent pipeline into the default loop.
 - Treat QED's structural review, detailed review, and regulator prompts as
   reference checklists that can enrich the single review prompt or runner
   policy, not as mandatory separate workflow stages.
@@ -144,7 +144,7 @@ What matters:
 Design lessons:
 
 - Keep the useful habit of preserving failed paths and counterexamples.
-- Do not copy the full skill taxonomy into v1. Most Rethlas skills are tactics
+- Do not copy the full skill taxonomy into the default loop. Most Rethlas skills are tactics
   a runner can choose inside the three canonical prompts: explore, attempt,
   and review.
 - If a tactic becomes repetitive and brittle, add a thin wrapper later. Until
@@ -185,7 +185,7 @@ Specific design ideas:
 
 ## Future Learning
 
-Learning and evaluation are not v1 requirements. The design should only avoid
+Learning and evaluation are not current requirements. The design should only avoid
 closing them off.
 
 If future implementation records traces, they should be derived from or linked

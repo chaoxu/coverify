@@ -286,7 +286,7 @@ class CliTests(unittest.TestCase):
             root = Path(tmpdir) / "source"
             root.mkdir()
             (root / "summary.md").write_text(
-                "# Summary\n\n## Current Working Bound Table\n\n5/3 target.\n\n## Active Fronts\n\nImprove the bound.\n",
+                "# Summary\n\n## Current Problem Table\n\nTermination route selected.\n\n## Active Fronts\n\nImprove the construction.\n",
                 encoding="utf-8",
             )
             cases = Path(tmpdir) / "cases.jsonl"
@@ -296,7 +296,7 @@ class CliTests(unittest.TestCase):
                         "id": "status",
                         "question": "What is the current status and future work?",
                         "must_include": [
-                            {"path": "summary.md", "text": "Current Working Bound Table"},
+                            {"path": "summary.md", "text": "Current Problem Table"},
                             {"path": "summary.md", "text": "Active Fronts"},
                         ],
                     },
@@ -324,9 +324,9 @@ class CliTests(unittest.TestCase):
         self.assertEqual(report["passed_cases"], 1)
         self.assertEqual(report["passed_requirements"], 2)
 
-    def test_checked_in_poa_gather_eval_fixture_runs(self) -> None:
+    def test_checked_in_gather_eval_fixture_runs(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        cases = repo_root / "evals" / "gather" / "poa-network-game-clean.jsonl"
+        cases = repo_root / "evals" / "gather" / "sample-math-workspace.jsonl"
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "source"
             root.mkdir()
@@ -334,44 +334,41 @@ class CliTests(unittest.TestCase):
                 "\n".join(
                     [
                         "# Ledger",
-                        "## Current Working Bound Table",
-                        "| Problem | Workspace lower bound | Current status |",
-                        "| Directed TTSP with arbitrary terminal pairs | at least $27/19$ | active |",
-                        "| Symmetric undirected SP-underlay | at least $20/13$ | active |",
-                        "| Undirected SP-underlay arbitrary terminals | at least $15/7$ | active |",
+                        "## Current Problem Table",
+                        "| Problem | Current status |",
+                        "| termination monovariant | proof route active |",
+                        "| distinct pair sums | construction active |",
                         "## Active Fronts",
-                        "- improve directed TTSP bounds.",
+                        "- finish the termination monovariant check.",
+                        "- formalize distinct pair sums construction cases.",
                     ],
                 ),
                 encoding="utf-8",
             )
-            (root / "directed-ttsp.md").write_text(
+            (root / "combinatorics.md").write_text(
                 "\n".join(
                     [
-                        "# Directed TTSP",
-                        "## Directed TTSP interaction inequality route",
-                        "This is the target route.",
-                        "## Directed TTSP internal-terminal lower-bound example",
-                        "This example is not the best lower bound for the broad arbitrary-terminal directed TTSP row.",
-                        "A small grammar cannot improve the inherited $27/19$ arbitrary-terminal lower bound.",
-                        "## Interaction inequality for series of parallel bundles",
-                        "Any counterexample must therefore use TTSP structure not covered by this series-of-bundles class.",
+                        "# Combinatorics Notes",
+                        "## Termination monovariant route",
+                        "The candidate proof must check both replacement operations.",
+                        "A reverse lexicographic measure is the current route.",
+                        "The boundary case of equal adjacent entries is closed separately.",
+                        "## Distinct pair sums construction",
+                        "The construction is organized by residue classes modulo 5.",
+                        "The matching upper bound by total sum is recorded here.",
                     ],
                 ),
                 encoding="utf-8",
             )
-            (root / "undirected-sp-underlay.md").write_text(
+            (root / "number-theory.md").write_text(
                 "\n".join(
                     [
-                        "# Undirected SP Underlay",
-                        "## Undirected common-terminal instances need not orient to directed TTSP",
-                        "This is the model caveat.",
-                        "## Symmetric ladder lower bound of 20/13",
-                        "The accepted symmetric example has ratio 20/13.",
-                        "## Diamond lower bound of 15/7",
-                        "The broad arbitrary-terminal row has ratio 15/7.",
-                        "## Accepted ladder pattern cannot be retuned past 20/13",
-                        "Retuning the accepted pattern cannot improve the bound.",
+                        "# Number Theory Notes",
+                        "## Admissible integer sets classification",
+                        "The gcd obstruction gives the necessary condition.",
+                        "The generation lemma remains the main sufficiency step.",
+                        "## Power reciprocal classification",
+                        "The parity direction is done; the constructive direction remains active.",
                     ],
                 ),
                 encoding="utf-8",
@@ -647,84 +644,6 @@ class CliTests(unittest.TestCase):
             self.assertIn("chatgpt:", chatgpt_config)
             self.assertIn('provider: "chatgpt"', chatgpt_config)
             self.assertNotIn("qed_chatgpt_codex_shim.py", chatgpt_config)
-
-    def test_ttsp_search_cli_emits_bounded_search_payload(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(
-            [
-                "ttsp-search",
-                "--min-edges",
-                "2",
-                "--max-edges",
-                "2",
-                "--terminal-scope",
-                "all",
-                "--limit-graphs",
-                "1",
-            ],
-        )
-        stdout = io.StringIO()
-        with patch("sys.stdout", stdout):
-            self.assertEqual(args.func(args), 0)
-
-        payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload["kind"], "directed_ttsp_bounded_search")
-        self.assertEqual(payload["graph_count"], 1)
-        self.assertEqual(payload["parameters"]["max_edges"], 2)
-        self.assertEqual(payload["parameters"]["terminal_scope"], "all")
-        self.assertTrue(
-            any(pair["is_global_pair"] for graph in payload["graphs"] for pair in graph["terminal_pairs"]),
-        )
-
-    def test_ttsp_queue_cli_emits_reduced_search_queue(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(
-            [
-                "ttsp-queue",
-                "--min-edges",
-                "4",
-                "--max-edges",
-                "8",
-                "--queue-min-edges",
-                "8",
-                "--queue-limit",
-                "1",
-            ],
-        )
-        stdout = io.StringIO()
-        with patch("sys.stdout", stdout):
-            self.assertEqual(args.func(args), 0)
-
-        payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload["kind"], "directed_ttsp_bounded_queue")
-        self.assertEqual(payload["queued_graph_count_returned"], 1)
-        self.assertEqual(len(payload["queued_graphs"][0]["best_terminal_quads"][0]["terminal_pair_ids"]), 4)
-
-    def test_ttsp_queue_cli_uses_player_count_as_queue_width(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(
-            [
-                "ttsp-queue",
-                "--players",
-                "3",
-                "--min-edges",
-                "4",
-                "--max-edges",
-                "8",
-                "--queue-min-edges",
-                "8",
-                "--queue-limit",
-                "1",
-            ],
-        )
-        stdout = io.StringIO()
-        with patch("sys.stdout", stdout):
-            self.assertEqual(args.func(args), 0)
-
-        payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload["source_parameters"]["terminal_scope"], "internal")
-        self.assertEqual(payload["queue_parameters"]["players"], 3)
-        self.assertEqual(len(payload["queued_graphs"][0]["best_terminal_quads"][0]["terminal_pair_ids"]), 3)
 
     def test_seed_research_evals_dispatches_to_client(self) -> None:
         class SeedClient:

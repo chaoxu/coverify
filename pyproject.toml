@@ -5,7 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "coverify"
 version = "0.1.0"
-description = "CLI-first Cosheaf tool harness for mathematical proof runs"
+description = "Cosheaf-backed exploration tools for mathematical resolution"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
 

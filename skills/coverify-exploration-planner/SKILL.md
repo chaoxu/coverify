@@ -7,13 +7,16 @@ description: Plan Coverify mathematical exploration from current Cosheaf knowled
 
 ## Purpose
 
-Turn the current workspace state into a small set of issue-ready approaches.
-Planning is not proof. It should identify routes worth trying and routes to
-avoid.
+Use the exploratory-response contract. Turn the current workspace state into a
+source-grounded answer, status summary, route comparison, or small set of
+issue-ready approaches. Exploration is not proof. It should identify what the
+sources support, what remains speculative, which routes are worth trying, which
+routes to avoid, and which exact resolution targets are ready for strict
+mathematical resolution.
 
 Planning should remain agentic. Do not turn route choice, context selection, or
-"what evidence matters" into new deterministic harness code unless the behavior
-is already stable and mechanical. The harness may validate paths, line ranges,
+"what evidence matters" into new deterministic Python code unless the behavior
+is already stable and mechanical. Coverify may validate paths, line ranges,
 schemas, citations, and verifier verdicts; the planner should make the adaptive
 choice.
 
@@ -25,18 +28,25 @@ choice.
    output.
 3. Inspect "things tried" notes and relevant issue/PR history before proposing
    routes.
-4. Propose only bounded routes whose success or failure would create durable knowledge.
-   Prefer text oracle/proof attempts when the finite structure can be stated
+4. If the request is a direct source question, answer it directly with source
+   grounding and honest uncertainty instead of inventing extra workflow.
+5. Propose only bounded routes whose success or failure would create durable knowledge.
+   Prefer text oracle/prover calls when the finite structure can be stated
    clearly without code.
-5. For each route, state the first step, expected artifact, likely failure
+6. For each route, state the first step, expected artifact, likely failure
    mode, closest prior tried route, and whether any code produced by the route
    would be kept, deleted, or left off main after distillation.
-6. Draft issues only for routes that a later runner can start without guessing.
+7. Package resolution targets only when the statement, hypotheses, allowed
+   context, forced method or route constraints, and failed-route warnings are
+   specific enough for mathematical resolution.
+8. Draft issues only for routes that a later runner can start without guessing.
 
 ## Output
 
 ```text
 CURRENT_STATE:
+
+DIRECT_RESPONSE:
 
 APPROACHES:
 - Title:
@@ -48,6 +58,14 @@ APPROACHES:
   Oracle or computation:
   Script retention:
   Issue draft:
+
+PACKAGED_RESOLUTION_TARGETS:
+- Statement:
+  Hypotheses:
+  Allowed context:
+  Forced method / constraints:
+  Things tried / Do not retry:
+  Output target:
 
 DUPLICATES_OR_REJECTED:
 

@@ -123,7 +123,7 @@ repairs the branch or records the obstruction in Cosheaf.
 
 - Do not copy all Rethlas skills as mandatory Coverify skills.
 - Do not create a separate local memory hierarchy as durable project state.
-- Do not require recursive proving or parallel subagents in v1.
+- Do not require recursive proving or parallel subagents in the default loop.
 - Do not treat search results as accepted knowledge before review.
 - Do not implement Rethlas-style tactic selection as Python planner code unless
   a narrow tactic has become a stable mechanical operation.

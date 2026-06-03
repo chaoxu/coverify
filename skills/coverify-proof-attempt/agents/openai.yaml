@@ -1,4 +1,4 @@
 interface:
   display_name: "Coverify Attempt"
-  short_description: "Prepare clean proof attempts"
-  default_prompt: "Use $coverify-proof-attempt to prepare a clean proof or disproof attempt from accepted context and relevant tried routes."
+  short_description: "Prepare clean mathematical-resolution targets"
+  default_prompt: "Use $coverify-proof-attempt to prepare a clean mathematical-resolution target from accepted context and relevant tried routes. The prover may be asked for a proof, disproof, counterexample, construction, witness, bound, certificate, reduction, obstruction, or precise gap."

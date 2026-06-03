@@ -24,7 +24,7 @@ class BackendResult:
 class BackendRunner(Protocol):
     """An oracle invocation: text in, audited ``BackendResult`` out.
 
-    This is the core seam of the harness. Every backend -- fixture, codex,
+    This is the core backend seam. Every backend -- fixture, codex,
     script, and the composite verifying oracle -- satisfies it, which is why a
     verifying oracle can be used anywhere a plain oracle can, and can even nest.
     """

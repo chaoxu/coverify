@@ -1,9 +1,10 @@
-"""Repo-snapshot oracle harness.
+"""Repo-snapshot oracle tools.
 
-This module is the narrow waist for v1 math chat: a caller provides a directory
-containing the allowed files plus a question, and Coverify prepares bounded
-repo context, asks a reasoner, and verifies the candidate before publication.
-It deliberately knows nothing about Forgejo, issues, PRs, or git history.
+This module is the narrow interface for repo-grounded mathematical exploration:
+a caller provides a directory containing the allowed files plus a question, and
+Coverify prepares bounded repo context, asks a reasoner, and verifies the
+candidate before publication. It deliberately knows nothing about Forgejo,
+issues, PRs, or git history.
 """
 
 from __future__ import annotations
@@ -875,15 +876,28 @@ def build_reasoner_prompt(
     warnings = "\n".join(f"- {warning}" for warning in gathered.warnings) or "- none"
     return "\n".join(
         [
-            "# Coverify Repo-Snapshot Math Chat",
+            "# Coverify Repo-Snapshot Exploratory Response",
             "",
-            "Answer the user's mathematical question using only the allowed sources",
-            "below plus general mathematical knowledge. You may derive new arguments",
-            "from the repo context. You must not use issues, PRs, git history, web,",
-            "sibling repos, local notes, or hidden memory.",
+            "Produce an exploratory response to the user's mathematical question",
+            "using only the allowed sources below plus general mathematical",
+            "knowledge. You may answer directly, explain source-backed status,",
+            "compare plausible routes, identify gaps, call out useful tools, or",
+            "package exact mathematical-resolution targets for a later strict",
+            "prover/resolver call. You may derive new arguments from the repo",
+            "context. You must not use issues, PRs, git history, web, sibling",
+            "repos, local notes, or hidden memory.",
             "",
             "Repo-specific claims must be supported by the source bundle. If files",
             "conflict, report the conflict unless the source bundle resolves it.",
+            "Do not present exploration as proof or as any stronger status than",
+            "the evidence supports. If the user asks for a proof, disproof,",
+            "counterexample, construction, witness, bound, certificate, reduction,",
+            "obstruction, or key step, either give a complete resolution under the",
+            "stated hypotheses or report the precise gap and strongest justified",
+            "partial progress.",
+            "If the user requires a particular theorem, construction shape, proof",
+            "method, route, or other constraint, treat that as part of the target;",
+            "do not switch methods silently.",
             "",
             "## Source bundle",
             f"- source_id: {bundle.source_id}",
@@ -901,7 +915,7 @@ def build_reasoner_prompt(
             "## User question",
             question.strip(),
             "",
-            "## Required answer behavior",
+            "## Required response behavior",
             "- Write Markdown suitable for a Cosheaf issue comment.",
             "- Use short headings and bullet lists when they improve scanability.",
             "- Use TeX math syntax (`$...$` or `$$...$$`) for formulas, bounds, inequalities, and named constants; do not flatten mathematical status into plain prose.",
@@ -912,6 +926,8 @@ def build_reasoner_prompt(
             "- Do not invent narrower line citations; if the snippet header is `a.md:10-40`, cite `[a.md#L10-40](a.md#L10-40)`.",
             "- Standard mathematical facts do not need citations.",
             "- If support is missing, say what is missing.",
+            "- Label speculative routes, plausible strategies, and open gaps explicitly.",
+            "- When useful, include `Packaged resolution targets` with exact statement, hypotheses, allowed context, and output target.",
             "- Do not write or propose direct repo edits.",
         ],
     )
@@ -929,13 +945,24 @@ def build_verifier_prompt(
         [
             "# Coverify Repo-Snapshot Verification",
             "",
-            "Act as an adversarial mathematical verifier. Check the candidate answer",
-            "against the allowed source bundle and the current chat thread.",
+            "Act as an adversarial mathematical verifier. Check the candidate",
+            "response against the allowed source bundle, the current chat thread,",
+            "and the exploratory-response contract.",
             "",
             "Reject if it uses issues, PRs, git history, web, sibling repos, local",
             "notes, hidden memory, or any repo-specific fact unsupported by the",
             "source snippets. Reject if a proof step is invalid or if a conflict is",
             "smoothed over as settled knowledge.",
+            "Reject if exploration, a plausible route, a partial argument, a",
+            "construction attempt, or a computational-looking artifact is presented",
+            "with a stronger status label than the evidence supports. For requested",
+            "proofs, refutations, counterexamples, constructions, witnesses, bounds,",
+            "certificates, reductions, obstructions, or key steps, reject if the",
+            "target statement or hypotheses changed, if the hard step is hidden, or",
+            "if the candidate does not clearly state the precise gap.",
+            "Reject if the user required a particular theorem, construction shape,",
+            "proof method, route, or other constraint and the candidate did not",
+            "follow it.",
             "Reject citations to repo line ranges that are not exact gathered snippet",
             "headers after converting `path.md#Lx-y` references back to line ranges.",
             "Reject final answers that are not Markdown suitable for a Cosheaf issue",
@@ -962,7 +989,7 @@ def build_verifier_prompt(
             "## User question",
             question.strip(),
             "",
-            "## Candidate answer",
+            "## Candidate response",
             candidate,
         ],
     )
@@ -1046,10 +1073,10 @@ def run_repo_oracle(
     final_answer = candidate_answer
     warnings = [*gathered.warnings, *citation_warnings]
     if not ok:
-        warnings.append("Candidate answer was not verified; returning an explicit refusal summary.")
+        warnings.append("Candidate response was not verified; returning an explicit refusal summary.")
         final_answer = "\n".join(
             [
-                "I could not confidently verify the candidate answer from the current repo snapshot.",
+                "I could not confidently verify the candidate response from the current repo snapshot.",
                 "",
                 "Verifier output:",
                 "",

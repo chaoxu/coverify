@@ -1,7 +1,7 @@
 # Reference Prompt Collection
 
 This directory collects prompt patterns from other mathematical-agent systems.
-These files are references for humans and runners, not canonical Coverify v1
+These files are references for humans and runners, not canonical Coverify
 workflow definitions.
 
 Coverify's canonical prompt surface remains:

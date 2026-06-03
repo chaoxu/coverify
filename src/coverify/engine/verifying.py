@@ -2,10 +2,10 @@
 
 A verifying oracle is just another backend: it implements the same
 ``BackendRunner`` interface (``prompt -> BackendResult``) but produces its
-answer by delegating to other oracles. It runs a generate -> verify ->
+response by delegating to other oracles. It runs a generate -> verify ->
 adjudicate loop:
 
-- the generator produces a candidate answer;
+- the generator produces a candidate response;
 - each verifier acts as an adversarial referee and ends its reply with a
   single ``VERDICT: PASS | FAIL`` line;
 - any FAIL sends the concatenated critiques back to the generator for another
@@ -31,7 +31,7 @@ replays completed ones on resume, so a runner that mutates the world (posts a
 comment, writes a file, merges a PR) would double-fire. This is the operational
 form of "verify oracles, not agents": verification applies to side-effect-free
 producers of claims. An effectful agent is *gated by* a verifying oracle -- it
-acts on the oracle's checked answer -- but is never placed inside the loop.
+acts on the oracle's checked response -- but is never placed inside the loop.
 """
 
 from __future__ import annotations
@@ -102,11 +102,11 @@ def build_verifier_context(
     guidance = instructions or (
         "Act as a careful, adversarial mathematical referee. Find any logical "
         "gap, false claim, unjustified step, or computational error in the "
-        "candidate answer below. Be skeptical."
+        "candidate response below. Be skeptical."
     )
     return "\n".join(
         [
-            "# Oracle Task: Verify an answer",
+            "# Oracle Task: Verify a response",
             guidance,
             "",
             "Write your findings, then output exactly one line:",
@@ -119,7 +119,7 @@ def build_verifier_context(
             "## Original question",
             original,
             "",
-            "## Candidate answer",
+            "## Candidate response",
             candidate,
         ],
     )

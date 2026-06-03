@@ -10,7 +10,7 @@ description: Convert useful Coverify source material into compact Cosheaf wiki o
 Distill useful material into wiki-shaped Coflat Markdown. This is artifact
 preparation, not proof search and not correctness review.
 
-Promotion and wording choices are agentic. The harness may validate Coflat
+Promotion and wording choices are agentic. Coverify may validate Coflat
 shape, links, citations, and schemas, but it should not decide mathematical
 significance with deterministic code.
 

@@ -191,7 +191,7 @@ def build_infinite_primes_pr_body(
 ) -> str:
     return "\n".join(
         [
-            "Coverify v1 wrote a Coflat proof page for Euclid's theorem.",
+            "Coverify wrote a Coflat proof page for Euclid's theorem.",
             "The backend produced mathematical proof text; the local KB writer",
             "step shaped it into a Coflat theorem/proof document.",
             "",

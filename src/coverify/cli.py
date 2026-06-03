@@ -43,7 +43,6 @@ from .apps.research_evals import (
     seed_research_eval_workspace,
     utc_stamp,
 )
-from .apps.ttsp_search import QueueConfig, SearchConfig, build_queue_payload, build_search_payload
 
 
 def env(name: str, default: str = "") -> str:
@@ -1400,45 +1399,6 @@ def cmd_seed_research_evals(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_ttsp_search(args: argparse.Namespace) -> int:
-    payload = build_search_payload(
-        SearchConfig(
-            max_edges=args.max_edges,
-            min_edges=args.min_edges,
-            players=args.players,
-            terminal_scope=args.terminal_scope,
-            max_paths_per_pair=args.max_paths_per_pair or None,
-            limit_graphs=args.limit_graphs or None,
-        ),
-    )
-    print(json.dumps(payload, indent=2 if args.pretty else None, sort_keys=True))
-    return 0
-
-
-def cmd_ttsp_queue(args: argparse.Namespace) -> int:
-    search_payload = build_search_payload(
-        SearchConfig(
-            max_edges=args.max_edges,
-            min_edges=args.min_edges,
-            players=args.players,
-            terminal_scope="internal",
-            max_paths_per_pair=args.max_paths_per_pair or None,
-            limit_graphs=args.limit_graphs or None,
-        ),
-    )
-    queue_payload = build_queue_payload(
-        search_payload,
-        QueueConfig(
-            min_edges=args.queue_min_edges,
-            players=args.players,
-            quad_limit=args.quad_limit,
-            queue_limit=args.queue_limit or None,
-        ),
-    )
-    print(json.dumps(queue_payload, indent=2 if args.pretty else None, sort_keys=True))
-    return 0
-
-
 def add_common_auth(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--api-url", default=env("COSHEAF_API_URL", "http://localhost:3030/api/v1"))
     parser.add_argument("--token", default=env("COSHEAF_TOKEN"))
@@ -1814,7 +1774,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_backend_args(repo_ask)
     add_repo_oracle_args(repo_ask)
     repo_ask.set_defaults(func=cmd_repo_oracle_ask)
-    repo_gather = repo_oracle_sub.add_parser("gather", help="prototype and inspect repo context gathering")
+    repo_gather = repo_oracle_sub.add_parser("gather", help="inspect repo context gathering")
     repo_gather.add_argument("--source-bundle", required=True, help="directory containing allowed source files")
     repo_gather.add_argument("--source-id", default="", help="stable source bundle id")
     add_backend_args(repo_gather)
@@ -1828,7 +1788,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_gather_eval_args(repo_eval_gather)
     repo_eval_gather.set_defaults(func=cmd_repo_oracle_eval_gather)
 
-    chat = sub.add_parser("chat", help="branch-scoped chat harness commands")
+    chat = sub.add_parser("chat", help="branch-scoped chat commands")
     chat_sub = chat.add_subparsers(dest="chat_command", required=True)
     chat_ask = chat_sub.add_parser("ask", help="create/append a chat issue and answer it")
     add_common_auth(chat_ask)
@@ -1867,29 +1827,7 @@ def build_parser() -> argparse.ArgumentParser:
     seed_research.add_argument("--path-prefix", default="research-evals")
     seed_research.set_defaults(func=cmd_seed_research_evals)
 
-    ttsp = sub.add_parser("ttsp-search", help="emit bounded directed-TTSP search JSON")
-    ttsp.add_argument("--max-edges", type=int, default=4)
-    ttsp.add_argument("--min-edges", type=int, default=1)
-    ttsp.add_argument("--players", type=int, default=4)
-    ttsp.add_argument("--terminal-scope", choices=("internal", "all"), default="internal")
-    ttsp.add_argument("--max-paths-per-pair", type=int, default=0)
-    ttsp.add_argument("--limit-graphs", type=int, default=0)
-    ttsp.add_argument("--pretty", action="store_true")
-    ttsp.set_defaults(func=cmd_ttsp_search)
-
-    ttsp_queue = sub.add_parser("ttsp-queue", help="emit bounded directed-TTSP LP search queue JSON")
-    ttsp_queue.add_argument("--max-edges", type=int, default=8)
-    ttsp_queue.add_argument("--min-edges", type=int, default=4)
-    ttsp_queue.add_argument("--players", type=int, default=4)
-    ttsp_queue.add_argument("--max-paths-per-pair", type=int, default=0)
-    ttsp_queue.add_argument("--limit-graphs", type=int, default=0)
-    ttsp_queue.add_argument("--queue-min-edges", type=int, default=8)
-    ttsp_queue.add_argument("--quad-limit", type=int, default=5)
-    ttsp_queue.add_argument("--queue-limit", type=int, default=25)
-    ttsp_queue.add_argument("--pretty", action="store_true")
-    ttsp_queue.set_defaults(func=cmd_ttsp_queue)
-
-    prove = sub.add_parser("prove-infinite-primes", help="run the v1 infinite-primes proof workflow")
+    prove = sub.add_parser("prove-infinite-primes", help="run the infinite-primes proof workflow")
     add_common_auth(prove)
     prove.add_argument("--workspace", default=env("COSHEAF_WORKSPACE"), required=not bool(env("COSHEAF_WORKSPACE")))
     prove.add_argument("--workspace-name", default="")

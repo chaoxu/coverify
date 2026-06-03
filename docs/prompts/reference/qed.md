@@ -7,7 +7,7 @@ License: MIT License, copyright 2026 proofQED.
 Paper: https://arxiv.org/abs/2604.24021
 
 QED is a fixed multi-stage proof pipeline. It is useful as a reference for
-prompt checklists, but Coverify v1 should not copy its full workflow shape.
+prompt checklists, but Coverify should not copy its full workflow shape.
 QED stages should map into our three canonical prompt families:
 
 | QED component | Coverify interpretation |

@@ -1,8 +1,8 @@
 # Coflat Context Primer
 
 This document is retained as format context, not as an implementation contract.
-The old harness injected a short guide into explorer/verifier prompts. The new
-tool-harness design has no fixed prompt pipeline yet.
+Older flows injected a short guide into explorer/verifier prompts. The current
+exploration-system design has no fixed prompt pipeline.
 
 ## Doc Map
 
@@ -12,9 +12,10 @@ tool-harness design has no fixed prompt pipeline yet.
 - [References And Future Notes](references.md) explains the paper-inspired
   review and knowledge-format constraints that motivate stable block ids.
 
-The full format lives in Cosheaf/Coflat `FORMAT.md`. A context-building helper
-or workflow skill may include parts of this primer when it asks a model backend
-to write or review Coflat Markdown.
+The full format lives in [Coflat](https://github.com/chaoxu/coflat). Cosheaf
+is available at [chaoxu/cosheaf](https://github.com/chaoxu/cosheaf). A
+context-building helper or workflow skill may include parts of this primer when
+it asks a model backend to write or review Coflat Markdown.
 
 This primer is formatting context, not a planning recipe. If a run needs to
 decide which Coflat pages or blocks matter, use agentic preparation over the
@@ -102,7 +103,7 @@ Common classes: `.theorem`, `.lemma`, `.proposition`, `.corollary`,
 
 For durable mathematical knowledge, theorem-like and obstruction-like blocks
 should have stable ids. PR bodies and review notes should refer to those ids
-when discussing dependencies, proof obligations, or failed routes.
+when discussing dependencies, resolution targets, or failed routes.
 
 If a note contains a result and its argument, prefer this shape:
 

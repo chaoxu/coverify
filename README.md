@@ -1,135 +1,188 @@
 # Coverify
 
-This repository is being rebuilt as a CLI-first Codex tool harness for
-Cosheaf. The previous proof harness was removed; v1 now contains a small
-Cosheaf HTTP client, backend runner wrappers, and one end-to-end proof
-workflow.
+Coverify is a command-line exploration system for using LLMs and other
+mathematical tools on a knowledge base without losing source grounding,
+verification, or durable project state. It is designed to work with
+[Cosheaf](https://github.com/chaoxu/cosheaf), and uses
+[Coflat](https://github.com/chaoxu/coflat) as the mathematical document format.
 
-## Direction
+In practice, Coverify does four things:
 
-Cosheaf is the durable workspace: pages, branches, pull requests, reviews,
-issues, labels, comments, notifications, search, and backlinks. The current
-Cosheaf implementation is Forgejo-backed, but Coverify should treat Cosheaf
-as the only workspace interface.
+1. Takes a user question plus a bounded source bundle from a Cosheaf workspace
+   or local directory.
+2. Prepares the relevant context, preferably with an agentic gatherer that can
+   inspect the allowed files directly.
+3. Calls tools such as reasoners, provers/resolvers, computations, or verifiers
+   under the right output contract and records what was asked, what came back,
+   and which sources were used.
+4. Returns a checked response, or publishes it as a Cosheaf issue comment,
+   review, PR artifact, or knowledge-base update.
 
-The design target:
+The useful loop is:
 
-- durable state lives in Cosheaf artifacts
-- local state is only for currently running processes
-- Codex uses tools over Cosheaf rather than a separate workflow database
-- model backends are pluggable: scripts, CLIs, API wrappers, or remote jobs
-- the first oracle backend is a Codex `gpt-5.5` / `xhigh` text-in/text-out
-  wrapper, with Claude and Antigravity-style wrappers possible later
-- every oracle/backend call records an audit bundle with the exact prompt,
-  answer, metadata, manifest, logs, timing, exit status, and content hashes
-- backend calls may run as simple scripts with logs and timeout wrappers; add
-  job state only when detached or parallel execution exists
-- useful backend/oracle/Codex outputs become reviewed knowledge PRs
-- each bounded or long-running run leaves durable progress in Cosheaf so later
-  runs start from what was learned
-- mathematical reasoning and correctness decisions should be delegated to
-  oracle calls whenever possible; Codex-as-runner mainly prepares context,
-  operates tools, records artifacts, and maps oracle outputs to Cosheaf state
-- when a step needs judgment, prefer agentic preparation over another
-  deterministic Python planning layer; Python should expose tools, validate
-  paths/ranges/citations, record audits, and gate outputs with verification
-
-## Documents
-
-- [Agent Guidance](AGENTS.md): repo-local instruction to prefer agentic
-  preparation with mechanical validation instead of adding planner code.
-- [Skills](skills): durable Coverify operational skills. These are the
-  orchestration entry points for context building, exploration planning, proof
-  attempts, KB writing, PR review, KB management, and the lightweight run loop.
-  [skills/manifest.json](skills/manifest.json) is the completeness source of
-  truth checked by `scripts/check_skills.py`.
-- [Philosophy](docs/philosophy.md): stable principles behind the tool and
-  knowledge-base workflow, such as durable state, topic-shaped knowledge,
-  negative knowledge, review, and retry novelty.
-- [Design](docs/design.md): canonical tool-harness design, including Cosheaf
-  mapping, lightweight context building, review, runs, jobs, progress, and
-  build order.
-- Cosheaf workspace `poa-network-game-clean`: durable mathematical knowledge
-  pages. Local files in this repository are tools, prompts, and scripts, not
-  the source of truth for the PoA wiki.
-- [Experiments](docs/experiments.md): evaluation plan for comparing the
-  Cosheaf-backed loop against one-shot oracles, fixed pipelines, and QED-style
-  strategies.
-- [Eval Problem Selection](docs/eval-problem-selection.md): criteria for
-  promoting prompt-level candidates into Coflat/Cosheaf eval tasks.
-- [Prompt Templates](docs/prompts/README.md): compatibility shims for older
-  docs and PRs. Use skills first.
-- [Reference Prompt Collection](docs/prompts/reference/README.md): local index
-  of prompt patterns from QED, Rethlas, and future external systems.
-- [Coflat Primer](docs/coflat-primer.md): markdown/document-format context.
-- [References And Future Notes](docs/references.md): paper-inspired design
-  lessons and future learning notes.
-- [Research-Agent Paper Deep Dives](docs/reference-deep-dives.md): detailed
-  paper-by-paper notes on mathematical agent systems and their evidence.
-- [LLM Math Failure Modes](docs/llm-math-failure-modes.md): consolidated
-  prover, verifier, and harness failure modes.
-- [Prover-Side Failure Modes](docs/prover-failure-summary.md): shareable
-  summary of prover-side failures and prompt/protocol mitigations.
-
-## Current State
-
-The first runnable surface is a Python CLI package under `src/coverify`.
-Use `PYTHONPATH=src python3 -m coverify --help` from this checkout.
-
-The system has three roles (see [`docs/design.md`](docs/design.md)): a pure
-**engine**, the deterministic **tools** that wrap it, and an imperative
-**orchestrator**. Engine and tools both live in the Python package under
-`src/coverify`, but they are different kinds of thing. `engine` (the backend
-contract and the self-verifying oracle, Cosheaf-agnostic) is the part you
-*verify*. `cosheaf` (the Cosheaf HTTP client), `integration` (fixed-sequence
-commands and reference workflows), and `apps` (eval and search tooling) are the
-tools — the `coverify` CLI surface, which sequences but does not decide. The
-orchestrator is **Codex running the playbooks in [`skills/`](skills)**, which
-drive work by calling those tools. Rule of thumb: pure answer production lives in
-the engine, a fixed sequence is a CLI command, and adaptive judgment-driven
-orchestration is a skill — not Python. Cosheaf owns durable state and
-presentation.
-
-Install repo-owned skills for Codex discovery:
-
-```bash
-python3 scripts/link_skills.py
-python3 scripts/link_skills.py --check
+```text
+question + thread + source bundle
+  -> prepare relevant context
+  -> explore, answer, or run one packaged mathematical resolution
+  -> verify the candidate under the matching contract
+  -> return or publish the checked result
 ```
 
-Implemented commands:
+## Why This Exists
 
-- `login`: exchange Cosheaf username/password for an API token.
-- `create-workspace`: create a new Cosheaf workspace/project; defaults to
-  `--default-md-format coflat`.
-- Primitive Cosheaf operations for Codex-as-operator runs: `set-member`,
-  `tree`, `read-file`, `create-branch`, `write-file`, `delete-file`,
-  `list-issues`, `read-issue`, `read-issue-timeline`, `create-issue`,
-  `edit-issue`, `comment-issue`, `close-issue`, `reopen-issue`,
-  `set-issue-state`, `list-prs`, `read-pr`, `read-pr-context`, `open-pr`,
-  `close-pr`, `review-pr`, and `merge-pr`.
-- `ask-oracle`: send one prompt to the configured backend oracle and record
-  the standard prompt/answer/metadata audit bundle. Transient backend failures
-  can be retried with `--backend-retries`; the default is one retry.
-- `--backend verifying`: a composite self-verifying oracle. It runs a
-  generate → adversarial-verify → adjudicate loop over sub-oracles and returns
-  one answer it has checked, journaling the rounds into the audit bundle.
-  Tune it with `--verify-profile {default,strict}`, `--verify-config <json>`,
-  `--verify-inner-backend`, `--verify-max-rounds`, `--verify-strict`,
-  `--verify-quiet-adjunct`, and `--verify-resume <dir>`.
-- `chat-reply`: treat a Cosheaf issue as a chat thread; read the conversation,
-  run the configured oracle (typically `verifying`), and post one adjudicated
-  reply comment. Durable chat state stays in Cosheaf issues.
-- `run-eval`: run JSONL eval cases against a fixture, script, or explicitly
-  enabled Codex backend and emit a JSON report with grader results and audit
-  artifact links.
-- `ttsp-search`: emit bounded directed-TTSP graphs, terminal pairs, simple
-  paths, and edge vectors as JSON for downstream LP/certificate searches.
-- `ttsp-queue`: reduce a bounded directed-TTSP payload to candidate
-  internal-terminal search tuples for downstream LP/certificate work.
-- `prove-infinite-primes`: build a context pack, call a backend oracle, write
-  `infinite-primes.md` through the local KB-writer step, open a PR, optionally
-  review and merge it, then verify the proof through Cosheaf.
+Some LLMs, theorem tools, and other black-box reasoners are very strong at
+mathematics when given a sharply specified target and the right prompt. The
+prompt can include the statement to resolve, known facts, source context, failed
+routes, and even a required method. If the target says "prove this theorem using
+this route" or "construct a witness with this property," the prover/resolver
+must follow that instruction; the verifier should reject outputs that solve a
+nearby problem or ignore the required method.
+
+Many real problems are not ready for that kind of one-shot call. They need
+exploration first: finding the right formulation, collecting the relevant facts,
+trying routes, learning from failures, and packaging exact targets. Coverify
+exists to make that exploration compound while still using strong
+mathematical-resolution tools when a hard target becomes precise enough.
+
+## Two Contracts
+
+Coverify keeps the system simple by separating two contracts, not by adding a
+large mode hierarchy.
+
+**Exploratory response** is the normal contract for chat, source-grounded
+answers, route exploration, issue triage, status summaries, conjecture shaping,
+and packaging resolution targets. It may answer directly, call tools, or say
+what should be tried next. It must ground repo-specific claims in the source
+bundle and label speculation, gaps, and unsupported claims.
+
+**Mathematical resolution** is the strict contract for one exact hard
+mathematical target. The prompt should contain the exact statement, hypotheses,
+allowed context, and relevant failed routes. The expected output is proof,
+disproof, counterexample, construction/witness, bound/certificate, reduction,
+obstruction, or precise gap, followed by independent verification. This is
+where Coverify should spend the strongest tool budget. "Prover" is acceptable
+shorthand for this tool even when the requested artifact is not literally a
+proof.
+
+An ordinary chat answer is not a separate mode; it is an exploratory response
+with a direct-answer target. A broad "solve this issue" request usually starts
+as exploratory response, then hands one packaged resolution target to the
+prover/resolver if the next mathematical target is clear.
+
+Coverify is for workflows such as:
+
+- answering or exploring a branch-scoped chat question using only the current
+  project files
+- packaging a broad issue into exact mathematical resolution targets
+- asking a strong model for one strict prover/resolver attempt while recording
+  an audit trail
+- verifying whether a proposed argument is source-backed and gap-free enough to
+  publish
+- turning useful model output into a reviewed Cosheaf PR or comment
+- evaluating whether context preparation found the passages a task actually
+  needed
+
+Coverify deliberately does not:
+
+- prove theorems by itself
+- replace a formal verifier or human mathematical review
+- own the wiki, chat UI, issue tracker, or PR system
+- keep hidden long-term project memory outside Cosheaf
+- browse the web or read unrelated local files by default
+- ship project-specific research tools in the public CLI
+
+## Principles
+
+- Durable mathematical state lives in Cosheaf.
+- Local files are tools, prompts, tests, and reproducibility scripts.
+- Python exposes stable mechanisms: source bundles, backend calls, audit
+  bundles, schema checks, path/range validation, and verifier gates.
+- Exploration handles judgment: context selection, route choice, tool use,
+  mathematical reasoning, and correctness review.
+- Deterministic code is added only when the behavior is stable, replayable, and
+  simpler than asking an agent to inspect the allowed context.
+
+## Install
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e .
+coverify --help
+```
+
+From a checkout without installing:
+
+```bash
+PYTHONPATH=src python3 -m coverify --help
+```
+
+## Main Commands
+
+- `ask-oracle`: send one prompt to a configured backend and record an audit
+  bundle. Use it for either contract when the prompt already contains the
+  needed context and rules.
+- `repo-oracle ask`: produce a source-grounded exploratory response against a
+  local source bundle.
+- `repo-oracle gather`: inspect which source passages the gatherer selects.
+- `repo-oracle eval-gather`: run JSONL checks for context-preparation quality.
+- `chat ask`: create or append to a branch-scoped chat issue and respond under
+  the exploratory-response contract.
+- `chat-reply`: read a Cosheaf issue thread, run the oracle, and post a reply.
+- `run-eval`: run JSONL eval cases against a fixture, script, or enabled Codex
+  backend.
+- `seed-research-evals`: seed selected research eval candidates into a Cosheaf
+  workspace.
+- Cosheaf primitives: `tree`, `read-file`, `write-file`, `delete-file`,
+  `create-branch`, issue commands, PR commands, reviews, and merge.
+
+## Examples
+
+Direct oracle call:
+
+```bash
+PYTHONPATH=src python3 -m coverify ask-oracle \
+  --prompt "Resolve the current lemma, or state the precise gap." \
+  --json
+```
+
+Self-verifying fixture smoke:
+
+```bash
+PYTHONPATH=src python3 -m coverify ask-oracle \
+  --backend verifying \
+  --verify-inner-backend fixture \
+  --prompt "Prove that there are infinitely many prime numbers." \
+  --json
+```
+
+Run against a local source bundle:
+
+```bash
+PYTHONPATH=src python3 -m coverify repo-oracle ask \
+  --source-bundle /path/to/source-bundle \
+  --message "What does the current branch establish?" \
+  --json
+```
+
+Evaluate gather quality:
+
+```bash
+PYTHONPATH=src python3 -m coverify repo-oracle eval-gather \
+  --source-bundle /path/to/source-bundle \
+  --cases evals/gather/sample-math-workspace.jsonl
+```
+
+Reply to a Cosheaf issue chat:
+
+```bash
+PYTHONPATH=src python3 -m coverify chat-reply \
+  --workspace my-workspace \
+  --issue 23 \
+  --backend verifying
+```
+
+## Backend Configuration
 
 Common environment variables:
 
@@ -146,155 +199,63 @@ CHATGPT_CLI=chatgpt-cli
 COVERIFY_CHATGPT_TIMEOUT_SECONDS=6000
 ```
 
-Direct oracle call:
+Backends share the same basic contract: prompt in, response out, with audit
+metadata recorded locally. The prompt determines whether the call is a flexible
+exploratory response or a strict mathematical resolution. The current backend
+surfaces include fixture, script, Codex, ChatGPT CLI adapter, QED adapter, and
+the composite `verifying` backend.
 
-```bash
-PYTHONPATH=src python3 -m coverify ask-oracle \
-  --prompt "Give a concise proof attempt for the current lemma." \
-  --json
-```
+## Skills
 
-Self-verifying oracle (deterministic fixture smoke):
+Coverify ships repo-owned Codex skills in [skills](skills). They are the
+preferred operational interface for longer runs:
 
-```bash
-PYTHONPATH=src python3 -m coverify ask-oracle \
-  --backend verifying \
-  --verify-inner-backend fixture \
-  --prompt "Prove that there are infinitely many prime numbers." \
-  --json
-```
+- context building
+- exploration planning
+- mathematical resolution / proof attempts
+- KB writing
+- PR review
+- KB management
+- lightweight run loop
 
-Each run leaves a `verifying` audit bundle whose `journal.json` records the
-generator, the verifier verdicts, and the adjudicator for every round.
-
-Issue chat reply (run the oracle on an issue thread and post the answer):
-
-```bash
-PYTHONPATH=src python3 -m coverify chat-reply \
-  --workspace poa-network-game-clean \
-  --issue 23 \
-  --backend verifying
-```
-
-Smoke eval:
-
-```bash
-PYTHONPATH=src python3 -m coverify run-eval \
-  --backend fixture \
-  --cases evals/smoke.jsonl
-```
-
-Local test suite:
-
-```bash
-PYTHONPATH=src python3 -m unittest discover -s tests
-```
-
-QED backend adapter:
-
-```bash
-ADAPTER="$(pwd)/scripts/qed_backend.py"
-PYTHONPATH=src python3 -m coverify ask-oracle \
-  --backend script \
-  --backend-command "python3 $ADAPTER --qed-root /path/to/QED" \
-  --prompt "Prove that there are infinitely many prime numbers."
-```
-
-For a non-budget smoke of the adapter itself:
-
-```bash
-printf 'Prove that there are infinitely many prime numbers.' \
-  | python3 scripts/qed_backend.py --dry-run --workdir /tmp/coverify-qed-dry-run
-```
-
-ChatGPT Pro/Extended oracle adapter:
-
-```bash
-PYTHONPATH=src python3 -m coverify ask-oracle \
-  --backend script \
-  --backend-timeout 6090 \
-  --backend-command "python3 $(pwd)/scripts/chatgpt_oracle_backend.py" \
-  --prompt "Give a concise proof attempt for the current lemma."
-```
-
-The adapter calls `chatgpt-cli oracle --quiet`, stores the raw ChatGPT JSON in
-the script artifact directory, and returns the JSON `text` field as the
-Coverify oracle answer.
-
-QED with ChatGPT Pro/Extended as its native `chatgpt` model provider:
-
-```bash
-PYTHONPATH=src python3 -m coverify ask-oracle \
-  --backend script \
-  --backend-timeout 21600 \
-  --backend-command "python3 $(pwd)/scripts/qed_backend.py --qed-root /path/to/QED --config /path/to/qed-chatgpt-oracle.yaml --timeout 0" \
-  --prompt "Prove that there are infinitely many prime numbers."
-```
-
-The QED ChatGPT config should define a top-level `chatgpt:` section pointing
-at `chatgpt-cli`, then set the QED roles that should spend the strong oracle
-to `provider: "chatgpt"`. Codex roles remain real Codex roles, so mixed
-configs can use weaker providers for cheaper stages.
-
-Directed TTSP search payload:
-
-```bash
-PYTHONPATH=src python3 -m coverify ttsp-search \
-  --min-edges 2 \
-  --max-edges 4 \
-  --terminal-scope internal \
-  --pretty
-```
-
-Directed TTSP issue-queue payload:
-
-```bash
-PYTHONPATH=src python3 -m coverify ttsp-queue \
-  --min-edges 4 \
-  --max-edges 8 \
-  --queue-min-edges 8 \
-  --queue-limit 25 \
-  --pretty
-```
-
-Issue state preflight:
-
-```bash
-PYTHONPATH=src python3 -m coverify read-issue \
-  --workspace poa-network-game-clean \
-  --issue 23
-PYTHONPATH=src python3 -m coverify read-issue-timeline \
-  --workspace poa-network-game-clean \
-  --issue 23
-PYTHONPATH=src python3 -m coverify list-prs \
-  --workspace poa-network-game-clean \
-  --state open
-PYTHONPATH=src python3 -m coverify read-pr-context \
-  --workspace poa-network-game-clean \
-  --pr 7
-```
-
-Real math-run skeleton:
-
-1. Run `python3 scripts/link_skills.py`.
-2. Use `$coverify-run-loop` for the task.
-3. Refresh issue, PR, and topic-page state with `read-issue`,
-   `read-issue-timeline`, `list-prs`, `tree`, `read-file`, and when reviewing,
-   `read-pr-context`.
-4. Build context with `$coverify-context-builder`, including accepted KB
-   dependencies and nearby "things tried" notes.
-5. Choose one action: plan, attempt, write KB content, clean the KB, or review
-   a PR.
-6. Leave durable state: issue, branch, PR, review, comment, or merged page.
-7. Record `PRIOR_ROUTE_CHECK`, `THINGS_TRIED_UPDATED`, verification, and
-   remaining blocker in the run summary.
-
-Local checks:
+Install or verify the skills:
 
 ```bash
 python3 scripts/link_skills.py
+python3 scripts/link_skills.py --check
+```
+
+## Documents
+
+- [Design](docs/design.md): canonical architecture and workflow contract.
+- [Philosophy](docs/philosophy.md): durable-state and knowledge-base
+  principles.
+- [Repo-Grounded Chat](docs/chat-knowledge-base-oracle-design.md): focused
+  chat/source-bundle design.
+- [Experiments](docs/experiments.md): evaluation strategy.
+- [Eval Problem Selection](docs/eval-problem-selection.md): criteria for
+  promoting math tasks into evals.
+- [Coflat Primer](docs/coflat-primer.md): context for
+  [Coflat](https://github.com/chaoxu/coflat) documents.
+- [References](docs/references.md): paper-inspired design lessons.
+- [Research-Agent Deep Dives](docs/reference-deep-dives.md): detailed
+  summaries of related systems.
+- [LLM Math Failure Modes](docs/llm-math-failure-modes.md): prover, verifier,
+  and system failure taxonomy.
+- [Prover-Side Failure Modes](docs/prover-failure-summary.md): shareable
+  prover failure summary and mitigations.
+
+Prompt files under [docs/prompts](docs/prompts) are compatibility references for
+older flows. Prefer the skills for new operational work.
+
+## Checks
+
+```bash
 python3 scripts/check_skills.py
 python3 scripts/link_skills.py --check
-PYTHONPATH=src python3 -m unittest discover -s tests
 PYTHONPATH=src python3 -m coverify --help
+PYTHONPATH=src python3 -m unittest discover -s tests
 ```
+
+GitHub Actions runs the skill manifest check, installed CLI help, Python syntax
+compile, and the unit test suite.

@@ -13,19 +13,19 @@ Each case has:
 - `must_include`: passages that must appear in the prepared context. Entries may
   be a path string, or an object with `path` and required `text`.
 
-Run the PoA knowledge-base checks against an exported source bundle:
+Run the sample math knowledge-base checks against an exported source bundle:
 
 ```bash
 PYTHONPATH=src python3 -m coverify repo-oracle eval-gather \
   --source-bundle /path/to/source-bundle \
-  --cases evals/gather/poa-network-game-clean.jsonl \
+  --cases evals/gather/sample-math-workspace.jsonl \
   --gatherer-backend codex \
   --gatherer-model gpt-5.5 \
   --gatherer-reasoning-effort medium \
   --allow-codex-backend
 ```
 
-The PoA cases intentionally ask for sections that are far apart in the source
-files. They are intended to evaluate the Codex preparation agent; deterministic
-fallback retrieval may fail some cases by selecting only the highest-scoring
-window.
+The sample cases intentionally ask for sections that are far apart in the
+source files. They are intended to evaluate the Codex preparation agent;
+deterministic fallback retrieval may fail some cases by selecting only the
+highest-scoring window.

@@ -11,6 +11,8 @@ from pathlib import Path
 from coverify.engine.backend import run_script_backend
 from coverify.integration.repo_oracle import (
     build_gatherer_prompt,
+    build_reasoner_prompt,
+    build_verifier_prompt,
     chat_issue_body,
     gather_context,
     load_source_bundle,
@@ -70,13 +72,13 @@ import json
 print(json.dumps({
     "passages": [
         {
-            "path": "poa-bound-summary.md",
+            "path": "project-status.md",
             "line_start": 73,
             "line_end": 84,
-            "purpose": "canonical status table and active fronts",
+            "purpose": "canonical problem table and active fronts",
         }
     ],
-    "notes": ["select canonical status ledger"]
+    "notes": ["select canonical project ledger"]
 }))
 """
 
@@ -120,28 +122,28 @@ class RepoOracleTests(unittest.TestCase):
     def test_gather_context_uses_best_window_not_first_generic_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            (root / "poa-bound-summary.md").write_text(
+            (root / "project-status.md").write_text(
                 "\n".join(
                     [
                         "---",
-                        "id: poa-bound-summary",
-                        "title: PoA Bound Summary",
+                        "id: project-status",
+                        "title: Project Status",
                         "status: accepted",
                         "---",
-                        "# PoA Bound Summary",
+                        "# Project Status",
                         "",
                         "This file is the canonical current project status page.",
                         "",
                         *[f"Filler line {i}" for i in range(50)],
-                        "## Current Working Bound Table",
+                        "## Current Problem Table",
                         "",
-                        "| Problem | Workspace lower bound | Workspace upper bound | Current status |",
-                        "| --- | ---: | ---: | --- |",
-                        "| Directed TTSP with arbitrary terminal pairs | at least $5/3$ | $5/2$ | current target barrier |",
+                        "| Problem | Current status | Next check |",
+                        "| --- | --- | --- |",
+                        "| Termination monovariant | route selected | check both operations |",
                         "",
                         "## Active Fronts",
                         "",
-                        "- improve the lower bound beyond $5/3$.",
+                        "- formalize construction cases.",
                     ],
                 ),
                 encoding="utf-8",
@@ -150,35 +152,38 @@ class RepoOracleTests(unittest.TestCase):
 
             gathered = gather_context(
                 bundle,
-                question="What is the current status, what is successful, and what can we work on in the future?",
+                question=(
+                    "What does the Current Problem Table say about the "
+                    "termination monovariant, and what are the Active Fronts?"
+                ),
                 max_context_chars=4_000,
             )
 
         self.assertEqual(len(gathered.snippets), 1)
-        self.assertIn("Current Working Bound Table", gathered.snippets[0].text)
-        self.assertIn("at least $5/3$", gathered.snippets[0].text)
+        self.assertIn("Current Problem Table", gathered.snippets[0].text)
+        self.assertIn("Termination monovariant", gathered.snippets[0].text)
 
     def test_llm_gatherer_plan_selects_requested_sections(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "source"
             root.mkdir()
-            (root / "poa-bound-summary.md").write_text(
+            (root / "project-status.md").write_text(
                 "\n".join(
                     [
-                        "# PoA Bound Summary",
+                        "# Project Status",
                         "",
                         "Introductory current status line.",
                         "",
                         *[f"Filler line {i}" for i in range(70)],
-                        "## Current Working Bound Table",
+                        "## Current Problem Table",
                         "",
-                        "| Problem | Workspace lower bound | Workspace upper bound | Current status |",
-                        "| --- | ---: | ---: | --- |",
-                        "| Directed TTSP with arbitrary terminal pairs | at least $5/3$ | $5/2$ | current target barrier |",
+                        "| Problem | Current status | Next check |",
+                        "| --- | --- | --- |",
+                        "| Termination monovariant | route selected | check both operations |",
                         "",
                         "## Active Fronts",
                         "",
-                        "- improve the lower bound beyond $5/3$.",
+                        "- formalize construction cases.",
                     ],
                 ),
                 encoding="utf-8",
@@ -198,16 +203,16 @@ class RepoOracleTests(unittest.TestCase):
             )
 
         self.assertEqual(gathered.gatherer_provider, "script")
-        self.assertEqual({snippet.path for snippet in gathered.snippets}, {"poa-bound-summary.md"})
+        self.assertEqual({snippet.path for snippet in gathered.snippets}, {"project-status.md"})
         combined = "\n".join(snippet.text for snippet in gathered.snippets)
-        self.assertIn("Current Working Bound Table", combined)
+        self.assertIn("Current Problem Table", combined)
         self.assertIn("Active Fronts", combined)
-        self.assertIn("at least $5/3$", combined)
+        self.assertIn("Termination monovariant", combined)
 
     def test_gatherer_prompt_invites_agentic_source_bundle_inspection(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            (root / "ledger.md").write_text("# Ledger\n\n## Current Working Bound Table\n", encoding="utf-8")
+            (root / "ledger.md").write_text("# Ledger\n\n## Current Problem Table\n", encoding="utf-8")
             bundle = load_source_bundle(root, source_id="seeded:prompt")
 
             prompt = build_gatherer_prompt(
@@ -221,6 +226,37 @@ class RepoOracleTests(unittest.TestCase):
         self.assertIn('"passages"', prompt)
         self.assertIn('"line_start"', prompt)
         self.assertNotIn('"requests"', prompt)
+
+    def test_repo_oracle_prompts_use_exploratory_response_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "lemma.md").write_text("Local lemma: A implies B.", encoding="utf-8")
+            bundle = load_source_bundle(root, source_id="seeded:contract")
+            gathered = gather_context(bundle, question="Can we prove B from A?")
+
+            reasoner_prompt = build_reasoner_prompt(
+                question="Can we prove B from A?",
+                thread_context="",
+                bundle=bundle,
+                gathered=gathered,
+            )
+            verifier_prompt = build_verifier_prompt(
+                question="Can we prove B from A?",
+                thread_context="",
+                bundle=bundle,
+                gathered=gathered,
+                candidate="A candidate response.",
+            )
+
+        self.assertIn("Repo-Snapshot Exploratory Response", reasoner_prompt)
+        self.assertIn("mathematical-resolution targets", reasoner_prompt)
+        self.assertIn("counterexample, construction, witness", reasoner_prompt)
+        self.assertIn("any stronger status than", reasoner_prompt)
+        self.assertIn("the evidence supports", reasoner_prompt)
+        self.assertIn("exploratory-response contract", verifier_prompt)
+        self.assertIn("construction attempt", verifier_prompt)
+        self.assertIn("certificates, reductions, obstructions", verifier_prompt)
+        self.assertIn("required a particular theorem", verifier_prompt)
 
     def test_gatherer_passage_ranges_are_extracted_exactly(self) -> None:
         script = """#!/usr/bin/env python3
@@ -270,8 +306,8 @@ import json
 print(json.dumps({
     "requests": [
         {
-            "path": "undirected-sp-underlay.md",
-            "queries": ["Canonical 15/7 Diamond Lower Bound"],
+            "path": "construction-notes.md",
+            "queries": ["Canonical Distinct Pair Sum Construction"],
         }
     ]
 }))
@@ -279,27 +315,27 @@ print(json.dumps({
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "source"
             root.mkdir()
-            (root / "undirected-sp-underlay.md").write_text(
+            (root / "construction-notes.md").write_text(
                 "\n".join(
                     [
-                        "# Undirected SP-Underlay PoA Notes",
+                        "# Construction Notes",
                         "",
-                        "This overview mentions lower bounds and underlay models.",
+                        "This overview mentions several construction templates.",
                         "",
-                        *[f"Intro lower-bound filler {i}" for i in range(60)],
-                        "## Canonical 15/7 Diamond Lower Bound",
+                        *[f"Intro construction filler {i}" for i in range(60)],
+                        "## Canonical Distinct Pair Sum Construction",
                         "",
-                        "The diamond construction is the required arbitrary-terminal source.",
+                        "The residue-class construction is the required source.",
                     ],
                 ),
                 encoding="utf-8",
             )
             gatherer_script = write_script(Path(tmpdir) / "gather.py", script)
-            bundle = load_source_bundle(root, source_id="seeded:diamond")
+            bundle = load_source_bundle(root, source_id="seeded:construction")
 
             gathered = gather_context(
                 bundle,
-                question="Explain the 15/7 diamond lower bound.",
+                question="Explain the distinct pair sum construction.",
                 gatherer_backend=lambda prompt: run_script_backend(
                     prompt,
                     command=f"{sys.executable} {gatherer_script}",
@@ -308,8 +344,8 @@ print(json.dumps({
             )
 
         self.assertEqual(len(gathered.snippets), 1)
-        self.assertIn("Canonical 15/7 Diamond Lower Bound", gathered.snippets[0].text)
-        self.assertIn("diamond construction is the required arbitrary-terminal source", gathered.snippets[0].text)
+        self.assertIn("Canonical Distinct Pair Sum Construction", gathered.snippets[0].text)
+        self.assertIn("residue-class construction is the required source", gathered.snippets[0].text)
 
     def test_llm_gatherer_overlapping_section_queries_are_merged(self) -> None:
         script = """#!/usr/bin/env python3
@@ -318,8 +354,8 @@ import json
 print(json.dumps({
     "requests": [
         {
-            "path": "directed-ttsp.md",
-            "queries": ["Symmetric Directed TTSP Bounds", "Internal-Terminal 4/3 Example"],
+            "path": "combinatorics-routes.md",
+            "queries": ["Termination Monovariant Route", "Distinct Pair Sums Construction"],
         }
     ]
 }))
@@ -327,15 +363,15 @@ print(json.dumps({
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "source"
             root.mkdir()
-            (root / "directed-ttsp.md").write_text(
+            (root / "combinatorics-routes.md").write_text(
                 "\n".join(
                     [
-                        "# Directed TTSP",
-                        "## Symmetric Directed TTSP Bounds",
-                        "The accepted symmetric lower bound is 27/19.",
+                        "# Combinatorics Routes",
+                        "## Termination Monovariant Route",
+                        "The route checks both replacement operations.",
                         *[f"Filler line {i}" for i in range(50)],
-                        "## Internal-Terminal 4/3 Example",
-                        "This example is not the best lower bound for the broad arbitrary-terminal directed TTSP row.",
+                        "## Distinct Pair Sums Construction",
+                        "The construction is split by residue classes modulo 5.",
                     ],
                 ),
                 encoding="utf-8",
@@ -345,7 +381,7 @@ print(json.dumps({
 
             gathered = gather_context(
                 bundle,
-                question="What is the directed arbitrary-terminal status?",
+                question="What are the termination and pair-sum routes?",
                 gatherer_backend=lambda prompt: run_script_backend(
                     prompt,
                     command=f"{sys.executable} {gatherer_script}",
@@ -354,8 +390,8 @@ print(json.dumps({
             )
 
         self.assertEqual(len(gathered.snippets), 1)
-        self.assertIn("The accepted symmetric lower bound is 27/19.", gathered.snippets[0].text)
-        self.assertIn("not the best lower bound for the broad arbitrary-terminal", gathered.snippets[0].text)
+        self.assertIn("checks both replacement operations", gathered.snippets[0].text)
+        self.assertIn("residue classes modulo 5", gathered.snippets[0].text)
 
     def test_proof_requests_are_strong_even_when_wording_is_simple(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -552,7 +588,7 @@ print(json.dumps({
         self.assertEqual(result.verification, "failed")
         self.assertIn("could not confidently verify", result.answer)
 
-    def test_repo_oracle_cli_emits_json_for_other_harnesses(self) -> None:
+    def test_repo_oracle_cli_emits_json_for_other_tools(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "source"
             root.mkdir()
