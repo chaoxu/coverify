@@ -279,7 +279,7 @@ class RepoOracleTests(unittest.TestCase):
                         "",
                         "## Verification Discipline",
                         "",
-                        "Every repo-specific definition, witness, obstruction, current profile, and next-step claim must include an exact project-local source reference in the form `FILE.md#Lx-Ly`.",
+                        "Every repo-specific definition, witness, obstruction, current profile, and next-step claim must include an exact project-local source reference in the form `FILE.md#Lx-y`.",
                     ],
                 ),
                 encoding="utf-8",
@@ -300,7 +300,8 @@ class RepoOracleTests(unittest.TestCase):
         self.assertIn("## Verification Discipline", prepared.prompt)
         self.assertIn("Every repo-specific definition", prepared.prompt)
         self.assertIn("must include a source reference", prepared.prompt)
-        self.assertIn("[FOUR_TERMINAL_CERTIFICATE.md#L11-37]", prepared.prompt)
+        self.assertIn("FOUR_TERMINAL_CERTIFICATE.md#L11-37", prepared.prompt)
+        self.assertIn("Do not write source refs as Markdown links", prepared.prompt)
 
     def test_resolution_prompt_treats_project_research_loop_as_executable_skill(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
