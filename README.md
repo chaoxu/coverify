@@ -75,8 +75,11 @@ Cosheaf workspace should give agents a small bootstrap file such as
 `AGENTS.md` that points to the canonical project or task documents. A
 `PROJECT.md` is a useful convention for orientation: the overall goal,
 mathematical objects, available tools, and background that agents should
-understand before doing work. It does not need to predeclare a full working
-contract.
+understand before doing work. If it contains a `## Research Loop` section,
+Coverify treats that section as a project-local executable research skill: the
+loop is golden-repo control state that describes how one oracle/prover answer
+should become verified, durable Cosheaf progress and how the next iteration
+should be shaped.
 
 Concrete work usually belongs in issues or task pages. A local issue can define
 the next target, checker, progress measure, trial record format, or acceptance
@@ -96,7 +99,7 @@ Cosheaf.
 
 1. Create or choose a Cosheaf workspace.
 2. Add a short `AGENTS.md` and a `PROJECT.md` that orient agents to the goal,
-   objects, background, and available tools.
+   objects, background, available tools, and optional `## Research Loop`.
 3. Put concrete work in issues or task pages.
 4. Let Coverify answer, explore, write comments, create branches, open PRs, and
    run packaged mathematical-resolution calls against that workspace.

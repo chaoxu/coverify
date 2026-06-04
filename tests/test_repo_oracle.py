@@ -262,6 +262,48 @@ class RepoOracleTests(unittest.TestCase):
         self.assertNotIn("COVERIFY_PROMPT.md:1", prepared.prompt)
         self.assertEqual([source["path"] for source in prepared.sources], ["PROJECT.md"])
 
+    def test_resolution_prompt_treats_project_research_loop_as_executable_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "PROJECT.md").write_text(
+                "\n".join(
+                    [
+                        "# Project",
+                        "",
+                        "This project has a local certificate target.",
+                        "",
+                        "## Research Loop",
+                        "",
+                        "This loop is the project-local research skill for the run.",
+                        "",
+                        "1. Read the accepted certificate state.",
+                        "2. Produce one checkable artifact.",
+                        "3. Verify or falsify it.",
+                        "4. Write a compact durable update that changes the next run.",
+                        "",
+                        "## Background",
+                        "",
+                        "Do not include this paragraph in the loop block.",
+                    ],
+                ),
+                encoding="utf-8",
+            )
+            bundle = load_source_bundle(root)
+
+            prepared = prepare_repo_oracle_llm_input(
+                bundle=bundle,
+                question="Produce exactly one verifier-ready certificate.",
+                prompt_contract=PROMPT_CONTRACT_RESOLUTION,
+                prompt_context=PROMPT_CONTEXT_DIGEST,
+            )
+
+        self.assertEqual(prepared.project_research_loop_path, "PROJECT.md")
+        self.assertEqual(prepared.prompt_audit["project_research_loop_path"], "PROJECT.md")
+        self.assertIn("## Project research loop", prepared.prompt)
+        self.assertIn("project-local research skill", prepared.prompt)
+        self.assertIn("Write a compact durable update", prepared.prompt)
+        self.assertIn("Follow the project research loop", prepared.prompt)
+
     def test_short_source_file_is_not_cut_mid_paragraph(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

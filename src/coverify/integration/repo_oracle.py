@@ -87,6 +87,11 @@ PROMPT_PROFILE_FRONTMATTER_KEYS = (
     "coverify_prompt_profile: yes",
 )
 
+PROJECT_RESEARCH_LOOP_HEADINGS = (
+    "research loop",
+    "coverify research loop",
+)
+
 DIGEST_IMPORTANT_TERMS = {
     "attack",
     "bottleneck",
@@ -154,6 +159,13 @@ class SourceSnippet:
 
 @dataclass(frozen=True)
 class PromptProfile:
+    path: str
+    content: str
+    sha256: str
+
+
+@dataclass(frozen=True)
+class ProjectResearchLoop:
     path: str
     content: str
     sha256: str
@@ -235,6 +247,7 @@ class RepoOracleLLMInput:
     prompt_context: str
     prompt_audit: dict[str, object]
     prompt_profile_path: str | None
+    project_research_loop_path: str | None
     source_id: str
     snapshot: str
     source_bundle_path: str
@@ -252,6 +265,7 @@ class RepoOracleLLMInput:
             "prompt_context": self.prompt_context,
             "prompt_audit": self.prompt_audit,
             "prompt_profile_path": self.prompt_profile_path,
+            "project_research_loop_path": self.project_research_loop_path,
             "source_id": self.source_id,
             "snapshot": self.snapshot,
             "source_bundle_path": self.source_bundle_path,
@@ -897,6 +911,56 @@ def find_prompt_profile(bundle: SourceBundle) -> PromptProfile | None:
     return None
 
 
+def _heading_level(line: str) -> int | None:
+    stripped = line.strip()
+    match = re.match(r"^(#{1,6})\s+(.+?)\s*$", stripped)
+    if match is None:
+        return None
+    return len(match.group(1))
+
+
+def _heading_text(line: str) -> str | None:
+    stripped = line.strip()
+    match = re.match(r"^#{1,6}\s+(.+?)\s*$", stripped)
+    if match is None:
+        return None
+    return match.group(1).strip().lower()
+
+
+def _extract_markdown_section(text: str, headings: tuple[str, ...]) -> str | None:
+    lines = _strip_frontmatter(text).splitlines()
+    wanted = {heading.lower() for heading in headings}
+    start: int | None = None
+    level: int | None = None
+    for index, line in enumerate(lines):
+        heading_text = _heading_text(line)
+        if heading_text in wanted:
+            start = index
+            level = _heading_level(line)
+            break
+    if start is None or level is None:
+        return None
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        next_level = _heading_level(lines[index])
+        if next_level is not None and next_level <= level:
+            end = index
+            break
+    section = "\n".join(lines[start:end]).strip()
+    return section or None
+
+
+def find_project_research_loop(bundle: SourceBundle) -> ProjectResearchLoop | None:
+    by_path = {file.path: file for file in bundle.files}
+    file = by_path.get("PROJECT.md")
+    if file is None:
+        return None
+    section = _extract_markdown_section(file.content, PROJECT_RESEARCH_LOOP_HEADINGS)
+    if section is None:
+        return None
+    return ProjectResearchLoop(path=file.path, content=section, sha256=file.sha256)
+
+
 def _strip_frontmatter(text: str) -> str:
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
@@ -1035,6 +1099,10 @@ def _digest_markdown(text: str, *, question: str, max_chars: int = 1_300) -> str
 
 def _normalize_prompt_profile(profile: PromptProfile) -> str:
     return _digest_markdown(profile.content, question="coverify prompt profile", max_chars=2_200)
+
+
+def _normalize_project_research_loop(loop: ProjectResearchLoop) -> str:
+    return _digest_markdown(loop.content, question="coverify executable project research loop", max_chars=2_800)
 
 
 def _format_context_digest(snippets: list[SourceSnippet], *, question: str) -> str:
@@ -1271,6 +1339,7 @@ def build_resolution_prompt(
     gathered: GatheredContext,
     prompt_context: str = PROMPT_CONTEXT_DIGEST,
     prompt_profile: PromptProfile | None = None,
+    project_research_loop: ProjectResearchLoop | None = None,
 ) -> str:
     warnings = "\n".join(f"- {warning}" for warning in gathered.warnings) or "- none"
     profile_block = ""
@@ -1282,6 +1351,20 @@ def build_resolution_prompt(
                 f"- sha256: {prompt_profile.sha256}",
                 "",
                 _normalize_prompt_profile(prompt_profile),
+                "",
+            ],
+        )
+    loop_block = ""
+    if project_research_loop is not None:
+        loop_block = "\n".join(
+            [
+                "## Project research loop",
+                f"- source: {project_research_loop.path}",
+                f"- sha256: {project_research_loop.sha256}",
+                "",
+                "Treat this section as an executable project-local research skill for this run. It is golden-repo control state, not passive background: it defines how one oracle answer should become verified, durable project progress and how the next iteration should be shaped.",
+                "",
+                _normalize_project_research_loop(project_research_loop),
                 "",
             ],
         )
@@ -1337,6 +1420,7 @@ def build_resolution_prompt(
             warnings,
             "",
             profile_block,
+            loop_block,
             "## Current chat thread",
             thread_context.strip() or "(no prior thread context supplied)",
             "",
@@ -1349,6 +1433,7 @@ def build_resolution_prompt(
             "## Required response behavior",
             "- Give one artifact, not multiple alternate routes.",
             "- Preserve the problem scope and all forced methods, construction shapes, output formats, and constraints from the user target and allowed context.",
+            "- Follow the project research loop when it is present; make the answer usable as one loop iteration, not just as a standalone response.",
             "- Follow the project prompt profile output shape exactly when it defines one.",
             "- State unsupported computation as an attack or gap, not as proof.",
             "- Use TeX math syntax for formulas, constants, inequalities, and domains.",
@@ -1367,6 +1452,7 @@ def build_repo_oracle_prompt(
     prompt_contract: str = PROMPT_CONTRACT_EXPLORATORY,
     prompt_context: str = PROMPT_CONTEXT_RAW,
     prompt_profile: PromptProfile | None = None,
+    project_research_loop: ProjectResearchLoop | None = None,
 ) -> str:
     if prompt_contract == PROMPT_CONTRACT_RESOLUTION:
         return build_resolution_prompt(
@@ -1376,6 +1462,7 @@ def build_repo_oracle_prompt(
             gathered=gathered,
             prompt_context=prompt_context,
             prompt_profile=prompt_profile,
+            project_research_loop=project_research_loop,
         )
     if prompt_contract != PROMPT_CONTRACT_EXPLORATORY:
         raise ValueError(f"unknown prompt contract: {prompt_contract}")
@@ -1396,6 +1483,7 @@ def audit_repo_oracle_prompt(
     bundle: SourceBundle,
     gathered: GatheredContext,
     prompt_profile: PromptProfile | None,
+    project_research_loop: ProjectResearchLoop | None,
 ) -> dict[str, object]:
     issues: list[dict[str, str]] = []
 
@@ -1469,6 +1557,7 @@ def audit_repo_oracle_prompt(
         "prompt_contract": prompt_contract,
         "prompt_context": prompt_context,
         "prompt_profile_path": prompt_profile.path if prompt_profile is not None else None,
+        "project_research_loop_path": project_research_loop.path if project_research_loop is not None else None,
         "prompt_chars": len(prompt),
         "source_context_chars": sum(len(snippet.text) for snippet in gathered.snippets),
         "rendered_context_chars": len(
@@ -1634,6 +1723,7 @@ def prepare_repo_oracle_llm_input(
     if prompt_context not in PROMPT_CONTEXTS:
         raise ValueError(f"unknown prompt context: {prompt_context}")
     prompt_profile = find_prompt_profile(bundle)
+    project_research_loop = find_project_research_loop(bundle)
     if gatherer_configured:
         warnings: list[str] = []
         if bundle.omitted:
@@ -1656,6 +1746,7 @@ def prepare_repo_oracle_llm_input(
                 "prompt_contract": prompt_contract,
                 "prompt_context": prompt_context,
                 "prompt_profile_path": prompt_profile.path if prompt_profile is not None else None,
+                "project_research_loop_path": project_research_loop.path if project_research_loop is not None else None,
                 "prompt_chars": len(prompt),
                 "source_context_chars": 0,
                 "source_count": 0,
@@ -1663,6 +1754,7 @@ def prepare_repo_oracle_llm_input(
                 "ok": True,
             },
             prompt_profile_path=prompt_profile.path if prompt_profile is not None else None,
+            project_research_loop_path=project_research_loop.path if project_research_loop is not None else None,
             source_id=bundle.source_id,
             snapshot=bundle.snapshot,
             source_bundle_path=str(bundle.root),
@@ -1692,6 +1784,7 @@ def prepare_repo_oracle_llm_input(
         prompt_contract=prompt_contract,
         prompt_context=prompt_context,
         prompt_profile=prompt_profile,
+        project_research_loop=project_research_loop,
     )
     return RepoOracleLLMInput(
         step="answer",
@@ -1706,8 +1799,10 @@ def prepare_repo_oracle_llm_input(
             bundle=bundle,
             gathered=gathered,
             prompt_profile=prompt_profile,
+            project_research_loop=project_research_loop,
         ),
         prompt_profile_path=prompt_profile.path if prompt_profile is not None else None,
+        project_research_loop_path=project_research_loop.path if project_research_loop is not None else None,
         source_id=bundle.source_id,
         snapshot=bundle.snapshot,
         source_bundle_path=str(bundle.root),
@@ -1765,6 +1860,7 @@ def run_repo_oracle(
     if prompt_context not in PROMPT_CONTEXTS:
         raise ValueError(f"unknown prompt context: {prompt_context}")
     prompt_profile = find_prompt_profile(bundle)
+    project_research_loop = find_project_research_loop(bundle)
     gathered = gather_context(
         bundle,
         question=question,
@@ -1785,6 +1881,7 @@ def run_repo_oracle(
         prompt_contract=prompt_contract,
         prompt_context=prompt_context,
         prompt_profile=prompt_profile,
+        project_research_loop=project_research_loop,
     )
     answer_result = answer_backend(prompt)
     candidate_answer, citation_warnings = normalize_answer_citations(answer_result.answer, gathered.snippets)

@@ -347,10 +347,15 @@ branches, open PRs, and run oracle calls. The day-to-day Codex session should
 start in the project workdir and use Coverify skills plus the scaffolded
 `bin/coverify` wrapper. The durable project state remains in Cosheaf.
 
-`PROJECT.md` is orientation. It should help agents understand the goal,
-mathematical objects, background, and available tools. Concrete work should
-usually be expressed as issues or task pages. A task can add a checker, score,
-or executable script later when it becomes useful.
+`PROJECT.md` is orientation and may define a project-local research skill. It
+should help agents understand the goal, mathematical objects, background, and
+available tools. When it contains a `## Research Loop` section, Coverify injects
+that section into resolution prompts as executable loop guidance. This makes the
+golden repo control how future runs operate: one answer should produce or
+obstruct a checkable artifact, feed verification or review, and change durable
+Cosheaf state for the next iteration. Concrete work should usually be expressed
+as issues or task pages. A task can add a checker, score, or executable script
+later when it becomes useful.
 
 Changing Coverify during a project is allowed, but it is harness work:
 
