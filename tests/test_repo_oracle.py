@@ -262,6 +262,46 @@ class RepoOracleTests(unittest.TestCase):
         self.assertNotIn("COVERIFY_PROMPT.md:1", prepared.prompt)
         self.assertEqual([source["path"] for source in prepared.sources], ["PROJECT.md"])
 
+    def test_resolution_prompt_preserves_late_profile_citation_discipline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "COVERIFY_PROMPT.md").write_text(
+                "\n".join(
+                    [
+                        "---",
+                        "coverify_prompt_profile: true",
+                        "---",
+                        "# Prompt Profile",
+                        "",
+                        "Ask for one local certificate artifact.",
+                        "",
+                        *[f"Filler profile guidance {index}." for index in range(180)],
+                        "",
+                        "## Verification Discipline",
+                        "",
+                        "Every repo-specific definition, witness, obstruction, current profile, and next-step claim must include an exact project-local source reference in the form `FILE.md#Lx-Ly`.",
+                    ],
+                ),
+                encoding="utf-8",
+            )
+            (root / "PROJECT.md").write_text(
+                "# Project\n\nThe exact target inequality is $R \\le L/c$.\n",
+                encoding="utf-8",
+            )
+            bundle = load_source_bundle(root)
+
+            prepared = prepare_repo_oracle_llm_input(
+                bundle=bundle,
+                question="Produce exactly one verifier-ready certificate.",
+                prompt_contract=PROMPT_CONTRACT_RESOLUTION,
+                prompt_context=PROMPT_CONTEXT_DIGEST,
+            )
+
+        self.assertIn("## Verification Discipline", prepared.prompt)
+        self.assertIn("Every repo-specific definition", prepared.prompt)
+        self.assertIn("must include a source reference", prepared.prompt)
+        self.assertIn("[FOUR_TERMINAL_CERTIFICATE.md#L11-37]", prepared.prompt)
+
     def test_resolution_prompt_treats_project_research_loop_as_executable_skill(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

@@ -1098,7 +1098,7 @@ def _digest_markdown(text: str, *, question: str, max_chars: int = 1_300) -> str
 
 
 def _normalize_prompt_profile(profile: PromptProfile) -> str:
-    return _digest_markdown(profile.content, question="coverify prompt profile", max_chars=2_200)
+    return _digest_markdown(profile.content, question="coverify prompt profile", max_chars=8_000)
 
 
 def _normalize_project_research_loop(loop: ProjectResearchLoop) -> str:
@@ -1435,6 +1435,11 @@ def build_resolution_prompt(
             "- Preserve the problem scope and all forced methods, construction shapes, output formats, and constraints from the user target and allowed context.",
             "- Follow the project research loop when it is present; make the answer usable as one loop iteration, not just as a standalone response.",
             "- Follow the project prompt profile output shape exactly when it defines one.",
+            "- Every repo-specific definition, formula, witness, obstruction, current profile, prior-failure status, and next-step claim must include a source reference.",
+            "- Use exact gathered source-range links, e.g. `[FOUR_TERMINAL_CERTIFICATE.md#L11-37](FOUR_TERMINAL_CERTIFICATE.md#L11-37)`.",
+            "- Do not use bare filenames, `path.md:10-40`, or backticked source refs as citations.",
+            "- Do not invent narrower line citations; if the snippet header is `a.md:10-40`, cite `[a.md#L10-40](a.md#L10-40)`.",
+            "- Standard mathematical facts and algebra derived entirely inside the answer do not need citations.",
             "- State unsupported computation as an attack or gap, not as proof.",
             "- Use TeX math syntax for formulas, constants, inequalities, and domains.",
             "- Do not hard-wrap normal prose paragraphs at arbitrary source-column widths; write each prose paragraph as one logical source line.",
