@@ -1437,7 +1437,7 @@ def build_resolution_prompt(
             "- Follow the project prompt profile output shape exactly when it defines one.",
             "- Every repo-specific definition, formula, witness, obstruction, current profile, prior-failure status, and next-step claim must include a source reference.",
             "- Use exact standalone gathered source refs, e.g. `FOUR_TERMINAL_CERTIFICATE.md#L11-37`; Coverify will link-normalize them.",
-            "- Do not write source refs as Markdown links, bare filenames, `path.md:10-40`, `path.md#L10-L40`, or backticked citations.",
+            "- Do not write source refs as Markdown links, bare filenames, colon ranges, second-L ranges, or backticked citations.",
             "- Do not invent narrower line citations; if the snippet header is `a.md:10-40`, cite `[a.md#L10-40](a.md#L10-40)`.",
             "- Standard mathematical facts and algebra derived entirely inside the answer do not need citations.",
             "- State unsupported computation as an attack or gap, not as proof.",
