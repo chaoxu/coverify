@@ -21,6 +21,11 @@ When a candidate needs judgment about relevant context, let the preparer or
 oracle inspect the allowed material and return a bounded artifact. The harness
 should validate paths, ranges, citations, schemas, and verdicts mechanically.
 
+For STAR-style harness comparisons, freeze the problem set before changing the
+prompt or workflow. The point is to measure whether prepared prompts, visible
+state, verifier challenge, or meta-strategy guidance improve outcomes under the
+same budget; do not keep swapping tasks until a heavier workflow looks good.
+
 ## Coflat Shape
 
 Each promoted eval should create:
@@ -33,6 +38,11 @@ Each promoted eval should create:
 
 The score should count reviewed progress: solved proof, repaired proof,
 correct rejection, useful obstruction, and avoidance of repeated failed routes.
+
+A STAR-style candidate should also have a clear final judge: known numeric
+answer, hidden reference proof, finite checker, or reviewer rubric. It should
+be hard enough that a one-shot call is fragile, but not so open-ended that the
+experiment can only measure vibes.
 
 ## QED Strategy Probe
 

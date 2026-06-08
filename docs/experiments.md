@@ -48,7 +48,10 @@ for all baselines.
 4. **QED as backend**: QED receives a clean context pack and returns output;
    Coverify writes useful output as a PR and sends it through the normal
    review gate.
-5. **Coverify full loop**: Codex operator, context packs, optional oracle
+5. **STAR-style stateful run**: the same Coverify tools, but with an explicit
+   visible attempt state: prepared prompt, current plan, step reports, verifier
+   objections, replans, failed-route notes, and final artifact.
+6. **Coverify full loop**: Codex operator, context packs, optional oracle
    calls, PR review, repair, and merged knowledge.
 
 QED should be treated as a strategy provider, not as a competitor that must be
@@ -88,6 +91,12 @@ unknown mathematics.
   an uncovered case set.
   Purpose: test AutoResearch-style keep/discard loops without adding a new
   Coverify mode or domain-specific Coverify code.
+- **T6 STAR-style known-answer challenge set**: fixed competition-style or
+  extracted proof tasks where a final answer or proof can be judged after the
+  run.
+  Purpose: test whether prepared prompts, visible state, verifier challenge,
+  and meta-strategy guidance improve solved-rate or useful-failure rate under
+  a fixed model and budget.
 
 ## Metrics
 
@@ -111,6 +120,9 @@ Secondary metrics:
 - Context-pack size and citation coverage.
 - Cost split between operator, oracle, and reviewer calls.
 - Fraction of useful oracle or QED output that becomes reviewed knowledge.
+- Ablation delta: how much each added harness element changes success, false
+  positives, repeated-route rate, and useful-failure production compared with
+  the simplest direct call under the same budget.
 
 Avoid using final-proof success as the only score. On hard mathematics, a
 correct obstruction, sharpened lemma, or rejected false path is real progress.
@@ -213,6 +225,19 @@ PYTHONPATH=src python3 -m coverify run-eval \
    - Give each system the same rejected PR feedback.
    - Measure whether it can repair the proof without changing the problem.
    - Goal: test progress after reviewer intervention.
+
+6. **STAR-style eval discipline**
+   - Pick a small frozen set of known-answer math tasks before tuning prompts.
+   - Run direct strong model, `prepare-llm` plus strong model, verifying
+     backend, visible state trace, and visible state plus a Meta-Strategist
+     prompt under the same budget.
+   - For each task, keep the source bundle, prepared prompt, current plan,
+     step reports, verifier objections, replans, code/checker artifacts when
+     used, final answer, and judge/reviewer decision.
+   - Score final correctness, verifier false positives, target drift,
+     repeated failed routes, useful obstruction reports, and cost.
+   - Goal: learn whether any STAR-inspired harness element helps Coverify
+     before turning it into default workflow machinery.
 
 ## Experiment Artifacts
 
