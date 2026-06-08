@@ -119,6 +119,29 @@ Design lessons:
 - Do not add a scheduler, learned prioritizer, or multi-agent allocator until
   the single-runner issue/PR loop is proven.
 
+## STAR-PólyaMath
+
+**STAR-PólyaMath: Multi-Agent Reasoning under Persistent Meta-Strategic Supervision**, Wu et al., arXiv:2605.19338, 2026.
+
+Links:
+
+- Paper: https://arxiv.org/abs/2605.19338
+- Code: https://github.com/Julius-Woo/STAR-PolyaMath
+
+What matters:
+
+- The paper frames long-horizon math failures as hallucination accumulation, memory fragmentation, and poor reasoning/tool balance.
+- The system uses a reasoning-free Python orchestrator with Reasoner, Verifier, and persistent Meta-Strategist roles, plus nested challenge, step, and replan loops.
+- The repo describes a self-contained scratch directory with `problem.md`, `plan.md`, `PROBLEM_STATE.md`, `state.json`, per-step reports, verifier notes, debate transcripts, code, archives, and final solution files.
+- The authors report strong competition-math results and ablations where removing framework components weakens performance; this is useful evidence but still needs careful reading before it becomes Coverify design.
+
+Design lessons:
+
+- Persistent, visible state files are the most relevant idea for Coverify. They are closer to Codex's working tree than to hidden agent memory.
+- A Meta-Strategist role may be a useful prompt pattern for escaping repeated failed routes, but it should first live as agentic guidance or an issue-level artifact, not as default Python orchestration.
+- The "reasoning-free orchestrator" boundary matches Coverify's direction: code should move files, validate artifacts, and dispatch calls; mathematical judgment should stay in prompts, tools, and verifiers.
+- The challenge/replan loops are worth studying for eval-driven runs, but not copying wholesale into the default chat loop.
+
 ## Rethlas
 
 **Rethlas**, FrenzyMath, 2026.

@@ -25,6 +25,7 @@ expensive acceptance gate at the end.
 | --- | --- | --- | --- | --- | --- |
 | QED | Natural-language proof of an open research problem | Fixed multi-stage prover/reviewer pipeline | Model structural review, model detailed review, then domain experts | 5 of 18 expert-proposed research projects solved; 17 verifier-accepted candidates later accepted by experts | Copy review checks and separation, not the whole fixed pipeline |
 | AI co-mathematician | Stateful research workspace and reports | Coordinator with parallel workstreams and specialist agents | AI reviewers plus human mathematicians; benchmark final-answer mode | Case studies with mathematicians; 23/48 on FrontierMath Tier 4 excluding public samples | Copy durable workspace, failed-route memory, and human-facing collaboration model |
+| STAR-PólyaMath | Competition-math solution plus per-step reports | Reasoning-free Python orchestrator with Reasoner, Verifier, and persistent Meta-Strategist roles | Verifier/challenge loops, replan control, and final solution generation | Authors report state-of-the-art scores on eight 2025-2026 competition benchmarks; ablations weaken when framework components are removed | Study persistent visible state and meta-strategy as prompt/artifact patterns; do not copy the full state machine by default |
 | AlphaProof Nexus | Lean proof replacing `sorry` placeholders | Independent LLM subagents, optional AlphaProof, optional evolutionary sketch population | Lean compilation, no `sorry`, SafeVerify, and expert statement-fidelity check | 9/353 formalized Erdos problems; 44/492 OEIS conjectures | Copy hard verifier contract; do not import evolutionary machinery without evals |
 | Rethlas / Archon | Informal proof, then Lean 4 project | Rethlas generator/verifier plus retrieval; Archon Plan Agent plus Lean Agents | Rethlas model verifier for candidates; Lean/Comparator for final formalization | Anderson problem resolved and formalized; two FirstProof formalizations; additional informal case studies | Treat tactics as prompt references; the durable lesson is proposer/reviewer/hard gate |
 | Gilbert-Pollak LLM system | Domain-specific lower-bound certificate components | LLM proposes constrained geometric lemmas from verifier bottlenecks | Symbolic/computational verification functions and branch-and-bound; human-readable proof | Lower bound improved from 0.824 to 0.8559 | Best model for certificate-search loops: LLM proposes, verifier localizes failures |
@@ -245,6 +246,42 @@ For Coverify:
 What not to copy yet: a scheduler, a learned prioritizer, or a large parallel
 agent hierarchy. The paper shows that those can help, but it does not show that
 Coverify needs them before the simpler issue/PR/review loop is evaluated.
+
+## STAR-PólyaMath
+
+Source: [STAR-PólyaMath: Multi-Agent Reasoning under Persistent Meta-Strategic Supervision](https://arxiv.org/abs/2605.19338), Wu et al., 2026. Code: [Julius-Woo/STAR-PolyaMath](https://github.com/Julius-Woo/STAR-PolyaMath).
+
+This is an initial reading note, not a full deep dive yet.
+
+### What It Is Trying To Do
+
+STAR-PólyaMath targets long-horizon competition mathematics. The paper names three reliability problems that are also relevant to Coverify: hallucination accumulation, fragmented memory across attempts, and bad trade-offs between mathematical reasoning and tool use.
+
+Unlike the AI co-mathematician, this is not presented primarily as a human workbench for open-ended research. It is an agentic problem-solving system for contest-style tasks with a final solution artifact.
+
+### Harness / Workflow Model
+
+The system has three LLM roles: Reasoner, Verifier, and persistent Meta-Strategist. A reasoning-free Python orchestrator advances an explicit state machine with setup, exploration, planning/decomposition, step execution, challenge/replan loops, and final solution generation.
+
+The GitHub README is especially relevant to the Codex-versus-Coverflow discussion because each run materializes a working directory under `scratch/<problem_id>/`. The documented layout includes the original problem, current plan, canonical problem state, machine-readable state, per-step reasoner reports, verifier outputs, debate transcripts, code, archived plans, final solution, and run statistics. This is much closer to Codex's visible working tree than to hidden chat memory.
+
+### Verification / Trust Model
+
+The reported system uses structured Reasoner-Verifier interaction and challenge loops rather than a formal proof checker. The Verifier can challenge steps, force replanning, and help localize failure. The Meta-Strategist can issue strategic guidance or mandatory directives when the run is stuck or overusing tools.
+
+For Coverify, the important trust lesson is not "add three agents." It is that a long math run needs visible state and explicit challenge artifacts so that failures can be inspected and reused.
+
+### Reported Success
+
+The arXiv abstract reports state-of-the-art results across eight 2025-2026 competition benchmarks, including AIME, MathArena Apex, Putnam, IMO, HMMT, and USAMO, with the authors attributing gains to orchestration rather than model diversity through ablations. This is useful evidence, but it is still paper-reported and should not be treated as a calibrated guarantee for research-level Coverify tasks.
+
+### What Coverify Should Take
+
+The most reusable idea is persistent visible state. Coverify already has Cosheaf pages/issues/PRs and local audit artifacts; STAR-PólyaMath suggests we may also want project-visible run state for serious attempts: current plan, per-step reports, verifier objections, failed routes, replans, and final artifact.
+
+The Meta-Strategist is worth studying as a prompt or issue-level role for escaping repeated failed routes. It should not become default Python machinery until Coverify has evals showing that this specific role improves outcomes.
+
+The challenge/replan loop is a candidate for future eval-driven runs. For now, it should live as a possible oracle behavior or skill instruction: if the verifier finds a real failure, produce a compact failure localization and a revised plan, not just another polished answer.
 
 ## AlphaProof Nexus
 
