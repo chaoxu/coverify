@@ -142,6 +142,26 @@ Design lessons:
 - The "reasoning-free orchestrator" boundary matches Coverify's direction: code should move files, validate artifacts, and dispatch calls; mathematical judgment should stay in prompts, tools, and verifiers.
 - The challenge/replan loops are worth studying for eval-driven runs, but not copying wholesale into the default chat loop.
 
+## Goedel-Architect
+
+**Goedel-Architect: Streamlining Formal Theorem Proving with Blueprint Generation and Refinement**, Chung et al., arXiv:2606.06468, 2026.
+
+Link: https://arxiv.org/abs/2606.06468
+
+What matters:
+
+- The central artifact is a blueprint: a dependency graph of definitions and lemmas building up to the main theorem.
+- The initial blueprint can be seeded by a natural-language proof, then each lemma node is proved independently with only its declared parents.
+- Failed nodes produce typed refinement signals: statement wrong, proof too hard, missing or wrong decomposition, counterexample/disproof, or need for helper lemmas.
+- Lean is not just a final verifier. It checks statement well-formedness, theorem-signature preservation, dependency graph structure, skeleton validity, proof success, and feedback from compiler/Mathlib/retrieval during each node attempt.
+
+Design lessons:
+
+- A natural-language analogue is worth spiking: require a visible lemma graph with explicit hypotheses, allowed dependencies, proof attempts, verifier objections, and typed failure diagnoses.
+- Without Lean, this is not a formal trust gate. It is a structured search and human-time-saving artifact whose accepted nodes still need conservative review.
+- The precision target should be "accepted nodes mostly survive human review," not "generated text sounds plausible."
+- Do not build a natural-language blueprint engine into Coverify until evals show it beats simpler `prepare-llm`, verifying, and stateful-run baselines.
+
 ## Rethlas
 
 **Rethlas**, FrenzyMath, 2026.

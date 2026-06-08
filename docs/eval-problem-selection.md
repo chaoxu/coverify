@@ -44,6 +44,12 @@ answer, hidden reference proof, finite checker, or reviewer rubric. It should
 be hard enough that a one-shot call is fragile, but not so open-ended that the
 experiment can only measure vibes.
 
+A blueprint-spike candidate should have a reference solution with visible
+internal structure: definitions, cases, intermediate claims, or reusable
+lemmas. Avoid tasks whose solution is a single trick with no natural
+decomposition. The judge should be able to inspect node-level claims and decide
+whether accepted nodes are actually correct.
+
 ## QED Strategy Probe
 
 QED can be used as a backend strategy before a candidate is promoted to a full

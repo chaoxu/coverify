@@ -26,6 +26,7 @@ expensive acceptance gate at the end.
 | QED | Natural-language proof of an open research problem | Fixed multi-stage prover/reviewer pipeline | Model structural review, model detailed review, then domain experts | 5 of 18 expert-proposed research projects solved; 17 verifier-accepted candidates later accepted by experts | Copy review checks and separation, not the whole fixed pipeline |
 | AI co-mathematician | Stateful research workspace and reports | Coordinator with parallel workstreams and specialist agents | AI reviewers plus human mathematicians; benchmark final-answer mode | Case studies with mathematicians; 23/48 on FrontierMath Tier 4 excluding public samples | Copy durable workspace, failed-route memory, and human-facing collaboration model |
 | STAR-PólyaMath | Competition-math solution plus per-step reports | Reasoning-free Python orchestrator with Reasoner, Verifier, and persistent Meta-Strategist roles | Verifier/challenge loops, replan control, and final solution generation | Authors report state-of-the-art scores on eight 2025-2026 competition benchmarks; ablations weaken when framework components are removed | Study persistent visible state and meta-strategy as prompt/artifact patterns; do not copy the full state machine by default |
+| Goedel-Architect | Lean blueprint graph and solved theorem | Generate/refine a global dependency graph of definitions and lemmas; prove nodes independently | Lean compiler, Mathlib/retrieval feedback, blueprint structural checks, and proof checking | 99.2% MiniF2F-test pass@1; 75.6% PutnamBench pass@1; with natural-language proof seeding, 100% MiniF2F-test and 88.8% PutnamBench | Spike natural-language lemma graphs as human-review accelerators; Lean-specific feedback cannot be replaced by one verifier prompt |
 | AlphaProof Nexus | Lean proof replacing `sorry` placeholders | Independent LLM subagents, optional AlphaProof, optional evolutionary sketch population | Lean compilation, no `sorry`, SafeVerify, and expert statement-fidelity check | 9/353 formalized Erdos problems; 44/492 OEIS conjectures | Copy hard verifier contract; do not import evolutionary machinery without evals |
 | Rethlas / Archon | Informal proof, then Lean 4 project | Rethlas generator/verifier plus retrieval; Archon Plan Agent plus Lean Agents | Rethlas model verifier for candidates; Lean/Comparator for final formalization | Anderson problem resolved and formalized; two FirstProof formalizations; additional informal case studies | Treat tactics as prompt references; the durable lesson is proposer/reviewer/hard gate |
 | Gilbert-Pollak LLM system | Domain-specific lower-bound certificate components | LLM proposes constrained geometric lemmas from verifier bottlenecks | Symbolic/computational verification functions and branch-and-bound; human-readable proof | Lower bound improved from 0.824 to 0.8559 | Best model for certificate-search loops: LLM proposes, verifier localizes failures |
@@ -282,6 +283,42 @@ The most reusable idea is persistent visible state. Coverify already has Cosheaf
 The Meta-Strategist is worth studying as a prompt or issue-level role for escaping repeated failed routes. It should not become default Python machinery until Coverify has evals showing that this specific role improves outcomes.
 
 The challenge/replan loop is a candidate for future eval-driven runs. For now, it should live as a possible oracle behavior or skill instruction: if the verifier finds a real failure, produce a compact failure localization and a revised plan, not just another polished answer.
+
+## Goedel-Architect
+
+Source: [Goedel-Architect: Streamlining Formal Theorem Proving with Blueprint Generation and Refinement](https://arxiv.org/abs/2606.06468), Chung et al., 2026.
+
+This is an initial reading note, not a full deep dive yet.
+
+### What It Is Trying To Do
+
+Goedel-Architect targets formal theorem proving in Lean 4. The paper's central idea is to avoid proving the target theorem as one monolith or recursively decomposing one failing subgoal at a time. Instead, it creates a global blueprint: a dependency graph of definitions and lemmas that build up to the main theorem.
+
+### Harness / Workflow Model
+
+Blueprint generation receives the target Lean theorem signature and emits one Lean file containing named definitions, lemmas, and exactly one final theorem. Lemmas and the theorem are annotated with natural-language statement/proof fields and Lean bodies of the form `sorry_using [...]`, where the list names the declared parent dependencies.
+
+The blueprint is then proved node-by-node. Each lemma prover sees only the lemma it must prove and the declared parent definitions/lemmas. The system can dispatch independent nodes in parallel. Failed nodes produce local evidence for global blueprint refinement. Refinement can decompose a hard lemma, add helper lemmas, repair dependencies, or revise a statement that appears false.
+
+The paper also supports optional natural-language proof guidance. A strong informal proof, official solution, or other natural-language argument can seed the initial blueprint so the graph follows a viable proof strategy.
+
+### Verification / Trust Model
+
+Lean is doing several jobs, not only final answer checking. The blueprint file must parse, typecheck, preserve the original theorem signature, have a valid acyclic dependency graph, avoid forbidden constructs, and use the expected `sorry_using [...]` skeleton. Later, each proof attempt is checked by Lean, and the prover can use compiler feedback, goal states, and Mathlib retrieval.
+
+This means a Coverify natural-language analogue cannot get the same guarantee by swapping in one LLM verifier. The transferable part is the artifact shape and refinement loop. The non-transferable part is Lean's hard compiler/proof feedback.
+
+### Reported Success
+
+The abstract reports 99.2% pass@1 on MiniF2F-test and 75.6% pass@1 on PutnamBench using DeepSeek-V4-Flash. With optional natural-language proof seeding on harder problems, it reports 100% on MiniF2F-test, 88.8% on PutnamBench, 4/6 on IMO 2025, 11/12 on Putnam 2025, and 3/6 on USAMO 2026.
+
+### What Coverify Should Take
+
+The natural-language version worth trying is a structured proof blueprint, not free prose. A serious proof attempt could return definitions, a lemma graph, explicit hypotheses, allowed dependencies, per-lemma proof attempts, verifier objections, typed failure diagnoses, and a final assembly.
+
+The goal would be to save human time, not to claim formal correctness. The precision target should be conservative: if Coverify marks a node accepted, that node should usually survive human review; uncertain nodes should be labeled as gaps or needs-human.
+
+This should be a spike driven by evals. Coverify does not yet know which harness shape works best, so natural-language blueprinting should be compared against direct strong calls, `prepare-llm`, verifying, STAR-style visible state, and ordinary issue/PR review before becoming default workflow machinery.
 
 ## AlphaProof Nexus
 

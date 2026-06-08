@@ -51,7 +51,11 @@ for all baselines.
 5. **STAR-style stateful run**: the same Coverify tools, but with an explicit
    visible attempt state: prepared prompt, current plan, step reports, verifier
    objections, replans, failed-route notes, and final artifact.
-6. **Coverify full loop**: Codex operator, context packs, optional oracle
+6. **Natural-language blueprint run**: a Goedel-Architect-inspired spike where
+   the attempt produces a visible lemma dependency graph with explicit
+   hypotheses, allowed dependencies, per-lemma proof attempts, verifier
+   objections, typed failure diagnoses, and final assembly.
+7. **Coverify full loop**: Codex operator, context packs, optional oracle
    calls, PR review, repair, and merged knowledge.
 
 QED should be treated as a strategy provider, not as a competitor that must be
@@ -97,6 +101,10 @@ unknown mathematics.
   Purpose: test whether prepared prompts, visible state, verifier challenge,
   and meta-strategy guidance improve solved-rate or useful-failure rate under
   a fixed model and budget.
+- **T7 blueprint-spike tasks**: proof tasks with reference solutions that can
+  be decomposed into named lemmas.
+  Purpose: test whether a structured natural-language lemma graph saves human
+  review time and reduces target drift compared with one-shot proof prose.
 
 ## Metrics
 
@@ -123,6 +131,10 @@ Secondary metrics:
 - Ablation delta: how much each added harness element changes success, false
   positives, repeated-route rate, and useful-failure production compared with
   the simplest direct call under the same budget.
+- Accepted-node precision: among blueprint nodes that the harness marks as
+  accepted, how many survive human or stronger-review inspection.
+- Human review compression: how much of the final artifact a human had to read
+  closely before finding the first substantive issue.
 
 Avoid using final-proof success as the only score. On hard mathematics, a
 correct obstruction, sharpened lemma, or rejected false path is real progress.
@@ -151,6 +163,12 @@ checker instructions when a checker exists, accepted/rejected trial notes, and
 project-specific checker code when the task eventually needs it. Coverify should
 not grow a special Gilbert-Pollak command, AutoResearch command, or per-domain
 loop.
+
+For T7 blueprint spikes, do not pretend a natural-language verifier replaces
+Lean. The artifact should make the proof reviewable by splitting it into named
+nodes, but a node counts as accepted only after the chosen review gate approves
+it. Unknown or disputed nodes should remain `gap`, `too_hard`, `needs_human`,
+or `counterexample_suspected`, not silently become theorem-like facts.
 
 Each run must leave at least one durable artifact:
 
@@ -238,6 +256,18 @@ PYTHONPATH=src python3 -m coverify run-eval \
      repeated failed routes, useful obstruction reports, and cost.
    - Goal: learn whether any STAR-inspired harness element helps Coverify
      before turning it into default workflow machinery.
+
+7. **Natural-language blueprint spike**
+   - Choose 5-10 proof tasks with hidden reference solutions and enough
+     internal structure to decompose into lemmas.
+   - Compare direct proof prose, proof-plan-then-proof, and blueprint graph
+     outputs under the same budget.
+   - Require each blueprint node to state hypotheses, allowed dependencies,
+     proof attempt, status, verifier objections, and typed failure diagnosis.
+   - Score accepted-node precision, target drift, repeated-route reduction,
+     useful gap localization, final correctness, and human review compression.
+   - Goal: learn whether a "natural-language Lean" artifact saves human time
+     before adding any deterministic blueprint engine to Coverify.
 
 ## Experiment Artifacts
 
