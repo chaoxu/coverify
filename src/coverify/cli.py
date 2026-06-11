@@ -42,12 +42,7 @@ from .integration.repo_oracle import (
     sha256_text,
 )
 from .integration.review import REVIEW_DECISION_VALUES, ReviewDecision
-from .integration.workflows import (
-    InfinitePrimesRunOptions,
-    default_branch_name,
-    run_ask_oracle,
-    run_infinite_primes_workflow,
-)
+from .integration.oracle import run_ask_oracle
 from .apps.evals import load_eval_cases, run_eval_cases
 from .apps.research_evals import (
     load_research_eval_candidates,
@@ -903,39 +898,6 @@ def cmd_merge_pr(args: argparse.Namespace) -> int:
 
 def cmd_close_pr(args: argparse.Namespace) -> int:
     return print_json(authed_client_from_args(args).close_pull_request(args.workspace, args.pr))
-
-
-def cmd_prove_infinite_primes(args: argparse.Namespace) -> int:
-    client = build_client(
-        api_url=args.api_url,
-        token=args.token,
-        username=args.username,
-        password=args.password,
-        tls_verify=not args.insecure,
-    )
-    reviewer_client = maybe_build_reviewer_client(args)
-    options = InfinitePrimesRunOptions(
-        workspace=args.workspace,
-        workspace_name=args.workspace_name or args.workspace,
-        default_md_format=args.default_md_format,
-        create_workspace=args.create_workspace,
-        allow_existing_workspace=args.allow_existing_workspace,
-        branch=args.branch or default_branch_name(),
-        path=args.path,
-        title=args.title,
-        merge=args.merge,
-        force_merge=args.force_merge,
-    )
-    runner = backend_runner(args)
-    result = run_infinite_primes_workflow(
-        client=client,
-        reviewer_client=reviewer_client,
-        backend=runner,
-        review_backend=runner if reviewer_client is not None else None,
-        options=options,
-    )
-    print(json.dumps(result, indent=2, sort_keys=True))
-    return 0
 
 
 def read_oracle_prompt(args: argparse.Namespace) -> str:
@@ -2134,24 +2096,6 @@ def build_parser() -> argparse.ArgumentParser:
     seed_research.add_argument("--branch", default="")
     seed_research.add_argument("--path-prefix", default="research-evals")
     seed_research.set_defaults(func=cmd_seed_research_evals)
-
-    prove = sub.add_parser("prove-infinite-primes", help="run the infinite-primes proof workflow")
-    add_common_auth(prove)
-    prove.add_argument("--workspace", default=env("COSHEAF_WORKSPACE"), required=not bool(env("COSHEAF_WORKSPACE")))
-    prove.add_argument("--workspace-name", default="")
-    prove.add_argument("--default-md-format", choices=("coflat", "forgejo-passthrough"), default="coflat")
-    prove.add_argument("--create-workspace", action="store_true")
-    prove.add_argument("--allow-existing-workspace", action="store_true")
-    prove.add_argument("--branch", default="")
-    prove.add_argument("--path", default="infinite-primes.md")
-    prove.add_argument("--title", default="Coverify proof: infinitely many primes")
-    prove.add_argument("--merge", action="store_true")
-    prove.add_argument("--force-merge", action="store_true")
-    prove.add_argument("--review-token", default=env("COSHEAF_REVIEW_TOKEN"))
-    prove.add_argument("--review-username", default=env("COSHEAF_REVIEW_USERNAME"))
-    prove.add_argument("--review-password", default=env("COSHEAF_REVIEW_PASSWORD"))
-    add_backend_args(prove)
-    prove.set_defaults(func=cmd_prove_infinite_primes)
 
     return parser
 

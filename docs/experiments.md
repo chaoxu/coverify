@@ -14,7 +14,7 @@ generation under the same budget.
 - [Coverify Design](design.md) defines the tool-harness contract.
 - [Eval Problem Selection](eval-problem-selection.md) defines the candidate
   promotion rule and Coflat/Cosheaf task shape.
-- [References And Future Notes](references.md) records the external systems
+- [References](references.md) records the external systems
   that inspire the experiment design.
 
 ## Claim To Test

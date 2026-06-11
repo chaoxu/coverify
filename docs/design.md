@@ -390,7 +390,6 @@ The public package includes:
 - `chat-reply`
 - `run-eval`
 - `seed-research-evals`
-- `prove-infinite-primes` as a small deterministic workflow example
 
 Project-specific research tools should not live in the default public CLI. If a
 specialized app becomes useful again, move it behind a clearly named optional

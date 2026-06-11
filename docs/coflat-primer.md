@@ -9,7 +9,7 @@ exploration-system design has no fixed prompt pipeline.
 - [README](../README.md) is the repository entry point.
 - [Coverify Design](design.md) defines when this primer is used by context
   builders, backend calls, writer skills, and review workflows.
-- [References And Future Notes](references.md) explains the paper-inspired
+- [References](references.md) explains the paper-inspired
   review and knowledge-format constraints that motivate stable block ids.
 
 The full format lives in [Coflat](https://github.com/chaoxu/coflat). Cosheaf
