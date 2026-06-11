@@ -8,7 +8,13 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from coverify.engine.backend import audit_summary, run_codex_backend, run_fixture_backend, run_script_backend
+from coverify.engine.backend import (
+    audit_summary,
+    run_claude_backend,
+    run_codex_backend,
+    run_fixture_backend,
+    run_script_backend,
+)
 
 
 class BackendTests(unittest.TestCase):
@@ -100,6 +106,138 @@ class BackendTests(unittest.TestCase):
             self.assertTrue(metadata["prompt_sha256"])
             self.assertNotIn("answer", metadata["artifacts"])
             self.assertFalse((artifact_dir / "answer.md").exists())
+
+    def test_claude_backend_parses_json_result_and_records_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fake_claude = root / "fake-claude"
+            fake_claude.write_text(
+                textwrap.dedent(
+                    """\
+                    #!/usr/bin/env python3
+                    import json
+                    import sys
+
+                    prompt = sys.stdin.read()
+                    print(json.dumps({"type": "result", "is_error": False, "result": "# Checked\\n\\n" + prompt}))
+                    """
+                ),
+                encoding="utf-8",
+            )
+            fake_claude.chmod(fake_claude.stat().st_mode | stat.S_IXUSR)
+
+            result = run_claude_backend(
+                "context body",
+                artifact_root=root / "runs",
+                model="opus",
+                timeout_seconds=30,
+                claude_bin=str(fake_claude),
+            )
+
+            self.assertIn("context body", result.answer)
+            metadata = json.loads((result.artifact_dir / "metadata.json").read_text(encoding="utf-8"))
+            command = metadata["command"]
+            self.assertEqual(result.oracle_call_id, metadata["oracle_call_id"])
+            self.assertEqual(metadata["provider"], "claude")
+            self.assertIn("opus", command)
+            self.assertIn("--output-format", command)
+            self.assertEqual(metadata["returncode"], 0)
+            self.assertEqual(metadata["timed_out"], False)
+            self.assertEqual((result.artifact_dir / "prompt.md").read_text(encoding="utf-8"), "context body")
+            self.assertEqual((result.artifact_dir / "answer.md").read_text(encoding="utf-8"), result.answer)
+            self.assertTrue(metadata["prompt_sha256"])
+            self.assertTrue(metadata["answer_sha256"])
+            self.assertIn("answer", metadata["artifacts"])
+            self.assertTrue((result.artifact_dir / "stdout.json").exists())
+            self.assertTrue((result.artifact_dir / "stderr.log").exists())
+            self.assertIn(result.oracle_call_id, audit_summary(result))
+
+    def test_claude_backend_fails_clearly_on_error_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fake_claude = root / "fake-claude"
+            fake_claude.write_text(
+                textwrap.dedent(
+                    """\
+                    #!/usr/bin/env python3
+                    import json
+                    import sys
+
+                    sys.stdin.read()
+                    print(json.dumps({"type": "result", "is_error": True, "result": "overloaded"}))
+                    """
+                ),
+                encoding="utf-8",
+            )
+            fake_claude.chmod(fake_claude.stat().st_mode | stat.S_IXUSR)
+
+            with self.assertRaisesRegex(RuntimeError, "error result"):
+                run_claude_backend(
+                    "context body",
+                    artifact_root=root / "runs",
+                    claude_bin=str(fake_claude),
+                )
+
+            [artifact_dir] = (root / "runs").iterdir()
+            metadata = json.loads((artifact_dir / "metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["returncode"], 0)
+            self.assertNotIn("answer", metadata["artifacts"])
+            self.assertFalse((artifact_dir / "answer.md").exists())
+
+    def test_claude_backend_fails_clearly_on_non_json_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fake_claude = root / "fake-claude"
+            fake_claude.write_text(
+                textwrap.dedent(
+                    """\
+                    #!/usr/bin/env python3
+                    import sys
+
+                    sys.stdin.read()
+                    print("plain text, not the json envelope")
+                    """
+                ),
+                encoding="utf-8",
+            )
+            fake_claude.chmod(fake_claude.stat().st_mode | stat.S_IXUSR)
+
+            with self.assertRaisesRegex(RuntimeError, "non-JSON"):
+                run_claude_backend(
+                    "context body",
+                    artifact_root=root / "runs",
+                    claude_bin=str(fake_claude),
+                )
+
+    def test_claude_backend_records_timeout_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fake_claude = root / "fake-claude"
+            fake_claude.write_text(
+                textwrap.dedent(
+                    """\
+                    #!/usr/bin/env python3
+                    import time
+
+                    time.sleep(5)
+                    """
+                ),
+                encoding="utf-8",
+            )
+            fake_claude.chmod(fake_claude.stat().st_mode | stat.S_IXUSR)
+
+            with self.assertRaisesRegex(RuntimeError, "timed out"):
+                run_claude_backend(
+                    "slow prompt",
+                    artifact_root=root / "runs",
+                    timeout_seconds=1,
+                    claude_bin=str(fake_claude),
+                )
+
+            [artifact_dir] = (root / "runs").iterdir()
+            metadata = json.loads((artifact_dir / "metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["timed_out"], True)
+            self.assertEqual((artifact_dir / "prompt.md").read_text(encoding="utf-8"), "slow prompt")
 
     def test_script_backend_records_prompt_answer_and_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

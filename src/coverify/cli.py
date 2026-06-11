@@ -9,6 +9,7 @@ from typing import Callable
 
 from .engine.backend import (
     BackendResult,
+    run_claude_backend,
     run_codex_backend,
     run_fixture_backend,
     run_script_backend,
@@ -50,7 +51,7 @@ from .apps.research_evals import (
     utc_stamp,
 )
 
-SUB_BACKEND_CHOICES = ("codex", "fixture", "script")
+SUB_BACKEND_CHOICES = ("claude", "codex", "fixture", "script")
 BACKEND_CHOICES = (*SUB_BACKEND_CHOICES, "verifying")
 
 
@@ -126,6 +127,19 @@ def build_base_runner(
             timeout_seconds=timeout,
             codex_bin=args.codex_bin,
             sandbox=args.codex_sandbox,
+        )
+    if backend_name == "claude":
+        if not args.allow_claude_backend:
+            raise SystemExit(
+                "claude backend is disabled by default because it consumes Claude usage; "
+                "set COVERIFY_ALLOW_CLAUDE_BACKEND=1 or pass --allow-claude-backend"
+            )
+        return lambda prompt: run_claude_backend(
+            prompt,
+            artifact_root=artifact_root,
+            model=model or args.claude_model,
+            timeout_seconds=timeout,
+            claude_bin=args.claude_bin,
         )
     raise SystemExit(f"unknown backend: {backend_name}")
 
@@ -1002,6 +1016,66 @@ def emit_llm_input_preview(payload: dict[str, object], args: argparse.Namespace)
     return 0
 
 
+def ask_role_label(backend_name: str, args: argparse.Namespace) -> str:
+    if backend_name == "codex":
+        return f"codex/{args.model}@{args.reasoning_effort}"
+    if backend_name == "claude":
+        return f"claude/{args.claude_model}"
+    return backend_name
+
+
+def cmd_ask(args: argparse.Namespace) -> int:
+    if args.verify_config:
+        config = load_verifying_config(Path(args.verify_config))
+    else:
+        config = verifying_config_from_dict(
+            {
+                "generator": {"backend": args.generator},
+                "verifiers": [{"backend": args.verifier}],
+                "adjudicator": {"backend": args.adjudicator},
+                "max_rounds": args.verify_max_rounds,
+            }
+        )
+    # Config-file steps without an explicit backend fall back to the generator.
+    args.verify_inner_backend = args.generator
+    oracle = build_verifying_oracle(args, config)
+    result = oracle(read_oracle_prompt(args))
+    metadata = json.loads((result.artifact_dir / "metadata.json").read_text(encoding="utf-8"))
+    verified = bool(metadata.get("verified"))
+    verdicts = [str(verdict) for verdict in metadata.get("final_verdicts", [])]
+    rounds = metadata.get("rounds")
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "answer": result.answer,
+                    "verified": verified,
+                    "rounds": rounds,
+                    "final_verdicts": verdicts,
+                    "oracle_call_id": result.oracle_call_id,
+                    "artifact_dir": str(result.artifact_dir),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    answer = result.answer
+    print(answer, end="" if answer.endswith("\n") else "\n")
+    print()
+    status = "yes" if verified else "NO -- treat as unverified"
+    print(f"verified: {status} (rounds: {rounds}, verdicts: {', '.join(verdicts) or 'none'})")
+    if not args.verify_config:
+        print(
+            "roles: generator=" + ask_role_label(args.generator, args)
+            + " verifier=" + ask_role_label(args.verifier, args)
+            + " adjudicator=" + ask_role_label(args.adjudicator, args)
+        )
+    print(f"audit: {result.artifact_dir}")
+    return 0
+
+
 def cmd_ask_oracle(args: argparse.Namespace) -> int:
     result = run_ask_oracle(
         prompt=read_oracle_prompt(args),
@@ -1600,24 +1674,12 @@ def add_workspace_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workspace", default=env("COSHEAF_WORKSPACE"), required=not bool(env("COSHEAF_WORKSPACE")))
 
 
-def add_backend_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--backend", choices=BACKEND_CHOICES, default=env("COVERIFY_BACKEND", "codex"))
-    parser.add_argument(
-        "--verify-inner-backend",
-        choices=SUB_BACKEND_CHOICES,
-        default=env("COVERIFY_VERIFY_INNER_BACKEND", "codex"),
-        help="underlying oracle used for generator/verifier/adjunct when --backend=verifying",
-    )
+def add_verify_loop_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--verify-max-rounds",
         type=int,
         default=int(env("COVERIFY_VERIFY_MAX_ROUNDS", "3") or "3"),
-        help="max generate->verify rounds when --backend=verifying",
-    )
-    parser.add_argument(
-        "--verify-profile",
-        default=env("COVERIFY_VERIFY_PROFILE", "default"),
-        help="built-in verifying profile (default, strict)",
+        help="max generate->verify rounds in the verifying loop",
     )
     parser.add_argument(
         "--verify-config",
@@ -1641,6 +1703,26 @@ def add_backend_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="resume a verifying run from an existing artifact dir, reusing journaled steps",
     )
+
+
+def add_backend_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--backend", choices=BACKEND_CHOICES, default=env("COVERIFY_BACKEND", "codex"))
+    parser.add_argument(
+        "--verify-inner-backend",
+        choices=SUB_BACKEND_CHOICES,
+        default=env("COVERIFY_VERIFY_INNER_BACKEND", "codex"),
+        help="underlying oracle used for generator/verifier/adjunct when --backend=verifying",
+    )
+    parser.add_argument(
+        "--verify-profile",
+        default=env("COVERIFY_VERIFY_PROFILE", "default"),
+        help="built-in verifying profile (default, strict)",
+    )
+    add_verify_loop_args(parser)
+    add_backend_infra_args(parser)
+
+
+def add_backend_infra_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--backend-command", default=env("COVERIFY_BACKEND_COMMAND"))
     parser.add_argument("--backend-timeout", type=int, default=int(env("COVERIFY_BACKEND_TIMEOUT_SECONDS", "0") or "0"))
     parser.add_argument("--backend-retries", type=int, default=int(env("COVERIFY_BACKEND_RETRIES", "1") or "0"))
@@ -1654,6 +1736,14 @@ def add_backend_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         default=truthy(env("COVERIFY_ALLOW_CODEX_BACKEND")),
         help="allow the Codex backend to run; required because it consumes Codex usage",
+    )
+    parser.add_argument("--claude-model", default=env("COVERIFY_CLAUDE_MODEL", "opus"))
+    parser.add_argument("--claude-bin", default=env("COVERIFY_CLAUDE_BIN", "claude"))
+    parser.add_argument(
+        "--allow-claude-backend",
+        action="store_true",
+        default=truthy(env("COVERIFY_ALLOW_CLAUDE_BACKEND")),
+        help="allow the Claude backend to run; required because it consumes Claude usage",
     )
 
 
@@ -1994,6 +2084,36 @@ def build_parser() -> argparse.ArgumentParser:
     add_workspace_arg(close_pr)
     close_pr.add_argument("--pr", type=int, required=True)
     close_pr.set_defaults(func=cmd_close_pr)
+
+    ask_verified = sub.add_parser(
+        "ask",
+        help="verified ask: generate -> cross-family verify -> adjudicate, verdict attached",
+    )
+    ask_verified.add_argument("message", nargs="*", help="question text; stdin is used when omitted")
+    ask_verified.add_argument("--prompt", default="", help="question text")
+    ask_verified.add_argument("--prompt-file", default="", help="question file, or '-' for stdin")
+    ask_verified.add_argument("--json", action="store_true", help="print structured result JSON")
+    ask_verified.add_argument(
+        "--generator",
+        choices=SUB_BACKEND_CHOICES,
+        default=env("COVERIFY_ASK_GENERATOR", "codex"),
+        help="backend that drafts the answer",
+    )
+    ask_verified.add_argument(
+        "--verifier",
+        choices=SUB_BACKEND_CHOICES,
+        default=env("COVERIFY_ASK_VERIFIER", "claude"),
+        help="backend that referees the draft; defaults to a different model family than the generator",
+    )
+    ask_verified.add_argument(
+        "--adjudicator",
+        choices=SUB_BACKEND_CHOICES,
+        default=env("COVERIFY_ASK_ADJUDICATOR", "claude"),
+        help="backend that writes the final answer, honest about what was not verified",
+    )
+    add_verify_loop_args(ask_verified)
+    add_backend_infra_args(ask_verified)
+    ask_verified.set_defaults(func=cmd_ask)
 
     ask = sub.add_parser("ask-oracle", help="send one prompt to a backend oracle")
     ask.add_argument("message", nargs="*", help="prompt text; stdin is used when omitted")

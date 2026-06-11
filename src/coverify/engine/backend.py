@@ -270,6 +270,108 @@ def run_codex_backend(
     )
 
 
+def run_claude_backend(
+    prompt: str,
+    *,
+    artifact_root: Path,
+    model: str = "opus",
+    timeout_seconds: int | None = None,
+    claude_bin: str = "claude",
+) -> BackendResult:
+    artifact_dir = ensure_artifact_dir(artifact_root, "claude")
+    oracle_call_id = artifact_dir.name
+    workdir = artifact_dir / "workdir"
+    workdir.mkdir()
+    prompt_path = write_prompt_file(artifact_dir, prompt)
+    answer_path = artifact_dir / "answer.md"
+    stdout_path = artifact_dir / "stdout.json"
+    stderr_path = artifact_dir / "stderr.log"
+    metadata_path = artifact_dir / "metadata.json"
+    cmd = [
+        claude_bin,
+        "-p",
+        "--model",
+        model,
+        "--output-format",
+        "json",
+    ]
+    metadata: dict[str, object] = {
+        "oracle_call_id": oracle_call_id,
+        "provider": "claude",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "artifact_dir": str(artifact_dir),
+        "workdir": str(workdir),
+        "model": model,
+        "timeout_seconds": timeout_seconds,
+        "command": cmd,
+    }
+    artifacts = {
+        "prompt": prompt_path,
+        "answer": answer_path,
+        "stdout": stdout_path,
+        "stderr": stderr_path,
+    }
+    write_audit_metadata(metadata_path, metadata, artifacts)
+    started = time.monotonic()
+    with stderr_path.open("w", encoding="utf-8") as stderr_file:
+        process = subprocess.Popen(
+            cmd,
+            cwd=workdir,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=stderr_file,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            stdout_text, _ = process.communicate(input=prompt, timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            terminate_process_group(process.pid, signal.SIGKILL)
+            stdout_text, _ = process.communicate()
+            stdout_path.write_text(stdout_text or "", encoding="utf-8")
+            metadata["finished_at"] = datetime.now(timezone.utc).isoformat()
+            metadata["duration_seconds"] = round(time.monotonic() - started, 3)
+            metadata["returncode"] = process.returncode
+            metadata["timed_out"] = True
+            write_audit_metadata(metadata_path, metadata, artifacts)
+            raise RuntimeError(f"claude backend timed out; artifacts={artifact_dir}") from exc
+    stdout_path.write_text(stdout_text or "", encoding="utf-8")
+    metadata["finished_at"] = datetime.now(timezone.utc).isoformat()
+    metadata["duration_seconds"] = round(time.monotonic() - started, 3)
+    metadata["returncode"] = process.returncode
+    metadata["timed_out"] = False
+    write_audit_metadata(metadata_path, metadata, artifacts)
+    if process.returncode != 0:
+        detail = stderr_path.read_text(encoding="utf-8") if stderr_path.exists() else ""
+        raise RuntimeError(
+            f"claude backend failed with code {process.returncode}; "
+            f"artifacts={artifact_dir}; stderr={detail[-2000:]}",
+        )
+    try:
+        payload = json.loads(stdout_text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"claude backend produced non-JSON output; artifacts={artifact_dir}",
+        ) from exc
+    answer = payload.get("result") if isinstance(payload, dict) else None
+    if isinstance(payload, dict) and payload.get("is_error"):
+        raise RuntimeError(
+            f"claude backend reported an error result; artifacts={artifact_dir}",
+        )
+    if not isinstance(answer, str) or not answer.strip():
+        raise RuntimeError(
+            f"claude backend finished without a result answer; artifacts={artifact_dir}",
+        )
+    answer_path.write_text(answer, encoding="utf-8")
+    write_audit_metadata(metadata_path, metadata, artifacts)
+    return BackendResult(
+        answer=answer,
+        artifact_dir=artifact_dir,
+        provider="claude",
+        oracle_call_id=oracle_call_id,
+    )
+
+
 def run_script_backend(
     prompt: str,
     *,

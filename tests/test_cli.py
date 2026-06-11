@@ -717,6 +717,116 @@ class CliTests(unittest.TestCase):
         self.assertEqual(client.branch, "agent/math")
         self.assertEqual(parse_chat_metadata(client.comments[0])["kind"], CHAT_KIND_REPLY)
 
+    def test_ask_defaults_to_cross_family_roles_and_requires_opt_in(self) -> None:
+        args = build_parser().parse_args(["ask", "--prompt", "question"])
+
+        self.assertEqual(args.generator, "codex")
+        self.assertEqual(args.verifier, "claude")
+        self.assertEqual(args.adjudicator, "claude")
+        with self.assertRaisesRegex(SystemExit, "codex backend is disabled"):
+            args.func(args)
+
+    def test_ask_reports_unverified_when_verifier_has_no_verdict(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args = build_parser().parse_args(
+                [
+                    "ask",
+                    "--generator",
+                    "fixture",
+                    "--verifier",
+                    "fixture",
+                    "--adjudicator",
+                    "fixture",
+                    "--run-dir",
+                    str(Path(tmpdir) / "runs"),
+                    "--prompt",
+                    "prove primes",
+                ],
+            )
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                self.assertEqual(args.func(args), 0)
+
+        output = stdout.getvalue()
+        self.assertIn("infinitely many primes", output)
+        self.assertIn("verified: NO -- treat as unverified", output)
+        self.assertIn("roles: generator=fixture verifier=fixture adjudicator=fixture", output)
+        self.assertIn("audit:", output)
+
+    def test_ask_runs_verify_config_steps_and_reports_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "verify.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "generator": {
+                            "backend": "script",
+                            "command": "python3 -c 'import sys; sys.stdin.read(); print(\"draft body\")'",
+                        },
+                        "verifiers": [
+                            {
+                                "backend": "script",
+                                "command": "python3 -c 'import sys; sys.stdin.read(); print(\"VERDICT: PASS\")'",
+                            },
+                        ],
+                        "adjudicator": {
+                            "backend": "script",
+                            "command": "python3 -c 'import sys; sys.stdin.read(); print(\"final checked answer\")'",
+                        },
+                        "max_rounds": 2,
+                    },
+                ),
+                encoding="utf-8",
+            )
+            args = build_parser().parse_args(
+                [
+                    "ask",
+                    "--verify-config",
+                    str(config_path),
+                    "--run-dir",
+                    str(Path(tmpdir) / "runs"),
+                    "--prompt",
+                    "is this fine?",
+                ],
+            )
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                self.assertEqual(args.func(args), 0)
+
+        output = stdout.getvalue()
+        self.assertIn("final checked answer", output)
+        self.assertIn("verified: yes (rounds: 1, verdicts: PASS)", output)
+        self.assertNotIn("roles:", output)
+
+    def test_ask_json_includes_verdict_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args = build_parser().parse_args(
+                [
+                    "ask",
+                    "--generator",
+                    "fixture",
+                    "--verifier",
+                    "fixture",
+                    "--adjudicator",
+                    "fixture",
+                    "--run-dir",
+                    str(Path(tmpdir) / "runs"),
+                    "--prompt",
+                    "prove primes",
+                    "--json",
+                ],
+            )
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                self.assertEqual(args.func(args), 0)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["verified"])
+        self.assertEqual(payload["final_verdicts"], ["ERROR"])
+        self.assertIn("infinitely many primes", payload["answer"])
+        self.assertIn("artifact_dir", payload)
+
     def test_ask_oracle_rejects_multiple_prompt_sources(self) -> None:
         args = build_parser().parse_args(["ask-oracle", "--prompt", "one", "two"])
 
