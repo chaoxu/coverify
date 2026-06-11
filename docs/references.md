@@ -22,8 +22,6 @@ architecture.
   comparisons.
 - [Skills](../skills) are the durable operational interface for review,
   attempts, planning, writing, cleanup, context building, and the run loop.
-- [Prompt Templates](prompts/README.md) keeps compatibility shims for older
-  docs and PRs; operational behavior belongs in skills.
 - [Reference Prompt Collection](prompts/reference/README.md) indexes external
   prompt systems and their reusable patterns.
 - [Coflat Context Primer](coflat-primer.md) is the local page-format guide for

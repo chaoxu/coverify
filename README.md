@@ -407,8 +407,9 @@ python3 scripts/link_skills.py --check
 - [Prover-Side Failure Modes](docs/prover-failure-summary.md): shareable
   prover failure summary and mitigations.
 
-Prompt files under [docs/prompts](docs/prompts) are compatibility references for
-older flows. Prefer the skills for new operational work.
+Paper-derived prompt pattern notes live under
+[docs/prompts/reference](docs/prompts/reference). Operational behavior belongs
+in the skills, not in separate prompt files.
 
 ## Checks
 

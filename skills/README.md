@@ -19,8 +19,8 @@ Adding or removing a skill requires:
 3. update `skills/manifest.json`,
 4. run the checks above and the test suite.
 
-The prompt docs under `docs/prompts/` are compatibility shims for older links.
-Operational behavior belongs here.
+Operational behavior belongs here. Paper-derived prompt pattern notes may live
+under `docs/prompts/reference/`, but they are references, not skill shims.
 
 Skill behavior should stay agentic when it involves judgment. Add Python only
 for stable tool surfaces, audit recording, and mechanical validation of paths,
