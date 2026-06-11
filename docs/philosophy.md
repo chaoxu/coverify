@@ -4,6 +4,9 @@ This document records the stable principles behind the Coverify design. It
 should stay short. Operational checklists belong in prompts; API contracts and
 workflow mechanics belong in [design.md](design.md).
 
+For the short current-state summary and decision list, see
+[project-summary.md](project-summary.md).
+
 ## Motivation
 
 Strong language models can sometimes solve mathematical problems in one shot:

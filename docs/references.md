@@ -7,6 +7,8 @@ architecture.
 ## Doc Map
 
 - [README](../README.md) is the repository entry point.
+- [Project Summary](project-summary.md) gives the concise current design and
+  decision list.
 - [Coverify Design](design.md) is the canonical contract these references
   feed into.
 - [Research-Agent Paper Deep Dives](reference-deep-dives.md) gives the

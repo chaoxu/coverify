@@ -6,6 +6,9 @@ verification, or durable project state. It is designed to work with
 [Cosheaf](https://github.com/chaoxu/cosheaf), and uses
 [Coflat](https://github.com/chaoxu/coflat) as the mathematical document format.
 
+For the short current-state description and decision list, start with
+[Project Summary](docs/project-summary.md).
+
 In practice, Coverify does four things:
 
 1. Takes a user question plus a bounded source bundle from a Cosheaf workspace
@@ -384,6 +387,8 @@ python3 scripts/link_skills.py --check
 
 ## Documents
 
+- [Project Summary](docs/project-summary.md): concise statement of what
+  Coverify is, what it is not, and the main design decisions.
 - [Design](docs/design.md): canonical architecture and workflow contract.
 - [Philosophy](docs/philosophy.md): durable-state and knowledge-base
   principles.

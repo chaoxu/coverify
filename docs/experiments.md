@@ -9,6 +9,8 @@ generation under the same budget.
 ## Doc Map
 
 - [README](../README.md) is the repository entry point.
+- [Project Summary](project-summary.md) gives the concise current design and
+  decision list.
 - [Coverify Design](design.md) defines the tool-harness contract.
 - [Eval Problem Selection](eval-problem-selection.md) defines the candidate
   promotion rule and Coflat/Cosheaf task shape.

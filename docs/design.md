@@ -6,6 +6,9 @@ source bundles, model and computation tools, verification gates, and Cosheaf
 publication targets. It does not own the durable knowledge base or the user
 interface.
 
+For a concise current-state summary and decision list, see
+[project-summary.md](project-summary.md).
+
 The invariant:
 
 ```text
