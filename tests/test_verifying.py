@@ -9,12 +9,14 @@ from typing import Callable
 from coverify.engine.backend import BackendResult
 from coverify.engine.verifying import (
     ERROR,
+    MECHANICAL_FAIL,
     Step,
     StrictVerificationError,
     Verdict,
     VerifyingOracle,
     build_verifier_context,
     builtin_profile,
+    mechanical_draft_problems,
     parse_verdict,
     prepare_verifying_llm_input,
     verifying_config_from_dict,
@@ -382,6 +384,66 @@ class VerifyingConfigTests(unittest.TestCase):
     def test_unknown_profile_raises(self) -> None:
         with self.assertRaises(ValueError):
             builtin_profile("nonexistent")
+
+
+class MechanicalFilterTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_problems(self) -> None:
+        self.assertEqual(mechanical_draft_problems("   "), ["empty draft"])
+        self.assertIn(
+            'shortcut phrase: "it can be shown"',
+            mechanical_draft_problems("It can be shown that the claim holds."),
+        )
+        self.assertIn(
+            "truncated draft (unbalanced code fence)",
+            mechanical_draft_problems("proof:\n```python\nx = 1\n"),
+        )
+        self.assertEqual(mechanical_draft_problems("A complete honest proof of the claim."), [])
+
+    def test_bad_draft_skips_verifiers_and_loops_back(self) -> None:
+        verifier_calls = {"n": 0}
+
+        def verifier(ctx: str, _n: int) -> str:
+            verifier_calls["n"] += 1
+            return "ok\nVERDICT: PASS"
+
+        oracle = VerifyingOracle(
+            generator=step(
+                lambda ctx, _n: "A full direct proof."
+                if "mechanical pre-filter" in ctx
+                else "It can be shown that the result follows."
+            ),
+            verifiers=[step(verifier)],
+            adjudicator=step(lambda ctx, _n: "final"),
+            artifact_root=self.root,
+            retries=0,
+        )
+        result = oracle("Prove P.")
+        metadata = read_metadata(result)
+        self.assertTrue(metadata["verified"])
+        self.assertEqual(verifier_calls["n"], 1)  # round one cost no verifier spend
+        roles = [entry["role"] for entry in read_journal(result)]
+        self.assertIn("mechanical_filter", roles)
+
+    def test_always_bad_draft_is_not_verified(self) -> None:
+        oracle = VerifyingOracle(
+            generator=step(lambda ctx, _n: "Details omitted."),
+            verifiers=[step(lambda ctx, _n: "ok\nVERDICT: PASS")],
+            adjudicator=step(lambda ctx, _n: "final"),
+            artifact_root=self.root,
+            max_rounds=2,
+            retries=0,
+        )
+        result = oracle("Prove P.")
+        metadata = read_metadata(result)
+        self.assertFalse(metadata["verified"])
+        self.assertEqual(metadata["final_verdicts"], [MECHANICAL_FAIL])
 
 
 if __name__ == "__main__":

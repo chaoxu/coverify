@@ -33,8 +33,8 @@
     },
     {
       "name": "coverify-run-loop",
-      "required_sections": ["Purpose", "Loop", "Stop Rule", "Run Summary"],
-      "must_contain": ["DURABLE_STATE_CHANGED", "PRIOR_ROUTE_CHECK", "THINGS_TRIED_UPDATED", "COMPLETENESS"]
+      "required_sections": ["Purpose", "Loop", "Headless Loop Mode", "Stop Rule", "Run Summary"],
+      "must_contain": ["DURABLE_STATE_CHANGED", "PRIOR_ROUTE_CHECK", "THINGS_TRIED_UPDATED", "COMPLETENESS", "durable-writes"]
     }
   ]
 }

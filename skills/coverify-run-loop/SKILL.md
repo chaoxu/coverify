@@ -58,6 +58,16 @@ direct-answer target.
 8. **Measure completeness**: record what changed and what still blocks the
    goal.
 
+## Headless Loop Mode
+
+Under `coverify loop` the session runs unattended and token-less. Do not
+write durable state directly: propose route conclusions or KB pages in one
+fenced `durable-writes` JSON block carrying the full proposed content, and
+end with the Run Summary. The harness runs its own cross-family referees
+over the proposed content (all must PASS) before executing any write, posts
+the Run Summary as the Things Tried record, and quarantines everything else
+as labeled attempt-log material.
+
 ## Stop Rule
 
 Do not stop because a subcase worked, a raw search ran, or an oracle answered.

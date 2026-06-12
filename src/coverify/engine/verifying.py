@@ -77,6 +77,46 @@ def parse_verdict(answer: str) -> Verdict:
     return Verdict(found[0].upper())
 
 
+MECHANICAL_FAIL = "FAIL (mechanical)"
+
+_SHORTCUT_PHRASES = (
+    "it can be shown",
+    "it is easy to see",
+    "left as an exercise",
+    "details omitted",
+    "proof omitted",
+    "we omit the proof",
+)
+
+
+def mechanical_draft_problems(draft: str) -> list[str]:
+    """Cheap mechanical bad-case filter, run before any LLM verifier spend.
+
+    Catches only unambiguous defects -- empty drafts, truncation, and known
+    proof-shortcut phrases -- so a draft failing here loops back to the
+    generator without paying for a verifier round.
+    """
+    stripped = draft.strip()
+    if not stripped:
+        return ["empty draft"]
+    problems: list[str] = []
+    if stripped.count("```") % 2 == 1:
+        problems.append("truncated draft (unbalanced code fence)")
+    lowered = stripped.lower()
+    problems.extend(
+        f'shortcut phrase: "{phrase}"' for phrase in _SHORTCUT_PHRASES if phrase in lowered
+    )
+    return problems
+
+
+def _mechanical_critique(problems: list[str]) -> str:
+    return (
+        "A mechanical pre-filter rejected the draft before review:\n- "
+        + "\n- ".join(problems)
+        + "\nProduce a complete, self-contained answer without these defects."
+    )
+
+
 def build_generator_context(
     original: str, prior_answer: str, critique: str, instructions: str | None = None
 ) -> str:
@@ -336,6 +376,13 @@ def prepare_verifying_llm_input(
             )
         history.append(generator_answer)
 
+        # Mirror the live loop's mechanical pre-filter so the previewed prompt
+        # matches what the oracle would actually send next.
+        mechanical = mechanical_draft_problems(generator_answer)
+        if mechanical:
+            critique = _mechanical_critique(mechanical)
+            continue
+
         round_failed = False
         critiques: list[str] = []
         round_verdicts: list[str] = []
@@ -460,6 +507,15 @@ class VerifyingOracle:
                 break
             history.append(gen.answer)
             journal.append(_call_entry(round_index, "generator", gen))
+
+            mechanical = mechanical_draft_problems(gen.answer)
+            if mechanical:
+                journal.append(
+                    {"round": round_index, "role": "mechanical_filter", "problems": mechanical}
+                )
+                final_verdicts = [MECHANICAL_FAIL]
+                critique = _mechanical_critique(mechanical)
+                continue
 
             round_failed = False
             critiques: list[str] = []

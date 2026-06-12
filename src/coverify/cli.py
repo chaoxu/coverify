@@ -43,6 +43,14 @@ from .integration.repo_oracle import (
     run_repo_oracle,
     sha256_text,
 )
+from .integration.loop import (
+    ROUTE_LABEL_DEFAULT,
+    preflight_cross_family,
+    prepare_loop_llm_input,
+    prepare_run_dir,
+    run_check,
+    run_loop,
+)
 from .integration.review import REVIEW_DECISION_VALUES, ReviewDecision
 from .integration.oracle import run_ask_oracle
 from .apps.evals import load_eval_cases, run_eval_cases
@@ -1082,6 +1090,97 @@ def cmd_ask(args: argparse.Namespace) -> int:
         )
     print(f"audit: {result.artifact_dir}")
     return 0
+
+
+def loop_resolution_command(args: argparse.Namespace, verifiers: list[str], run_dir: Path) -> str:
+    backends = {args.generator, args.adjudicator, *verifiers}
+    parts = ["coverify", "ask", "--generator", args.generator]
+    for name in verifiers:
+        parts += ["--verifier", name]
+    parts += ["--adjudicator", args.adjudicator, "--run-dir", str(run_dir / "resolutions")]
+    if "codex" in backends:
+        parts.append("--allow-codex-backend")
+    if "claude" in backends:
+        parts.append("--allow-claude-backend")
+    return " ".join(parts) + ' "<exact resolution target>"'
+
+
+def cmd_loop(args: argparse.Namespace) -> int:
+    verifiers = ask_verifier_backends(args)
+    # The gate's cross-family rule compares referees against the content's
+    # author, which is the driver session.
+    preflight_cross_family(args.driver_backend, verifiers)
+    client = authed_client_from_args(args)
+    bot_login = args.bot_user or extract_login(client.me())
+    loop_root = Path(args.run_dir) / "loop"
+    run_dir, run_id, _resumed = prepare_run_dir(loop_root, args.resume or None)
+    resolution_command = loop_resolution_command(args, verifiers, run_dir)
+    if args.dry_run:
+        if not args.output_dir:
+            args.output_dir = str(run_dir)
+        payload = prepare_loop_llm_input(
+            client=client,
+            workspace=args.workspace,
+            bot_login=bot_login,
+            run_dir=run_dir,
+            issues=args.issue or None,
+            route_label=args.route_label,
+            resolution_command=resolution_command,
+            attempt_timeout=args.attempt_timeout,
+            export_bundle=not args.no_source_bundle,
+        )
+        return emit_llm_input_preview(payload, args)
+    if args.backend_timeout <= 0 and args.attempt_timeout > 0:
+        args.backend_timeout = args.attempt_timeout
+    args.run_dir = str(run_dir / "gate")  # gate referee audit bundles
+    gate_verifiers = [build_base_runner(args, name) for name in verifiers]
+    args.run_dir = str(run_dir / "driver")  # driver audit bundles live inside this run
+    driver = build_base_runner(args, args.driver_backend)
+    digest = run_loop(
+        client=client,
+        workspace=args.workspace,
+        bot_login=bot_login,
+        driver=driver,
+        gate_verifiers=gate_verifiers,
+        loop_root=loop_root,
+        run_dir=run_dir,
+        run_id=run_id,
+        issues=args.issue or None,
+        route_label=args.route_label,
+        max_attempts=args.max_attempts,
+        max_wall_seconds=args.max_wall_seconds,
+        attempt_timeout=args.attempt_timeout,
+        resolution_command=resolution_command,
+        export_bundle=not args.no_source_bundle,
+    )
+    if args.json:
+        print(json.dumps(digest, indent=2, sort_keys=True))
+    else:
+        budget = digest["budget"]
+        print(
+            f"loop {digest['run_id']} {digest['status']}: "
+            f"{budget['attempts_used']}/{budget['max_attempts']} attempts, "
+            f"{len(digest['verified_writes'])} verified writes, "
+            f"{len(digest['quarantined'])} quarantined"
+        )
+        print(f"digest: {digest['digest_md']}")
+    return 0 if digest.get("status") in {"queue_empty", "budget_exhausted"} else 1
+
+
+def cmd_run_check(args: argparse.Namespace) -> int:
+    payload = run_check(
+        args.command,
+        artifact_root=Path(args.run_dir) / "checks",
+        timeout_seconds=args.timeout if args.timeout > 0 else None,
+    )
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        stdout = str(payload.get("stdout") or "")
+        if stdout:
+            print(stdout, end="" if stdout.endswith("\n") else "\n")
+        print(f"ok: {payload['ok']} (audit: {payload.get('artifact_dir', 'none')})")
+    return 0 if payload["ok"] else 1
 
 
 def cmd_ask_oracle(args: argparse.Namespace) -> int:
@@ -2125,6 +2224,107 @@ def build_parser() -> argparse.ArgumentParser:
     add_verify_loop_args(ask_verified)
     add_backend_infra_args(ask_verified)
     ask_verified.set_defaults(func=cmd_ask)
+
+    loop_cmd = sub.add_parser(
+        "loop",
+        help="unattended exploration loop: budgeted driver attempts over route issues, "
+        "verify-gated durable writes, morning digest",
+    )
+    add_common_auth(loop_cmd)
+    add_workspace_arg(loop_cmd)
+    loop_cmd.add_argument(
+        "--bot-user",
+        default=env("COVERIFY_BOT_USER"),
+        help="login of the loop's own account; defaults to the authenticated user",
+    )
+    loop_cmd.add_argument(
+        "--driver",
+        dest="driver_backend",
+        choices=SUB_BACKEND_CHOICES,
+        default=env("COVERIFY_LOOP_DRIVER", "codex"),
+        help="frontier-CLI backend that runs each attempt session; a codex "
+        "driver needs --codex-sandbox workspace-write to run computational checks",
+    )
+    loop_cmd.add_argument(
+        "--issue",
+        type=int,
+        action="append",
+        default=None,
+        help="explicit route issue; repeat for a fixed queue (skips label discovery and driver pick)",
+    )
+    loop_cmd.add_argument("--route-label", default=env("COVERIFY_LOOP_ROUTE_LABEL", ROUTE_LABEL_DEFAULT))
+    loop_cmd.add_argument(
+        "--max-attempts",
+        type=int,
+        default=int(env("COVERIFY_LOOP_MAX_ATTEMPTS", "4") or "4"),
+    )
+    loop_cmd.add_argument(
+        "--max-wall-seconds",
+        type=int,
+        default=int(env("COVERIFY_LOOP_MAX_WALL_SECONDS", "14400") or "14400"),
+    )
+    loop_cmd.add_argument(
+        "--attempt-timeout",
+        type=int,
+        default=int(env("COVERIFY_LOOP_ATTEMPT_TIMEOUT", "1800") or "1800"),
+        help="seconds per driver attempt session",
+    )
+    loop_cmd.add_argument(
+        "--resume",
+        default="",
+        help="resume an existing loop run id; recorded attempts are not re-run",
+    )
+    loop_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="prepare the first attempt prompt and enumerate would-be writes without "
+        "invoking the driver or posting",
+    )
+    loop_cmd.add_argument(
+        "--no-source-bundle",
+        action="store_true",
+        help="skip exporting the workspace snapshot into the attempt context",
+    )
+    loop_cmd.add_argument(
+        "--generator",
+        choices=SUB_BACKEND_CHOICES,
+        default=env("COVERIFY_ASK_GENERATOR", "codex"),
+        help="generator backend for the driver's verified resolutions",
+    )
+    loop_cmd.add_argument(
+        "--verifier",
+        choices=SUB_BACKEND_CHOICES,
+        action="append",
+        default=None,
+        help="gate referee backend; repeat for multiple, all must PASS "
+        "(preflight requires one from a different family than --driver)",
+    )
+    loop_cmd.add_argument(
+        "--adjudicator",
+        choices=SUB_BACKEND_CHOICES,
+        default=env("COVERIFY_ASK_ADJUDICATOR", "claude"),
+    )
+    add_backend_infra_args(loop_cmd)
+    add_llm_prepare_output_args(loop_cmd)
+    loop_cmd.set_defaults(func=cmd_loop)
+
+    run_check_cmd = sub.add_parser(
+        "run-check",
+        help="run one computational check with a sha-manifested audit bundle",
+    )
+    run_check_cmd.add_argument(
+        "--command",
+        required=True,
+        help="shell command to run; stdout becomes the audited answer",
+    )
+    run_check_cmd.add_argument(
+        "--timeout",
+        type=int,
+        default=int(env("COVERIFY_RUN_CHECK_TIMEOUT_SECONDS", "600") or "600"),
+    )
+    run_check_cmd.add_argument("--run-dir", default=env("COVERIFY_RUN_DIR", ".coverify/runs"))
+    run_check_cmd.add_argument("--json", action="store_true", help="print structured result JSON")
+    run_check_cmd.set_defaults(func=cmd_run_check)
 
     ask = sub.add_parser("ask-oracle", help="send one prompt to a backend oracle")
     ask.add_argument("message", nargs="*", help="prompt text; stdin is used when omitted")
