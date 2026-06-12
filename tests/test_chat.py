@@ -163,3 +163,14 @@ class RunChatReplyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VerificationFooterTests(unittest.TestCase):
+    def test_footer_states_each_verification_status_plainly(self) -> None:
+        from coverify.integration.chat_metadata import verification_footer
+
+        self.assertIn("verified: yes", verification_footer("passed"))
+        self.assertIn("treat as unverified", verification_footer("failed"))
+        self.assertIn("treat as unverified", verification_footer("error"))
+        self.assertIn("ran without verification", verification_footer(None))
+

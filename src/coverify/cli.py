@@ -26,6 +26,7 @@ from .cosheaf.client import CosheafClient, CosheafConfig
 from .integration.chat import extract_login, extract_turns, run_chat_reply
 from .integration.chat_metadata import (
     answer_with_metadata,
+    verification_footer,
     chat_issue_body,
     chat_reply_metadata,
     parse_chat_metadata,
@@ -1386,7 +1387,7 @@ def run_repo_chat_reply(
         gatherer_provider=result.gatherer_provider,
         gatherer_call_id=result.gatherer_call_id,
     )
-    comment_body = answer_with_metadata(result.answer, metadata)
+    comment_body = answer_with_metadata(result.answer + verification_footer(result.verification), metadata)
     comment = client.comment_issue(workspace, issue_number, comment_body)
     return {
         **result.to_json(),
@@ -1467,7 +1468,7 @@ def cmd_chat_ask(args: argparse.Namespace) -> int:
         sources=repo_result.sources,
         warnings=repo_result.warnings,
     )
-    comment = client.comment_issue(args.workspace, issue_number, answer_with_metadata(repo_result.answer, metadata))
+    comment = client.comment_issue(args.workspace, issue_number, answer_with_metadata(repo_result.answer + verification_footer(repo_result.verification), metadata))
     result = {
         **repo_result.to_json(),
         "status": "replied",

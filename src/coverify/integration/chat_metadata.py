@@ -53,3 +53,20 @@ def chat_reply_metadata(**fields: object) -> dict[str, object]:
 
 def answer_with_metadata(answer: str, metadata: dict[str, object]) -> str:
     return "\n\n".join([answer.rstrip(), chat_metadata_comment(metadata)]).strip() + "\n"
+
+
+def verification_footer(verification: str | None) -> str:
+    """Visible verdict line appended to every chat reply.
+
+    Chat is a trust boundary: readers act on replies without re-checking, so
+    the verification status must travel with the answer, not hide in metadata.
+    """
+    if verification == "passed":
+        status = "yes"
+    elif verification == "failed":
+        status = "NO -- reviewer found unresolved problems; treat as unverified"
+    elif verification == "error":
+        status = "NO -- verification unavailable; treat as unverified"
+    else:
+        status = "NO -- ran without verification"
+    return f"\n\n---\nverified: {status}"

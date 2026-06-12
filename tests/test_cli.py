@@ -479,6 +479,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(client.created, ("w", "Prove the local theorem.", [4]))
         self.assertEqual(parse_chat_metadata(client.issue_body)["branch"], "agent/math")
         self.assertEqual(parse_chat_metadata(client.comments[0])["kind"], CHAT_KIND_REPLY)
+        self.assertIn("verified:", client.comments[0])
         self.assertEqual(client.branch, "agent/math")
 
     def test_repo_oracle_prepare_llm_writes_artifact_without_invoking_backend(self) -> None:
@@ -717,6 +718,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["branch"], "agent/math")
         self.assertEqual(client.branch, "agent/math")
         self.assertEqual(parse_chat_metadata(client.comments[0])["kind"], CHAT_KIND_REPLY)
+        self.assertIn("verified:", client.comments[0])
 
     def test_ask_defaults_to_cross_family_roles_and_requires_opt_in(self) -> None:
         args = build_parser().parse_args(["ask", "--prompt", "question"])
