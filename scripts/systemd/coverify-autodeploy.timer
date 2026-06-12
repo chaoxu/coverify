@@ -1,0 +1,9 @@
+[Unit]
+Description=Poll origin/main and deploy the Coverify chat worker
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

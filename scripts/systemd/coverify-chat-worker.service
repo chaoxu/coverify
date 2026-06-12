@@ -1,0 +1,12 @@
+[Unit]
+Description=Coverify chat reply worker
+
+[Service]
+Type=simple
+EnvironmentFile=/home/chaoxu/coverify-worker.env
+ExecStart=/home/chaoxu/coverify-venv/bin/python3 /home/chaoxu/coverify-src/scripts/chat_worker.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
