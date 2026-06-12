@@ -1024,14 +1024,21 @@ def ask_role_label(backend_name: str, args: argparse.Namespace) -> str:
     return backend_name
 
 
+def ask_verifier_backends(args: argparse.Namespace) -> list[str]:
+    if args.verifier:
+        return list(args.verifier)
+    return [name.strip() for name in env("COVERIFY_ASK_VERIFIER", "claude,codex").split(",") if name.strip()]
+
+
 def cmd_ask(args: argparse.Namespace) -> int:
+    verifiers = ask_verifier_backends(args)
     if args.verify_config:
         config = load_verifying_config(Path(args.verify_config))
     else:
         config = verifying_config_from_dict(
             {
                 "generator": {"backend": args.generator},
-                "verifiers": [{"backend": args.verifier}],
+                "verifiers": [{"backend": name} for name in verifiers],
                 "adjudicator": {"backend": args.adjudicator},
                 "max_rounds": args.verify_max_rounds,
             }
@@ -1069,7 +1076,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
     if not args.verify_config:
         print(
             "roles: generator=" + ask_role_label(args.generator, args)
-            + " verifier=" + ask_role_label(args.verifier, args)
+            + " verifier=" + "+".join(ask_role_label(name, args) for name in verifiers)
             + " adjudicator=" + ask_role_label(args.adjudicator, args)
         )
     print(f"audit: {result.artifact_dir}")
@@ -2102,8 +2109,11 @@ def build_parser() -> argparse.ArgumentParser:
     ask_verified.add_argument(
         "--verifier",
         choices=SUB_BACKEND_CHOICES,
-        default=env("COVERIFY_ASK_VERIFIER", "claude"),
-        help="backend that referees the draft; defaults to a different model family than the generator",
+        action="append",
+        default=None,
+        help="referee backend; repeat the flag for multiple verifiers, all of which must pass. "
+        "Default claude+codex: one cross-family check plus one independent same-family sample "
+        "(or set COVERIFY_ASK_VERIFIER to a comma-separated list)",
     )
     ask_verified.add_argument(
         "--adjudicator",

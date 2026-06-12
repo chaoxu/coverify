@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import json
 import sys
 import tempfile
@@ -9,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from coverify.cli import build_parser
+from coverify.cli import ask_verifier_backends, build_parser
 from coverify.integration.chat_metadata import CHAT_KIND_REPLY, chat_issue_body, parse_chat_metadata
 
 
@@ -721,10 +722,46 @@ class CliTests(unittest.TestCase):
         args = build_parser().parse_args(["ask", "--prompt", "question"])
 
         self.assertEqual(args.generator, "codex")
-        self.assertEqual(args.verifier, "claude")
+        self.assertIsNone(args.verifier)
+        self.assertEqual(ask_verifier_backends(args), ["claude", "codex"])
         self.assertEqual(args.adjudicator, "claude")
         with self.assertRaisesRegex(SystemExit, "codex backend is disabled"):
             args.func(args)
+
+    def test_ask_verifier_flag_repeats_and_env_splits_on_commas(self) -> None:
+        args = build_parser().parse_args(["ask", "--verifier", "claude", "--verifier", "codex", "--prompt", "q"])
+        self.assertEqual(ask_verifier_backends(args), ["claude", "codex"])
+
+        args = build_parser().parse_args(["ask", "--prompt", "q"])
+        with patch.dict(os.environ, {"COVERIFY_ASK_VERIFIER": "fixture, codex"}):
+            self.assertEqual(ask_verifier_backends(args), ["fixture", "codex"])
+
+    def test_ask_runs_every_default_verifier_and_reports_each_verdict(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args = build_parser().parse_args(
+                [
+                    "ask",
+                    "--generator",
+                    "fixture",
+                    "--verifier",
+                    "fixture",
+                    "--verifier",
+                    "fixture",
+                    "--adjudicator",
+                    "fixture",
+                    "--run-dir",
+                    str(Path(tmpdir) / "runs"),
+                    "--prompt",
+                    "prove primes",
+                ],
+            )
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                self.assertEqual(args.func(args), 0)
+
+        output = stdout.getvalue()
+        self.assertIn("verdicts: ERROR, ERROR", output)
+        self.assertIn("roles: generator=fixture verifier=fixture+fixture adjudicator=fixture", output)
 
     def test_ask_reports_unverified_when_verifier_has_no_verdict(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

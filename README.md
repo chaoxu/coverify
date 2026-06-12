@@ -73,7 +73,10 @@ PYTHONPATH=src python3 -m coverify scaffold-workdir \
 Then start day-to-day Codex sessions inside the generated project workdir, usually under `~/playground/works/my-project`. The scaffolded `bin/coverify` wrapper points back to this Coverify checkout through `COVERIFY_CHECKOUT`.
 
 Ask a question and get a cross-checked answer with the verdict attached. The
-generator drafts, a different model family referees, and the adjudicator
+generator drafts, multiple referees check independently (cross-family plus an
+independent same-family sample by default; every verifier must pass --
+pessimistic aggregation, because a false PASS is costlier than a retry), and
+the adjudicator
 writes the final answer asserting only what survived review. The output is
 never a bare answer:
 
@@ -83,7 +86,7 @@ PYTHONPATH=src python3 -m coverify ask \
   "Can the sum of two odd perfect squares be a perfect square?"
 # ...final answer...
 # verified: yes (rounds: 1, verdicts: PASS)
-# roles: generator=codex/gpt-5.5@xhigh verifier=claude/opus adjudicator=claude/opus
+# roles: generator=codex/gpt-5.5@xhigh verifier=claude/opus+codex/gpt-5.5@xhigh adjudicator=claude/opus
 # audit: .coverify/runs/20260611T210956Z-verifying-j68ak0q7
 ```
 
@@ -158,7 +161,7 @@ COVERIFY_CODEX_MODEL=gpt-5.5
 COVERIFY_CODEX_REASONING_EFFORT=xhigh
 COVERIFY_CLAUDE_MODEL=opus
 COVERIFY_ASK_GENERATOR=codex
-COVERIFY_ASK_VERIFIER=claude
+COVERIFY_ASK_VERIFIER=claude,codex
 COVERIFY_ASK_ADJUDICATOR=claude
 CHATGPT_CLI=chatgpt-cli
 COVERIFY_CHATGPT_TIMEOUT_SECONDS=6000
