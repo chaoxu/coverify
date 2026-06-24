@@ -90,7 +90,7 @@ Coverify should replace First Proof's TeX-specific gates with Coflat/Cosheaf gat
 
 These checks should be mechanical. Mathematical judgment stays in the reviewer/verifier prompt and, when available, project-specific tools.
 
-Coverify should not implement Coflat parsing or `@` resolution itself when Cosheaf/Coflat exposes that surface. The current implementation has a generic validation hook: `attempt promote --validation-command '...'`. The command receives placeholders such as `{candidate_files_dir}` and `{source_bundle}`, and its audited result is stored under `checks/`.
+Coverify should not implement Coflat parsing or `@` resolution itself when Cosheaf/Coflat exposes that surface. There is not currently a dedicated Cosheaf/Coflat CLI that validates a proposed set of candidate files, so the implementation uses a generic validation hook: `attempt promote --validation-command '...'`. The command receives placeholders such as `{candidate_files_dir}` and `{source_bundle}`, and its audited result is stored under `checks/`.
 
 ## Prompt Contracts We Need
 
