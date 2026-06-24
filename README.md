@@ -112,6 +112,28 @@ PYTHONPATH=src python3 -m coverify verifying prepare-llm \
   --json
 ```
 
+Work through a local atomic attempt before promoting durable knowledge:
+
+```bash
+PYTHONPATH=src python3 -m coverify attempt start \
+  --workspace chao/my-project \
+  --issue 23 \
+  --attempt-id route-1
+
+PYTHONPATH=src python3 -m coverify attempt call route-1 \
+  --kind author \
+  --backend codex \
+  --allow-codex-backend \
+  --json
+
+# Distill the useful result into .coverify/attempts/route-1/candidate/files/...
+
+PYTHONPATH=src python3 -m coverify attempt promote route-1 \
+  --review-call-dir .coverify/attempts/route-1/calls/002-publication-review \
+  --open-pr \
+  --workspace chao/my-project
+```
+
 Ask against a local source bundle:
 
 ```bash
@@ -182,6 +204,7 @@ PYTHONPATH=src python3 -m coverify run-eval \
 - `tool list` / `tool run`: discover and run project-owned commands from `coverify-tools.json` with normal audit artifacts.
 - `workflow run`: run any external mathematical workflow command that accepts a problem file and output directory.
 - `firstproof setup` / `firstproof run`: fetch and run the First Proof `improofbench` workflow with Coverify audit artifacts.
+- `attempt start/status/prompt/call/record/promote`: keep one local atomic attempt outside Cosheaf, then promote only an accepted candidate from `candidate/files/...`.
 - `chat-reply`: read a Cosheaf issue thread, run the oracle, and post a reply.
 - `run-eval`: run JSONL eval cases against a fixture, script, or enabled backend.
 - `seed-research-evals`: seed selected research eval candidates into a Cosheaf workspace.
@@ -233,6 +256,7 @@ python3 scripts/link_skills.py --check
 
 - [Project Summary](docs/project-summary.md): concise statement of what Coverify is, what it is not, and the main design decisions.
 - [Design](docs/design.md): architecture and workflow contract.
+- [Atomic Attempts](docs/atomic-attempts.md): plan for local attempt bundles, final Cosheaf promotion, and publication review gates.
 - [Simple System Design](docs/simple-system-design.html): compact HTML design for the Cosheaf-first attempt loop.
 - [Philosophy](docs/philosophy.md): durable-state and knowledge-base principles.
 - [Experiments](docs/experiments.md): evaluation strategy.

@@ -29,6 +29,8 @@ workspace + branch/source bundle + question
 
 Local audit bundles are provenance. Cosheaf is memory. If a fact, obstruction, issue state, review decision, or failed route needs to matter after the process exits, it should become a Cosheaf artifact or be summarized from an audit bundle into one.
 
+For the planned attempt-level implementation, see [Atomic Attempts](atomic-attempts.md). The key boundary is that attempts are local atomic work bundles, while only final promoted knowledge enters Cosheaf.
+
 ## The Two Contracts
 
 Coverify uses two output contracts.
@@ -64,7 +66,7 @@ If a run exposes missing mathematical knowledge, update the project. If it expos
 
 ## Current Public Surface
 
-The important current surfaces are source-bundle chat, repo oracle calls, gather evaluation, `chat prepare-llm`, `repo-oracle prepare-llm`, `verifying prepare-llm`, audited backend invocation, project-owned tool execution through `coverify-tools.json`, generic external workflow execution through `workflow run`, the First Proof `improofbench` workflow preset, Cosheaf primitives, research eval seeding, and repo-owned Codex skills for context building, exploration planning, proof attempts, KB writing, PR review, cleanup, and run loops.
+The important current surfaces are source-bundle chat, repo oracle calls, gather evaluation, `chat prepare-llm`, `repo-oracle prepare-llm`, `verifying prepare-llm`, atomic attempts through `attempt start/status/prompt/call/record/promote`, audited backend invocation, project-owned tool execution through `coverify-tools.json`, generic external workflow execution through `workflow run`, the First Proof `improofbench` workflow preset, Cosheaf primitives, research eval seeding, and repo-owned Codex skills for context building, exploration planning, proof attempts, KB writing, PR review, cleanup, and run loops.
 
 Real backend calls should keep writing the audit files: `prompt.md`, `answer.md`, `metadata.json`, `manifest.json`, and verifying journals where applicable. Preview paths should stop before backend invocation and before issue/comment/publication writes.
 

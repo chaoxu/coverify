@@ -62,6 +62,19 @@ from .integration.loop import (
 )
 from .integration.review import REVIEW_DECISION_VALUES, ReviewDecision
 from .integration.oracle import run_ask_oracle
+from .integration.attempts import (
+    PROMPT_KINDS,
+    attempt_status,
+    build_attempt_prompt,
+    create_attempt,
+    load_attempt,
+    record_call,
+    run_attempt_call,
+    run_candidate_checks,
+    run_publication_review,
+    run_validation_command,
+    write_candidate_to_branch,
+)
 from .integration.tools import list_project_tools, run_project_tool
 from .apps.evals import load_eval_cases, run_eval_cases
 from .apps.research_evals import (
@@ -995,6 +1008,16 @@ def read_message_input(args: argparse.Namespace) -> str:
     return sys.stdin.read()
 
 
+def read_optional_text_arg(value: str, file_value: str) -> str:
+    if value and file_value:
+        raise SystemExit("provide either inline text or a file, not both")
+    if file_value:
+        if file_value == "-":
+            return sys.stdin.read()
+        return Path(file_value).read_text(encoding="utf-8")
+    return value
+
+
 def has_message_source(args: argparse.Namespace) -> bool:
     return any(
         bool(source)
@@ -1355,6 +1378,126 @@ def cmd_ask_oracle(args: argparse.Namespace) -> int:
     answer = str(result["answer"])
     print(answer, end="" if answer.endswith("\n") else "\n")
     return 0
+
+
+def cmd_attempt_start(args: argparse.Namespace) -> int:
+    goal = read_optional_text_arg(args.goal, args.goal_file)
+    result = create_attempt(
+        attempts_root=Path(args.attempts_root),
+        workspace=args.workspace,
+        branch=args.branch,
+        issue=args.issue,
+        goal_text=goal,
+        client=authed_client_from_args(args),
+        attempt_id=args.attempt_id or None,
+        include_timeline=not args.no_timeline,
+        export_source_bundle=not args.no_source_bundle,
+    )
+    return print_json(result)
+
+
+def cmd_attempt_status(args: argparse.Namespace) -> int:
+    paths, _manifest = load_attempt(Path(args.attempts_root), args.attempt_id)
+    return print_json(attempt_status(paths))
+
+
+def cmd_attempt_prompt(args: argparse.Namespace) -> int:
+    paths, _manifest = load_attempt(Path(args.attempts_root), args.attempt_id)
+    instructions = read_optional_text_arg(args.instructions, args.instructions_file)
+    payload = build_attempt_prompt(paths, kind=args.kind, instructions=instructions)
+    return emit_llm_input_preview(payload, args)
+
+
+def cmd_attempt_record(args: argparse.Namespace) -> int:
+    paths, _manifest = load_attempt(Path(args.attempts_root), args.attempt_id)
+    result = record_call(paths, call_dir=Path(args.call_dir), role=args.role)
+    return print_json(result)
+
+
+def cmd_attempt_call(args: argparse.Namespace) -> int:
+    paths, _manifest = load_attempt(Path(args.attempts_root), args.attempt_id)
+    instructions = read_optional_text_arg(args.instructions, args.instructions_file)
+    result = run_attempt_call(
+        paths,
+        kind=args.kind,
+        backend=backend_runner(args),
+        instructions=instructions,
+    )
+    if args.json:
+        return print_json(result)
+    answer = str(result["answer"])
+    print(answer, end="" if answer.endswith("\n") else "\n")
+    return 0
+
+
+def cmd_attempt_promote(args: argparse.Namespace) -> int:
+    paths, manifest = load_attempt(Path(args.attempts_root), args.attempt_id)
+    checks = run_candidate_checks(paths, max_file_bytes=args.max_file_bytes)
+    validation = run_validation_command(
+        paths,
+        command=args.validation_command,
+        artifact_root=Path(args.run_dir),
+        timeout_seconds=args.backend_timeout if args.backend_timeout > 0 else None,
+    )
+    instructions = read_optional_text_arg(args.instructions, args.instructions_file)
+    backend = backend_runner(args) if args.run_review else None
+    review_call_dir = Path(args.review_call_dir) if args.review_call_dir else None
+    promotion = run_publication_review(
+        paths,
+        backend=backend,
+        review_call_dir=review_call_dir,
+        instructions=instructions,
+    )
+    result: dict[str, object] = {
+        "attempt_id": args.attempt_id,
+        "checks": checks,
+        "validation": validation,
+        "promotion": promotion,
+        "cosheaf_write_attempted": False,
+    }
+    if args.open_pr:
+        if not checks["ok"]:
+            raise SystemExit("candidate checks failed; refusing to open a PR")
+        if not validation.get("ok"):
+            raise SystemExit("validation command failed; refusing to open a PR")
+        if promotion.get("decision") != "accept":
+            raise SystemExit("publication review did not accept the candidate; refusing to open a PR")
+        if not promotion.get("review_valid"):
+            raise SystemExit("publication review was malformed; refusing to open a PR")
+        workspace = args.workspace or str(manifest.get("workspace") or "")
+        if not workspace:
+            raise SystemExit("--workspace is required when opening a PR")
+        head = args.head or f"coverify/attempt-{args.attempt_id}"
+        client = authed_client_from_args(args)
+        write_results = write_candidate_to_branch(
+            paths=paths,
+            client=client,
+            workspace=workspace,
+            branch=head,
+            create_branch=not args.no_create_branch,
+        )
+        title = args.title or f"Promote Coverify attempt {args.attempt_id}"
+        body = args.body
+        if args.body_file:
+            body = Path(args.body_file).read_text(encoding="utf-8")
+        if not body:
+            body = (
+                f"Promotes accepted Coverify attempt `{args.attempt_id}`.\n\n"
+                f"Publication review decision: `{promotion.get('decision')}`.\n"
+                f"Candidate files: {len(checks.get('candidate_files') or [])}.\n"
+                f"Validation: {'passed' if validation.get('ok') else 'failed'}.\n"
+            )
+        pr = client.open_pull_request(
+            workspace,
+            head=head,
+            base=args.base,
+            title=title,
+            body=body,
+        )
+        result["cosheaf_write_attempted"] = True
+        result["write_results"] = write_results
+        result["pull_request"] = pr
+    return print_json(result)
 
 
 def cmd_repo_oracle_ask(args: argparse.Namespace) -> int:
@@ -2572,6 +2715,80 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("--json", action="store_true", help="print answer plus audit metadata as JSON")
     add_backend_args(ask)
     ask.set_defaults(func=cmd_ask_oracle)
+
+    attempt = sub.add_parser("attempt", help="atomic local attempt bundle commands")
+    attempt_sub = attempt.add_subparsers(dest="attempt_command", required=True)
+    attempt_start = attempt_sub.add_parser("start", help="start a local attempt from a Cosheaf snapshot")
+    add_common_auth(attempt_start)
+    add_workspace_arg(attempt_start)
+    attempt_start.add_argument("--attempts-root", default=env("COVERIFY_ATTEMPTS_ROOT", ".coverify/attempts"))
+    attempt_start.add_argument("--attempt-id", default="")
+    attempt_start.add_argument("--branch", default="main")
+    attempt_start.add_argument("--issue", type=int, default=None)
+    attempt_start.add_argument("--goal", default="")
+    attempt_start.add_argument("--goal-file", default="")
+    attempt_start.add_argument("--no-timeline", action="store_true", help="do not snapshot issue timeline")
+    attempt_start.add_argument("--no-source-bundle", action="store_true", help="do not export source bundle files")
+    attempt_start.set_defaults(func=cmd_attempt_start)
+
+    attempt_status_cmd = attempt_sub.add_parser("status", help="summarize a local attempt without touching Cosheaf")
+    attempt_status_cmd.add_argument("--attempts-root", default=env("COVERIFY_ATTEMPTS_ROOT", ".coverify/attempts"))
+    attempt_status_cmd.add_argument("attempt_id")
+    attempt_status_cmd.set_defaults(func=cmd_attempt_status)
+
+    attempt_prompt = attempt_sub.add_parser("prompt", help="prepare an attempt prompt without calling a backend")
+    attempt_prompt.add_argument("--attempts-root", default=env("COVERIFY_ATTEMPTS_ROOT", ".coverify/attempts"))
+    attempt_prompt.add_argument("attempt_id")
+    attempt_prompt.add_argument("--kind", choices=PROMPT_KINDS, required=True)
+    attempt_prompt.add_argument("--instructions", default="")
+    attempt_prompt.add_argument("--instructions-file", default="")
+    add_llm_prepare_output_args(attempt_prompt)
+    attempt_prompt.set_defaults(func=cmd_attempt_prompt)
+
+    attempt_record = attempt_sub.add_parser("record", help="import an existing audit/tool result into an attempt")
+    attempt_record.add_argument("--attempts-root", default=env("COVERIFY_ATTEMPTS_ROOT", ".coverify/attempts"))
+    attempt_record.add_argument("attempt_id")
+    attempt_record.add_argument("--call-dir", required=True)
+    attempt_record.add_argument("--role", default="oracle")
+    attempt_record.set_defaults(func=cmd_attempt_record)
+
+    attempt_call = attempt_sub.add_parser("call", help="prepare an attempt prompt, call a backend, and record the audit")
+    attempt_call.add_argument("--attempts-root", default=env("COVERIFY_ATTEMPTS_ROOT", ".coverify/attempts"))
+    attempt_call.add_argument("attempt_id")
+    attempt_call.add_argument("--kind", choices=PROMPT_KINDS, required=True)
+    attempt_call.add_argument("--instructions", default="")
+    attempt_call.add_argument("--instructions-file", default="")
+    attempt_call.add_argument("--json", action="store_true", help="print structured call result JSON")
+    add_backend_args(attempt_call)
+    attempt_call.set_defaults(func=cmd_attempt_call)
+
+    attempt_promote = attempt_sub.add_parser("promote", help="gate a candidate for Cosheaf promotion")
+    attempt_promote.add_argument("--attempts-root", default=env("COVERIFY_ATTEMPTS_ROOT", ".coverify/attempts"))
+    attempt_promote.add_argument("attempt_id")
+    attempt_promote.add_argument("--max-file-bytes", type=int, default=200000)
+    attempt_promote.add_argument(
+        "--validation-command",
+        default="",
+        help=(
+            "optional external validation command; placeholders: "
+            "{attempt_root}, {candidate_dir}, {candidate_files_dir}, {source_bundle}, {checks_dir}"
+        ),
+    )
+    attempt_promote.add_argument("--instructions", default="")
+    attempt_promote.add_argument("--instructions-file", default="")
+    attempt_promote.add_argument("--review-call-dir", default="", help="existing publication-review audit dir")
+    attempt_promote.add_argument("--run-review", action="store_true", help="call the configured backend for publication review")
+    attempt_promote.add_argument("--open-pr", action="store_true", help="write candidate/files to a branch and open a PR only after accept")
+    attempt_promote.add_argument("--workspace", default=env("COSHEAF_WORKSPACE"))
+    attempt_promote.add_argument("--head", default="")
+    attempt_promote.add_argument("--base", default="main")
+    attempt_promote.add_argument("--title", default="")
+    attempt_promote.add_argument("--body", default="")
+    attempt_promote.add_argument("--body-file", default="")
+    attempt_promote.add_argument("--no-create-branch", action="store_true")
+    add_common_auth(attempt_promote)
+    add_backend_args(attempt_promote)
+    attempt_promote.set_defaults(func=cmd_attempt_promote)
 
     repo_oracle = sub.add_parser("repo-oracle", help="repo-snapshot oracle commands")
     repo_oracle_sub = repo_oracle.add_subparsers(dest="repo_oracle_command", required=True)
