@@ -29,6 +29,7 @@ Ordinary chat is not a third mode. It is an exploratory response with a direct-a
 - exposes `prepare-llm` commands that stop before backend calls
 - invokes backend tools through a simple prompt-in, answer-out contract
 - runs project-owned tools declared in `coverify-tools.json`
+- runs external mathematical workflows through command templates
 - can fetch and invoke the First Proof `improofbench` Author/Critic workflow as an external mathematical workflow
 - records backend audit bundles such as `prompt.md`, `answer.md`, `metadata.json`, and `manifest.json`
 - supports verifying generator/verifier/adjudicator inspection
@@ -141,6 +142,16 @@ PYTHONPATH=src python3 -m coverify firstproof run \
   --json
 ```
 
+Run another external mathematical workflow:
+
+```bash
+PYTHONPATH=src python3 -m coverify workflow run \
+  --cwd /path/to/workflow \
+  --command 'python run.py --problem {problem_path} --output {output_dir} --run-id {run_id}' \
+  --message-file problem.tex \
+  --json
+```
+
 Run a strict mathematical-resolution style call:
 
 ```bash
@@ -169,6 +180,7 @@ PYTHONPATH=src python3 -m coverify run-eval \
 - `chat ask`: create or append to a branch-scoped chat issue and respond under the exploratory-response contract.
 - `verifying prepare-llm`: prepare the generator, verifier, or adjudicator input from a verifying prompt and optional resume artifact.
 - `tool list` / `tool run`: discover and run project-owned commands from `coverify-tools.json` with normal audit artifacts.
+- `workflow run`: run any external mathematical workflow command that accepts a problem file and output directory.
 - `firstproof setup` / `firstproof run`: fetch and run the First Proof `improofbench` workflow with Coverify audit artifacts.
 - `chat-reply`: read a Cosheaf issue thread, run the oracle, and post a reply.
 - `run-eval`: run JSONL eval cases against a fixture, script, or enabled backend.

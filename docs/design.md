@@ -135,14 +135,15 @@ larger workflow. Coverify does not need to know the mathematics of the tool; it
 only needs to run it from the declared working directory, capture input/output,
 record metadata, and let agents or Cosheaf issues decide when the output counts.
 
-The First Proof `improofbench` adapter is the stronger version of this pattern:
-Coverify can fetch the real submission checkout and invoke its canonical
-`scripts/run_workflow.py` runner. This gives Coverify access to the full
+For larger systems, use `workflow run`: an external workflow command receives a
+problem file, output directory, run id, and problem id through placeholders.
+This is the generic boundary for all math workflows that Coverify should be
+able to drive. The First Proof `improofbench` adapter is only a preset wrapper
+around that boundary: Coverify can fetch the real submission checkout and invoke
+its canonical `scripts/run_workflow.py` runner, giving access to the full
 Author/Critic workflow, optional Advisory Council, compute worker, staged
 outputs, and First Proof LaTeX contract without reimplementing that framework
-inside Coverify. The adapter is still a tool boundary: Coverify supplies the
-problem, runs the external workflow, captures stdout/stderr and metadata, and
-stores an audit bundle.
+inside Coverify.
 
 ## Layers
 

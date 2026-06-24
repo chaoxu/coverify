@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Callable
@@ -38,6 +39,7 @@ from .integration.firstproof import (
     run_improofbench_workflow,
     setup_improofbench,
 )
+from .integration.external_workflow import run_external_workflow
 from .integration.repo_oracle import (
     PROMPT_CONTEXT_RAW,
     PROMPT_CONTEXTS,
@@ -1299,6 +1301,48 @@ def cmd_firstproof_run(args: argparse.Namespace) -> int:
     return 0 if payload["ok"] else 1
 
 
+def cmd_workflow_run(args: argparse.Namespace) -> int:
+    problem = read_message_input(args)
+    if not problem.strip():
+        raise SystemExit("problem is required")
+    if not args.command and not args.command_json:
+        raise SystemExit("provide --command or --command-json")
+    command = json.loads(args.command_json) if args.command_json else shlex.split(args.command)
+    if not isinstance(command, list) or not all(isinstance(part, str) for part in command):
+        raise SystemExit("--command-json must be a JSON list of strings")
+    try:
+        result = run_external_workflow(
+            command=command,
+            cwd=Path(args.cwd),
+            problem=problem,
+            artifact_root=Path(args.run_dir) / "workflows",
+            provider=args.provider,
+            workflow=args.workflow,
+            problem_id=args.problem_id,
+            run_id=args.workflow_run_id or None,
+            output_dir=Path(args.output_dir) if args.output_dir else None,
+            timeout_seconds=args.timeout if args.timeout > 0 else None,
+            metadata_path_template=args.metadata_path_template,
+        )
+        payload = {
+            "ok": True,
+            "answer": result.answer,
+            "artifact_dir": str(result.artifact_dir),
+            "oracle_call_id": result.oracle_call_id,
+            "provider": result.provider,
+        }
+    except (FileNotFoundError, RuntimeError) as exc:
+        payload = {"ok": False, "detail": str(exc)}
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        answer = str(payload.get("answer") or payload.get("detail") or "")
+        if answer:
+            print(answer, end="" if answer.endswith("\n") else "\n")
+        print(f"ok: {payload['ok']} (audit: {payload.get('artifact_dir', 'none')})")
+    return 0 if payload["ok"] else 1
+
+
 def cmd_ask_oracle(args: argparse.Namespace) -> int:
     result = run_ask_oracle(
         prompt=read_oracle_prompt(args),
@@ -2459,6 +2503,37 @@ def build_parser() -> argparse.ArgumentParser:
     tool_run.add_argument("--run-dir", default=env("COVERIFY_RUN_DIR", ".coverify/runs"))
     tool_run.add_argument("--json", action="store_true", help="print structured result JSON")
     tool_run.set_defaults(func=cmd_tool_run)
+
+    workflow = sub.add_parser("workflow", help="run an external mathematical workflow with Coverify audit")
+    workflow_sub = workflow.add_subparsers(dest="workflow_command", required=True)
+    workflow_run = workflow_sub.add_parser("run", help="run one problem through an external workflow command")
+    workflow_run.add_argument("message", nargs="*", help="problem text; stdin is used when omitted")
+    workflow_run.add_argument("--message", dest="message_text", default="", help="problem text")
+    workflow_run.add_argument("--message-file", default="", help="problem text file, or '-' for stdin")
+    workflow_run.add_argument("--cwd", required=True, help="workflow working directory")
+    workflow_run.add_argument(
+        "--command",
+        default="",
+        help=(
+            "shell-style argv template. Placeholders: {problem_path}, {output_dir}, "
+            "{run_id}, {problem_id}, {artifact_dir}, {cwd}"
+        ),
+    )
+    workflow_run.add_argument("--command-json", default="", help="JSON argv list template; overrides --command")
+    workflow_run.add_argument("--provider", default="external-workflow")
+    workflow_run.add_argument("--workflow", default="external")
+    workflow_run.add_argument("--problem-id", default="coverify_problem")
+    workflow_run.add_argument("--workflow-run-id", default="", help="workflow run id; default is timestamped")
+    workflow_run.add_argument("--output-dir", default="", help="workflow output root; default is inside the audit dir")
+    workflow_run.add_argument(
+        "--metadata-path-template",
+        default="{output_dir}/{run_id}/run-metadata.json",
+        help="JSON metadata path template to summarize after the workflow exits",
+    )
+    workflow_run.add_argument("--timeout", type=int, default=0)
+    workflow_run.add_argument("--run-dir", default=env("COVERIFY_RUN_DIR", ".coverify/runs"))
+    workflow_run.add_argument("--json", action="store_true", help="print structured result JSON")
+    workflow_run.set_defaults(func=cmd_workflow_run)
 
     firstproof = sub.add_parser("firstproof", help="run the First Proof improofbench workflow")
     firstproof_sub = firstproof.add_subparsers(dest="firstproof_command", required=True)
