@@ -32,6 +32,12 @@ from .integration.chat_metadata import (
     chat_reply_metadata,
     parse_chat_metadata,
 )
+from .integration.firstproof import (
+    DEFAULT_FIRSTPROOF_REPO,
+    improofbench_root,
+    run_improofbench_workflow,
+    setup_improofbench,
+)
 from .integration.repo_oracle import (
     PROMPT_CONTEXT_RAW,
     PROMPT_CONTEXTS,
@@ -1241,6 +1247,58 @@ def cmd_tool_run(args: argparse.Namespace) -> int:
     return 0 if payload["ok"] else 1
 
 
+def cmd_firstproof_setup(args: argparse.Namespace) -> int:
+    payload = setup_improofbench(
+        checkout_dir=Path(args.checkout_dir),
+        repo_url=args.repo_url,
+        ref=args.ref,
+        force=args.force,
+    )
+    return print_json(payload)
+
+
+def cmd_firstproof_run(args: argparse.Namespace) -> int:
+    problem = read_message_input(args)
+    if not problem.strip():
+        raise SystemExit("problem is required")
+    checkout_dir = Path(args.checkout_dir)
+    root = Path(args.improofbench_root) if args.improofbench_root else improofbench_root(checkout_dir)
+    try:
+        result = run_improofbench_workflow(
+            improofbench_dir=root,
+            problem=problem,
+            artifact_root=Path(args.run_dir) / "firstproof",
+            workflow=args.workflow,
+            problem_id=args.problem_id,
+            run_id=args.workflow_run_id or None,
+            output_dir=Path(args.output_dir) if args.output_dir else None,
+            uv_bin=args.uv_bin,
+            timeout_seconds=args.timeout if args.timeout > 0 else None,
+            budget_usd=args.budget_usd,
+            inputs=args.input,
+            components=args.component,
+            models=args.model,
+            additional_instructions=args.additional_instructions,
+        )
+        payload = {
+            "ok": True,
+            "answer": result.answer,
+            "artifact_dir": str(result.artifact_dir),
+            "oracle_call_id": result.oracle_call_id,
+            "provider": result.provider,
+        }
+    except (FileNotFoundError, RuntimeError) as exc:
+        payload = {"ok": False, "detail": str(exc)}
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        answer = str(payload.get("answer") or payload.get("detail") or "")
+        if answer:
+            print(answer, end="" if answer.endswith("\n") else "\n")
+        print(f"ok: {payload['ok']} (audit: {payload.get('artifact_dir', 'none')})")
+    return 0 if payload["ok"] else 1
+
+
 def cmd_ask_oracle(args: argparse.Namespace) -> int:
     result = run_ask_oracle(
         prompt=read_oracle_prompt(args),
@@ -2401,6 +2459,36 @@ def build_parser() -> argparse.ArgumentParser:
     tool_run.add_argument("--run-dir", default=env("COVERIFY_RUN_DIR", ".coverify/runs"))
     tool_run.add_argument("--json", action="store_true", help="print structured result JSON")
     tool_run.set_defaults(func=cmd_tool_run)
+
+    firstproof = sub.add_parser("firstproof", help="run the First Proof improofbench workflow")
+    firstproof_sub = firstproof.add_subparsers(dest="firstproof_command", required=True)
+    firstproof_setup = firstproof_sub.add_parser("setup", help="fetch the improofbench submission checkout")
+    firstproof_setup.add_argument("--checkout-dir", default=env("COVERIFY_FIRSTPROOF_CHECKOUT", ".coverify/vendor/batch-2"))
+    firstproof_setup.add_argument("--repo-url", default=env("COVERIFY_FIRSTPROOF_REPO", DEFAULT_FIRSTPROOF_REPO))
+    firstproof_setup.add_argument("--ref", default=env("COVERIFY_FIRSTPROOF_REF", "main"))
+    firstproof_setup.add_argument("--force", action="store_true", help="replace an existing checkout")
+    firstproof_setup.set_defaults(func=cmd_firstproof_setup)
+
+    firstproof_run = firstproof_sub.add_parser("run", help="run one problem through improofbench's workflow runner")
+    firstproof_run.add_argument("message", nargs="*", help="problem text; stdin is used when omitted")
+    firstproof_run.add_argument("--message", dest="message_text", default="", help="problem text")
+    firstproof_run.add_argument("--message-file", default="", help="problem text file, or '-' for stdin")
+    firstproof_run.add_argument("--checkout-dir", default=env("COVERIFY_FIRSTPROOF_CHECKOUT", ".coverify/vendor/batch-2"))
+    firstproof_run.add_argument("--improofbench-root", default=env("COVERIFY_IMPROOFBENCH_ROOT"))
+    firstproof_run.add_argument("--workflow", default=env("COVERIFY_FIRSTPROOF_WORKFLOW", "author_critic_long"))
+    firstproof_run.add_argument("--problem-id", default=env("COVERIFY_FIRSTPROOF_PROBLEM_ID", "coverify_problem"))
+    firstproof_run.add_argument("--workflow-run-id", default="", help="run id passed to improofbench; default is timestamped")
+    firstproof_run.add_argument("--output-dir", default="", help="improofbench output root; default is inside the Coverify audit dir")
+    firstproof_run.add_argument("--uv-bin", default=env("UV_BIN", "uv"))
+    firstproof_run.add_argument("--timeout", type=int, default=int(env("COVERIFY_FIRSTPROOF_TIMEOUT_SECONDS", "0") or "0"))
+    firstproof_run.add_argument("--budget-usd", type=float, default=None)
+    firstproof_run.add_argument("--additional-instructions", default="")
+    firstproof_run.add_argument("--input", action="append", default=[], help="improofbench --input override, KEY=VALUE")
+    firstproof_run.add_argument("--component", action="append", default=[], help="improofbench --component override, AGENT.KEY=VALUE")
+    firstproof_run.add_argument("--model", action="append", default=[], help="improofbench --model override, AGENT=MODEL")
+    firstproof_run.add_argument("--run-dir", default=env("COVERIFY_RUN_DIR", ".coverify/runs"))
+    firstproof_run.add_argument("--json", action="store_true", help="print structured result JSON")
+    firstproof_run.set_defaults(func=cmd_firstproof_run)
 
     ask = sub.add_parser("ask-oracle", help="send one prompt to a backend oracle")
     ask.add_argument("message", nargs="*", help="prompt text; stdin is used when omitted")

@@ -64,7 +64,7 @@ If a run exposes missing mathematical knowledge, update the project. If it expos
 
 ## Current Public Surface
 
-The important current surfaces are source-bundle chat, repo oracle calls, gather evaluation, `chat prepare-llm`, `repo-oracle prepare-llm`, `verifying prepare-llm`, audited backend invocation, project-owned tool execution through `coverify-tools.json`, Cosheaf primitives, research eval seeding, and repo-owned Codex skills for context building, exploration planning, proof attempts, KB writing, PR review, cleanup, and run loops.
+The important current surfaces are source-bundle chat, repo oracle calls, gather evaluation, `chat prepare-llm`, `repo-oracle prepare-llm`, `verifying prepare-llm`, audited backend invocation, project-owned tool execution through `coverify-tools.json`, the First Proof `improofbench` workflow adapter, Cosheaf primitives, research eval seeding, and repo-owned Codex skills for context building, exploration planning, proof attempts, KB writing, PR review, cleanup, and run loops.
 
 Real backend calls should keep writing the audit files: `prompt.md`, `answer.md`, `metadata.json`, `manifest.json`, and verifying journals where applicable. Preview paths should stop before backend invocation and before issue/comment/publication writes.
 
