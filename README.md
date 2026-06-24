@@ -233,6 +233,7 @@ python3 scripts/link_skills.py --check
 
 - [Project Summary](docs/project-summary.md): concise statement of what Coverify is, what it is not, and the main design decisions.
 - [Design](docs/design.md): architecture and workflow contract.
+- [Simple System Design](docs/simple-system-design.html): compact HTML design for the Cosheaf-first attempt loop.
 - [Philosophy](docs/philosophy.md): durable-state and knowledge-base principles.
 - [Experiments](docs/experiments.md): evaluation strategy.
 - [Eval Problem Selection](docs/eval-problem-selection.md): criteria for promoting math tasks into evals.
