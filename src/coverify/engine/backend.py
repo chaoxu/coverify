@@ -378,6 +378,7 @@ def run_script_backend(
     command: str,
     artifact_root: Path,
     timeout_seconds: int | None = None,
+    cwd: Path | None = None,
 ) -> BackendResult:
     artifact_dir = ensure_artifact_dir(artifact_root, "script")
     oracle_call_id = artifact_dir.name
@@ -390,6 +391,7 @@ def run_script_backend(
         "provider": "script",
         "started_at": datetime.now(timezone.utc).isoformat(),
         "command": command,
+        "command_cwd": str(cwd) if cwd else str(artifact_dir),
         "artifact_dir": str(artifact_dir),
         "timeout_seconds": timeout_seconds,
     }
@@ -411,7 +413,7 @@ def run_script_backend(
             stdin=subprocess.PIPE,
             stdout=stdout_file,
             stderr=stderr_file,
-            cwd=artifact_dir,
+            cwd=cwd or artifact_dir,
             start_new_session=True,
         )
         try:

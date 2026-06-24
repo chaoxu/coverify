@@ -52,6 +52,7 @@ Coverify provides deterministic mechanisms and tools:
 - Cosheaf API adapters
 - source-bundle loading and export
 - backend invocation
+- project-declared command tools
 - audit bundles
 - gatherer output validation
 - verifier gates
@@ -117,6 +118,22 @@ Each trial should leave a compact Cosheaf record with the information the issue
 or task page asks for: candidate, local measure or score when relevant,
 keep/discard status, verifier output, and the smallest failing case or
 uncovered region when available.
+
+### Project-Owned Tools
+
+Coverify should behave like a small collection of reusable tools, not a large
+project-specific workflow framework. Systems such as First Proof/ProofStack are
+useful evidence that configurable agent/tool composition can work well, but the
+piece Coverify should absorb is the boundary: tools are named, inspectable,
+audited, and composed by an agent or workflow outside the core.
+
+Project-specific commands live in the project repo and may be registered in
+`coverify-tools.json`. Coverify's generic `tool list` and `tool run` commands
+discover and execute those commands with normal audit artifacts. The command
+may be a checker, search script, scorer, certificate validator, or adapter to a
+larger workflow. Coverify does not need to know the mathematics of the tool; it
+only needs to run it from the declared working directory, capture input/output,
+record metadata, and let agents or Cosheaf issues decide when the output counts.
 
 ## Layers
 

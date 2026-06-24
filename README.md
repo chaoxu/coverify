@@ -28,6 +28,7 @@ Ordinary chat is not a third mode. It is an exploratory response with a direct-a
 - prepares LLM inputs without requiring the operator to paste files by hand
 - exposes `prepare-llm` commands that stop before backend calls
 - invokes backend tools through a simple prompt-in, answer-out contract
+- runs project-owned tools declared in `coverify-tools.json`
 - records backend audit bundles such as `prompt.md`, `answer.md`, `metadata.json`, and `manifest.json`
 - supports verifying generator/verifier/adjudicator inspection
 - validates paths, line ranges, citations, schemas, hashes, and verifier decisions where possible
@@ -118,6 +119,16 @@ PYTHONPATH=src python3 -m coverify repo-oracle ask \
   --json
 ```
 
+Run a project-owned checker or search tool:
+
+```bash
+PYTHONPATH=src python3 -m coverify tool list
+
+PYTHONPATH=src python3 -m coverify tool run check-candidate \
+  --message-file candidate.json \
+  --json
+```
+
 Run a strict mathematical-resolution style call:
 
 ```bash
@@ -145,6 +156,7 @@ PYTHONPATH=src python3 -m coverify run-eval \
 - `chat prepare-llm`: authenticate, read Cosheaf, export the branch source bundle, and show the LLM input that `chat ask` would need next without creating issues, comments, or backend calls.
 - `chat ask`: create or append to a branch-scoped chat issue and respond under the exploratory-response contract.
 - `verifying prepare-llm`: prepare the generator, verifier, or adjudicator input from a verifying prompt and optional resume artifact.
+- `tool list` / `tool run`: discover and run project-owned commands from `coverify-tools.json` with normal audit artifacts.
 - `chat-reply`: read a Cosheaf issue thread, run the oracle, and post a reply.
 - `run-eval`: run JSONL eval cases against a fixture, script, or enabled backend.
 - `seed-research-evals`: seed selected research eval candidates into a Cosheaf workspace.

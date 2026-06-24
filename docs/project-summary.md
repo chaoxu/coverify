@@ -51,6 +51,7 @@ Ordinary chat is not a third mode. It is an exploratory response with a direct-a
 - **Negative knowledge counts.** A failed route, counterexample, invalid invariant, wrong theorem scope, or localized verifier objection is progress when it prevents repeated work.
 - **Raw output is not knowledge.** Long transcripts and generated dumps should be distilled into compact claims, tables, examples, failed-route notes, PRs, or issue comments with status.
 - **Project-specific tools live with the project.** A checker, score script, search tool, or domain-specific contract belongs in the golden project repo or companion repo, with Coverify only providing generic harness support.
+- **Coverify should be a collection of generic tools.** External systems such as First Proof/ProofStack show the value of composing configurable agents and tools. Coverify should learn that lesson by exposing stable primitives, project-declared commands, audit trails, and verification gates rather than absorbing a large workflow runtime.
 - **Prompt inspection is first-class.** `prepare-llm` commands should build the next LLM input and stop before backend calls or Cosheaf writes, so agents can inspect prompts without running the model.
 - **Generated durable Markdown should not be hard-wrapped.** Ordinary prose paragraphs should stay on one logical source line, while headings, lists, tables, TeX blocks, and fenced code keep intentional structure.
 - **GitHub publication is snapshot-only.** Lab history can remain on lab remotes; public GitHub releases should be intentional clean snapshots after privacy and project-specific checks.
@@ -63,7 +64,7 @@ If a run exposes missing mathematical knowledge, update the project. If it expos
 
 ## Current Public Surface
 
-The important current surfaces are source-bundle chat, repo oracle calls, gather evaluation, `chat prepare-llm`, `repo-oracle prepare-llm`, `verifying prepare-llm`, audited backend invocation, Cosheaf primitives, research eval seeding, and repo-owned Codex skills for context building, exploration planning, proof attempts, KB writing, PR review, cleanup, and run loops.
+The important current surfaces are source-bundle chat, repo oracle calls, gather evaluation, `chat prepare-llm`, `repo-oracle prepare-llm`, `verifying prepare-llm`, audited backend invocation, project-owned tool execution through `coverify-tools.json`, Cosheaf primitives, research eval seeding, and repo-owned Codex skills for context building, exploration planning, proof attempts, KB writing, PR review, cleanup, and run loops.
 
 Real backend calls should keep writing the audit files: `prompt.md`, `answer.md`, `metadata.json`, `manifest.json`, and verifying journals where applicable. Preview paths should stop before backend invocation and before issue/comment/publication writes.
 

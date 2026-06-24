@@ -54,6 +54,7 @@ from .integration.loop import (
 )
 from .integration.review import REVIEW_DECISION_VALUES, ReviewDecision
 from .integration.oracle import run_ask_oracle
+from .integration.tools import list_project_tools, run_project_tool
 from .apps.evals import load_eval_cases, run_eval_cases
 from .apps.research_evals import (
     load_research_eval_candidates,
@@ -689,9 +690,21 @@ def cmd_scaffold_workdir(args: argparse.Namespace) -> int:
             "Durable mathematical state lives in Cosheaf, not in this directory.\n\n"
             "`PROJECT.md` should orient agents to the project. Concrete work should live in\n"
             "issues or task pages. If a task needs a checker, score script, or search tool,\n"
-            "put that project-specific code in the project repo or a companion repo and\n"
-            "reference it from the issue.\n\n"
+            "put that project-specific code in the project repo or a companion repo,\n"
+            "register its command in `coverify-tools.json`, and reference it from the\n"
+            "issue.\n\n"
             "Do not store credentials here. Put local auth in `.env.local` or your shell.\n",
+            False,
+        ),
+        workdir / "coverify-tools.json": (
+            json.dumps(
+                {
+                    "tools": [],
+                    "_comment": "Project-owned tools. Add entries with name, command, optional description, timeout_seconds, and cwd.",
+                },
+                indent=2,
+            )
+            + "\n",
             False,
         ),
         workdir / "README.md": (
@@ -710,6 +723,8 @@ def cmd_scaffold_workdir(args: argparse.Namespace) -> int:
             "```bash\nbin/coverify chat ask --issue 1 --backend verifying \\\n"
             "  --message \"Read PROJECT.md and this issue, then propose the next useful step.\"\n"
             "```\n\n"
+            "List project-owned tools:\n\n"
+            "```bash\nbin/coverify tool list\n```\n\n"
             "Run QED through Coverify:\n\n"
             "```bash\nbin/qed-coverify \"Prove that there are infinitely many prime numbers.\"\n```\n",
             False,
@@ -1183,6 +1198,39 @@ def cmd_run_check(args: argparse.Namespace) -> int:
         artifact_root=Path(args.run_dir) / "checks",
         timeout_seconds=args.timeout if args.timeout > 0 else None,
     )
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        stdout = str(payload.get("stdout") or "")
+        if stdout:
+            print(stdout, end="" if stdout.endswith("\n") else "\n")
+        print(f"ok: {payload['ok']} (audit: {payload.get('artifact_dir', 'none')})")
+    return 0 if payload["ok"] else 1
+
+
+def cmd_tool_list(args: argparse.Namespace) -> int:
+    payload = list_project_tools(Path(args.tools_file))
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        for tool in payload["tools"]:
+            description = tool.get("description") or ""
+            suffix = f" - {description}" if description else ""
+            print(f"{tool['name']}{suffix}")
+    return 0
+
+
+def cmd_tool_run(args: argparse.Namespace) -> int:
+    try:
+        payload = run_project_tool(
+            tools_file=Path(args.tools_file),
+            name=args.name,
+            input_text=read_message_input(args),
+            artifact_root=Path(args.run_dir) / "tools",
+            timeout_seconds=args.timeout if args.timeout > 0 else None,
+        )
+    except ValueError as exc:
+        payload = {"ok": False, "tool": args.name, "detail": str(exc)}
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
@@ -2335,6 +2383,24 @@ def build_parser() -> argparse.ArgumentParser:
     run_check_cmd.add_argument("--run-dir", default=env("COVERIFY_RUN_DIR", ".coverify/runs"))
     run_check_cmd.add_argument("--json", action="store_true", help="print structured result JSON")
     run_check_cmd.set_defaults(func=cmd_run_check)
+
+    tool_cmd = sub.add_parser("tool", help="project-owned tool commands")
+    tool_sub = tool_cmd.add_subparsers(dest="tool_command", required=True)
+    tool_list = tool_sub.add_parser("list", help="list project-owned tools")
+    tool_list.add_argument("--tools-file", default=env("COVERIFY_TOOLS_FILE", "coverify-tools.json"))
+    tool_list.add_argument("--json", action="store_true", help="print structured result JSON")
+    tool_list.set_defaults(func=cmd_tool_list)
+
+    tool_run = tool_sub.add_parser("run", help="run a named project-owned tool with audit artifacts")
+    tool_run.add_argument("name", help="tool name from the tools file")
+    tool_run.add_argument("message", nargs="*", help="tool input text; stdin is used when omitted")
+    tool_run.add_argument("--message", dest="message_text", default="", help="tool input text")
+    tool_run.add_argument("--message-file", default="", help="tool input file, or '-' for stdin")
+    tool_run.add_argument("--tools-file", default=env("COVERIFY_TOOLS_FILE", "coverify-tools.json"))
+    tool_run.add_argument("--timeout", type=int, default=0, help="override tool timeout in seconds; 0 uses the tool default")
+    tool_run.add_argument("--run-dir", default=env("COVERIFY_RUN_DIR", ".coverify/runs"))
+    tool_run.add_argument("--json", action="store_true", help="print structured result JSON")
+    tool_run.set_defaults(func=cmd_tool_run)
 
     ask = sub.add_parser("ask-oracle", help="send one prompt to a backend oracle")
     ask.add_argument("message", nargs="*", help="prompt text; stdin is used when omitted")
