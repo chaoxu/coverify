@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Callable
@@ -70,6 +71,15 @@ def env(name: str, default: str = "") -> str:
 
 def truthy(value: str) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
+
+
+def safe_artifact_fragment(value: str) -> str:
+    fragment = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
+    return fragment.strip("_") or "workspace"
+
+
+def workspace_display_name(workspace: str) -> str:
+    return workspace.strip().rsplit("/", 1)[-1] or workspace.strip()
 
 
 def build_client(
@@ -234,7 +244,7 @@ def cmd_create_workspace(args: argparse.Namespace) -> int:
     )
     result = client.create_workspace(
         args.workspace,
-        args.workspace_name or args.workspace,
+        args.workspace_name or workspace_display_name(args.workspace),
         default_md_format=args.default_md_format,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
@@ -279,7 +289,7 @@ def write_scaffold_file(path: Path, content: str, *, force: bool = False, execut
 def cmd_scaffold_workdir(args: argparse.Namespace) -> int:
     workspace = args.workspace
     root = Path(args.works_root).expanduser()
-    workdir = root / workspace
+    workdir = root / safe_artifact_fragment(workspace)
     coverify_checkout = str(Path(args.coverify_checkout).expanduser())
     qed_root = str(Path(args.qed_root).expanduser())
     force = bool(args.force)
@@ -1458,7 +1468,7 @@ def run_repo_chat_reply(
         client,
         workspace=workspace,
         branch=branch,
-        root=source_root / f"{workspace}-{issue_number}-{branch.replace('/', '_')}",
+        root=source_root / f"{safe_artifact_fragment(workspace)}-{issue_number}-{safe_artifact_fragment(branch)}",
     )
     prior = "\n\n".join(
         f"## {'User' if turn.role == 'user' else 'Assistant'}\n{turn.body}"
@@ -1545,7 +1555,7 @@ def cmd_chat_ask(args: argparse.Namespace) -> int:
         client=client,
         workspace=args.workspace,
         branch=branch,
-        root=source_root / f"{args.workspace}-{issue_number}-{branch.replace('/', '_')}",
+        root=source_root / f"{safe_artifact_fragment(args.workspace)}-{issue_number}-{safe_artifact_fragment(branch)}",
     )
     repo_result = run_repo_oracle(
         bundle=bundle,
@@ -1622,7 +1632,7 @@ def cmd_chat_prepare_llm(args: argparse.Namespace) -> int:
         client=client,
         workspace=args.workspace,
         branch=branch,
-        root=source_root / f"{args.workspace}-preview-{issue_part}-{branch.replace('/', '_')}",
+        root=source_root / f"{safe_artifact_fragment(args.workspace)}-preview-{issue_part}-{safe_artifact_fragment(branch)}",
     )
     preview = prepare_repo_oracle_llm_input(
         bundle=bundle,
@@ -1684,7 +1694,7 @@ def cmd_chat_gather(args: argparse.Namespace) -> int:
         client=client,
         workspace=args.workspace,
         branch=branch,
-        root=source_root / f"{args.workspace}-gather-{branch.replace('/', '_')}",
+        root=source_root / f"{safe_artifact_fragment(args.workspace)}-gather-{safe_artifact_fragment(branch)}",
     )
     gathered = gather_context(
         bundle,

@@ -63,14 +63,18 @@ Create a Cosheaf workspace and local project workdir:
 
 ```bash
 PYTHONPATH=src python3 -m coverify create-workspace \
-  --workspace my-project \
+  --workspace chao/my-project \
   --default-md-format coflat
 
 PYTHONPATH=src python3 -m coverify scaffold-workdir \
-  --workspace my-project
+  --workspace chao/my-project
 ```
 
-Then start day-to-day Codex sessions inside the generated project workdir, usually under `~/playground/works/my-project`. The scaffolded `bin/coverify` wrapper points back to this Coverify checkout through `COVERIFY_CHECKOUT`.
+Cosheaf addresses workspaces as Forgejo repositories, so existing workspace
+commands use `owner/repo`. Then start day-to-day Codex sessions inside the
+generated project workdir, usually under `~/playground/works/chao_my-project`.
+The scaffolded `bin/coverify` wrapper points back to this Coverify checkout
+through `COVERIFY_CHECKOUT`.
 
 Ask a question and get a cross-checked answer with the verdict attached. The
 generator drafts, multiple referees check independently (cross-family plus an
@@ -94,7 +98,7 @@ Inspect the exact LLM input before running a backend:
 
 ```bash
 PYTHONPATH=src python3 -m coverify chat prepare-llm \
-  --workspace my-workspace \
+  --workspace chao/my-project \
   --issue 23 \
   --backend verifying \
   --message "What should the next proof target be?" \

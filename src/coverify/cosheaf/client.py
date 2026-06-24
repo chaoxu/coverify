@@ -5,7 +5,7 @@ import ssl
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 
@@ -101,6 +101,18 @@ class CosheafClient:
         filtered = {k: v for k, v in params.items() if v is not None}
         return urlencode(filtered)
 
+    @staticmethod
+    def _workspace_parts(workspace: str) -> tuple[str, str]:
+        owner, sep, repo = workspace.strip().partition("/")
+        if not sep or not owner or not repo or "/" in repo:
+            raise ValueError("workspace must be addressed as owner/repo")
+        return owner, repo
+
+    @classmethod
+    def _repo_path(cls, workspace: str) -> str:
+        owner, repo = cls._workspace_parts(workspace)
+        return f"/repos/{quote(owner, safe='')}/{quote(repo, safe='')}"
+
     def login(self, username: str, password: str) -> str:
         data = self.request(
             "POST",
@@ -123,7 +135,13 @@ class CosheafClient:
         *,
         default_md_format: str | None = None,
     ) -> Any:
-        body: dict[str, Any] = {"slug": slug, "name": name}
+        owner: str | None = None
+        repo_slug = slug
+        if "/" in slug:
+            owner, repo_slug = self._workspace_parts(slug)
+        body: dict[str, Any] = {"slug": repo_slug, "name": name}
+        if owner:
+            body["owner"] = owner
         if default_md_format:
             body["default_md_format"] = default_md_format
         return self.request("POST", "/workspaces", body=body)
@@ -134,15 +152,15 @@ class CosheafClient:
     def set_workspace_member(self, workspace: str, username: str, role: str) -> Any:
         return self.request(
             "PUT",
-            f"/workspaces/{workspace}/members/{username}",
+            f"{self._repo_path(workspace)}/members/{quote(username, safe='')}",
             body={"role": role},
         )
 
     def list_workspace_files(self, workspace: str, *, branch: str = "main") -> Any:
-        return self.request("GET", f"/w/{workspace}/tree?{self.query(branch=branch)}")
+        return self.request("GET", f"{self._repo_path(workspace)}/tree?{self.query(branch=branch)}")
 
     def search(self, workspace: str, query: str) -> Any:
-        return self.request("GET", f"/w/{workspace}/search?{self.query(q=query)}")
+        return self.request("GET", f"{self._repo_path(workspace)}/search?{self.query(q=query)}")
 
     def list_issues(
         self,
@@ -153,14 +171,14 @@ class CosheafClient:
     ) -> Any:
         return self.request(
             "GET",
-            f"/w/{workspace}/issues?{self.query(state=state, filter='all', q=query)}",
+            f"{self._repo_path(workspace)}/issues?{self.query(state=state, filter='all', q=query)}",
         )
 
     def read_issue(self, workspace: str, number: int) -> Any:
-        return self.request("GET", f"/w/{workspace}/issues/{number}")
+        return self.request("GET", f"{self._repo_path(workspace)}/issues/{number}")
 
     def read_issue_timeline(self, workspace: str, number: int) -> Any:
-        return self.request("GET", f"/w/{workspace}/issues/{number}/timeline")
+        return self.request("GET", f"{self._repo_path(workspace)}/issues/{number}/timeline")
 
     def create_issue(
         self,
@@ -175,7 +193,7 @@ class CosheafClient:
             payload["labels"] = labels
         return self.request(
             "POST",
-            f"/w/{workspace}/issues",
+            f"{self._repo_path(workspace)}/issues",
             body=payload,
         )
 
@@ -196,19 +214,19 @@ class CosheafClient:
             raise ValueError("title or body is required")
         return self.request(
             "PATCH",
-            f"/w/{workspace}/issues/{number}",
+            f"{self._repo_path(workspace)}/issues/{number}",
             body=patch,
         )
 
     def comment_issue(self, workspace: str, number: int, body: str) -> Any:
         return self.request(
             "POST",
-            f"/w/{workspace}/issues/{number}/comments",
+            f"{self._repo_path(workspace)}/issues/{number}/comments",
             body={"body": body},
         )
 
     def list_labels(self, workspace: str) -> Any:
-        return self.request("GET", f"/w/{workspace}/labels")
+        return self.request("GET", f"{self._repo_path(workspace)}/labels")
 
     def create_label(
         self,
@@ -220,7 +238,7 @@ class CosheafClient:
     ) -> Any:
         return self.request(
             "POST",
-            f"/w/{workspace}/labels",
+            f"{self._repo_path(workspace)}/labels",
             body={"name": name, "color": color, "description": description},
         )
 
@@ -262,18 +280,18 @@ class CosheafClient:
             raise ValueError("issue state must be open or closed")
         return self.request(
             "PATCH",
-            f"/w/{workspace}/issues/{number}/state",
+            f"{self._repo_path(workspace)}/issues/{number}/state",
             body={"state": state},
         )
 
     def read_file(self, workspace: str, path: str, *, branch: str = "main") -> Any:
         return self.request(
             "GET",
-            f"/w/{workspace}/file?{self.query(path=path, branch=branch)}",
+            f"{self._repo_path(workspace)}/file?{self.query(path=path, branch=branch)}",
         )
 
     def create_branch(self, workspace: str, name: str) -> Any:
-        return self.request("POST", f"/w/{workspace}/branches", body={"name": name})
+        return self.request("POST", f"{self._repo_path(workspace)}/branches", body={"name": name})
 
     def write_branch_file(
         self,
@@ -284,7 +302,7 @@ class CosheafClient:
     ) -> Any:
         return self.request(
             "PUT",
-            f"/w/{workspace}/file?{self.query(path=path, branch=branch)}",
+            f"{self._repo_path(workspace)}/file?{self.query(path=path, branch=branch)}",
             body={"content": content},
         )
 
@@ -296,7 +314,7 @@ class CosheafClient:
     ) -> Any:
         return self.request(
             "DELETE",
-            f"/w/{workspace}/file?{self.query(path=path, branch=branch)}",
+            f"{self._repo_path(workspace)}/file?{self.query(path=path, branch=branch)}",
         )
 
     def open_pull_request(
@@ -310,19 +328,19 @@ class CosheafClient:
     ) -> Any:
         return self.request(
             "POST",
-            f"/w/{workspace}/pulls",
+            f"{self._repo_path(workspace)}/pulls",
             body={"head": head, "base": base, "title": title, "body": body},
         )
 
     def list_pull_requests(self, workspace: str, *, state: str = "open") -> Any:
-        return self.request("GET", f"/w/{workspace}/pulls?{self.query(state=state)}")
+        return self.request("GET", f"{self._repo_path(workspace)}/pulls?{self.query(state=state)}")
 
     def read_pull_request(self, workspace: str, pr_number: int) -> Any:
-        return self.request("GET", f"/w/{workspace}/pulls/{pr_number}")
+        return self.request("GET", f"{self._repo_path(workspace)}/pulls/{pr_number}")
 
     def read_pull_request_context(self, workspace: str, pr_number: int) -> Any:
         pull_request = self.read_pull_request(workspace, pr_number)
-        files = self.request("GET", f"/w/{workspace}/pulls/{pr_number}/files")
+        files = self.request("GET", f"{self._repo_path(workspace)}/pulls/{pr_number}/files")
         return {
             "pull_request": pull_request,
             "files": files,
@@ -343,7 +361,7 @@ class CosheafClient:
     ) -> Any:
         return self.request(
             "POST",
-            f"/w/{workspace}/pulls/{pr_number}/reviews",
+            f"{self._repo_path(workspace)}/pulls/{pr_number}/reviews",
             body={"event": event, "body": body},
         )
 
@@ -357,9 +375,9 @@ class CosheafClient:
     ) -> Any:
         return self.request(
             "POST",
-            f"/w/{workspace}/pulls/{pr_number}/merge",
+            f"{self._repo_path(workspace)}/pulls/{pr_number}/merge",
             body={"Do": method, "force": force},
         )
 
     def close_pull_request(self, workspace: str, pr_number: int) -> Any:
-        return self.request("POST", f"/w/{workspace}/pulls/{pr_number}/close", body={})
+        return self.request("POST", f"{self._repo_path(workspace)}/pulls/{pr_number}/close", body={})

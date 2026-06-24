@@ -37,12 +37,13 @@ class ClientTests(unittest.TestCase):
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
         with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
-            response = client.create_workspace("w", "Workspace", default_md_format="coflat")
+            response = client.create_workspace("owner/w", "Workspace", default_md_format="coflat")
 
         self.assertEqual(response["default_md_format"], "coflat")
         self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/workspaces")
         self.assertEqual(captured["method"], "POST")
         self.assertEqual(captured["body"], {
+            "owner": "owner",
             "slug": "w",
             "name": "Workspace",
             "default_md_format": "coflat",
@@ -65,6 +66,25 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(captured["body"], {"slug": "w", "name": "Workspace"})
         self.assertEqual(captured["timeout"], 60)
 
+    def test_existing_workspace_routes_require_owner_repo(self) -> None:
+        client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
+
+        with self.assertRaisesRegex(ValueError, "owner/repo"):
+            client.list_workspace_files("w")
+
+    def test_workspace_route_parts_are_escaped(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def fake_urlopen(req: Any, timeout: int) -> FakeResponse:
+            captured["url"] = req.full_url
+            return FakeResponse({"files": []})
+
+        client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
+        with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
+            client.list_workspace_files("owner name/repo name")
+
+        self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/repos/owner%20name/repo%20name/tree?branch=main")
+
     def test_set_workspace_member_uses_cosheaf_members_endpoint(self) -> None:
         captured: dict[str, Any] = {}
 
@@ -76,10 +96,10 @@ class ClientTests(unittest.TestCase):
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
         with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
-            response = client.set_workspace_member("w", "test-vera", "write")
+            response = client.set_workspace_member("owner/w", "test-vera", "write")
 
         self.assertEqual(response["ok"], True)
-        self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/workspaces/w/members/test-vera")
+        self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/repos/owner/w/members/test-vera")
         self.assertEqual(captured["method"], "PUT")
         self.assertEqual(captured["body"], {"role": "write"})
 
@@ -94,10 +114,10 @@ class ClientTests(unittest.TestCase):
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
         with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
-            response = client.create_issue("w", title="Try lower bound", body="body")
+            response = client.create_issue("owner/w", title="Try lower bound", body="body")
 
         self.assertEqual(response["number"], 3)
-        self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/w/w/issues")
+        self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/repos/owner/w/issues")
         self.assertEqual(captured["method"], "POST")
         self.assertEqual(captured["body"], {"title": "Try lower bound", "body": "body"})
 
@@ -112,10 +132,10 @@ class ClientTests(unittest.TestCase):
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
         with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
-            response = client.edit_issue("w", 3, body="updated")
+            response = client.edit_issue("owner/w", 3, body="updated")
 
         self.assertEqual(response["body"], "updated")
-        self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/w/w/issues/3")
+        self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/repos/owner/w/issues/3")
         self.assertEqual(captured["method"], "PATCH")
         self.assertEqual(captured["body"], {"body": "updated"})
 
@@ -134,10 +154,10 @@ class ClientTests(unittest.TestCase):
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
         with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
-            response = client.read_issue_timeline("w", 23)
+            response = client.read_issue_timeline("owner/w", 23)
 
         self.assertEqual(response["events"], [{"type": "close"}])
-        self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/w/w/issues/23/timeline")
+        self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/repos/owner/w/issues/23/timeline")
         self.assertEqual(captured["method"], "GET")
 
     def test_set_issue_state_uses_cosheaf_state_endpoint(self) -> None:
@@ -151,10 +171,10 @@ class ClientTests(unittest.TestCase):
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
         with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
-            response = client.reopen_issue("w", 23)
+            response = client.reopen_issue("owner/w", 23)
 
         self.assertEqual(response["state"], "open")
-        self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/w/w/issues/23/state")
+        self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/repos/owner/w/issues/23/state")
         self.assertEqual(captured["method"], "PATCH")
         self.assertEqual(captured["body"], {"state": "open"})
 
@@ -173,10 +193,10 @@ class ClientTests(unittest.TestCase):
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
         with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
-            response = client.search("w", "series parallel")
+            response = client.search("owner/w", "series parallel")
 
         self.assertEqual(response["results"], [])
-        self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/w/w/search?q=series+parallel")
+        self.assertEqual(captured["url"], "http://cosheaf.test/api/v1/repos/owner/w/search?q=series+parallel")
         self.assertEqual(captured["method"], "GET")
 
     def test_delete_branch_file_uses_cosheaf_file_endpoint(self) -> None:
@@ -190,12 +210,12 @@ class ClientTests(unittest.TestCase):
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
         with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
-            response = client.delete_branch_file("w", "old.md", "agent/cleanup")
+            response = client.delete_branch_file("owner/w", "old.md", "agent/cleanup")
 
         self.assertEqual(response["ok"], True)
         self.assertEqual(
             captured["url"],
-            "http://cosheaf.test/api/v1/w/w/file?path=old.md&branch=agent%2Fcleanup",
+            "http://cosheaf.test/api/v1/repos/owner/w/file?path=old.md&branch=agent%2Fcleanup",
         )
         self.assertEqual(captured["method"], "DELETE")
         self.assertIsNone(captured["data"])
@@ -213,16 +233,16 @@ class ClientTests(unittest.TestCase):
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
         with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
-            client.list_pull_requests("w", state="all")
-            client.read_pull_request("w", 7)
-            client.close_pull_request("w", 7)
+            client.list_pull_requests("owner/w", state="all")
+            client.read_pull_request("owner/w", 7)
+            client.close_pull_request("owner/w", 7)
 
         self.assertEqual(
             captured,
             [
-                ("GET", "http://cosheaf.test/api/v1/w/w/pulls?state=all", None),
-                ("GET", "http://cosheaf.test/api/v1/w/w/pulls/7", None),
-                ("POST", "http://cosheaf.test/api/v1/w/w/pulls/7/close", {}),
+                ("GET", "http://cosheaf.test/api/v1/repos/owner/w/pulls?state=all", None),
+                ("GET", "http://cosheaf.test/api/v1/repos/owner/w/pulls/7", None),
+                ("POST", "http://cosheaf.test/api/v1/repos/owner/w/pulls/7/close", {}),
             ],
         )
 
@@ -237,13 +257,13 @@ class ClientTests(unittest.TestCase):
 
         client = CosheafClient(CosheafConfig(api_url="http://cosheaf.test/api/v1", token="tok"))
         with patch("coverify.cosheaf.client.urlopen", fake_urlopen):
-            response = client.read_pull_request_context("w", 7)
+            response = client.read_pull_request_context("owner/w", 7)
 
         self.assertEqual(
             captured,
             [
-                ("GET", "http://cosheaf.test/api/v1/w/w/pulls/7"),
-                ("GET", "http://cosheaf.test/api/v1/w/w/pulls/7/files"),
+                ("GET", "http://cosheaf.test/api/v1/repos/owner/w/pulls/7"),
+                ("GET", "http://cosheaf.test/api/v1/repos/owner/w/pulls/7/files"),
             ],
         )
         self.assertEqual(response["pull_request"]["number"], 7)

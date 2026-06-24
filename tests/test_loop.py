@@ -752,16 +752,14 @@ class HelperTests(LoopTestCase):
 def hermetic_parser():
     """build_parser bakes env defaults in; clear loop-relevant vars first so
     a developer's shell cannot flip these tests."""
-    cleared = {
-        var: ""
+    with patch.dict(os.environ, {}, clear=False):
         for var in (
             "COVERIFY_LOOP_DRIVER",
             "COVERIFY_ASK_VERIFIER",
             "COVERIFY_ASK_GENERATOR",
             "COVERIFY_ASK_ADJUDICATOR",
-        )
-    }
-    with patch.dict(os.environ, cleared):
+        ):
+            os.environ.pop(var, None)
         return build_parser()
 
 

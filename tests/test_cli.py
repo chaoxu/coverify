@@ -967,6 +967,36 @@ class CliTests(unittest.TestCase):
             self.assertIn('provider: "chatgpt"', chatgpt_config)
             self.assertNotIn("qed_chatgpt_codex_shim.py", chatgpt_config)
 
+    def test_scaffold_workdir_sanitizes_owner_repo_local_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parser = build_parser()
+            args = parser.parse_args(
+                [
+                    "scaffold-workdir",
+                    "--workspace",
+                    "owner/demo-workspace",
+                    "--works-root",
+                    tmpdir,
+                    "--coverify-checkout",
+                    "/repo/coverify",
+                    "--qed-root",
+                    "/repo/QED",
+                ],
+            )
+            stdout = io.StringIO()
+
+            with patch("sys.stdout", stdout):
+                self.assertEqual(args.func(args), 0)
+
+            result = json.loads(stdout.getvalue())
+            workdir = Path(result["workdir"])
+            self.assertEqual(workdir, Path(tmpdir) / "owner_demo-workspace")
+            self.assertIn('export COSHEAF_WORKSPACE="owner/demo-workspace"', (workdir / ".env.example").read_text(encoding="utf-8"))
+            self.assertIn(
+                'export COSHEAF_WORKSPACE="${COSHEAF_WORKSPACE:-owner/demo-workspace}"',
+                (workdir / "bin" / "coverify").read_text(encoding="utf-8"),
+            )
+
     def test_scaffold_refresh_tools_updates_bin_without_overwriting_docs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             parser = build_parser()
