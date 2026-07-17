@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 from typing import Callable
@@ -40,6 +41,7 @@ from .integration.firstproof import (
     setup_improofbench,
 )
 from .integration.external_workflow import run_external_workflow
+from .integration.danus import run_danus_project
 from .integration.repo_oracle import (
     PROMPT_CONTEXT_RAW,
     PROMPT_CONTEXTS,
@@ -1318,6 +1320,47 @@ def cmd_firstproof_run(args: argparse.Namespace) -> int:
             "provider": result.provider,
         }
     except (FileNotFoundError, RuntimeError) as exc:
+        payload = {"ok": False, "detail": str(exc)}
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        answer = str(payload.get("answer") or payload.get("detail") or "")
+        if answer:
+            print(answer, end="" if answer.endswith("\n") else "\n")
+        print(f"ok: {payload['ok']} (audit: {payload.get('artifact_dir', 'none')})")
+    return 0 if payload["ok"] else 1
+
+
+def cmd_danus_run(args: argparse.Namespace) -> int:
+    problem = read_message_input(args)
+    if not problem.strip():
+        raise SystemExit("problem is required")
+    base_command = shlex.split(args.danus_command)
+    if not base_command:
+        raise SystemExit("--danus-command must not be empty")
+    try:
+        result = run_danus_project(
+            base_command=base_command,
+            cwd=Path(args.danus_root),
+            problem=problem,
+            artifact_root=Path(args.run_dir) / "danus",
+            project=args.project,
+            roles=args.roles,
+            model=args.model or None,
+            projects_root=Path(args.projects_root) if args.projects_root else None,
+            write_problem=not args.no_write_problem,
+            poll_interval_seconds=args.poll_interval,
+            deadline_seconds=args.deadline,
+            verb_timeout_seconds=args.verb_timeout,
+        )
+        payload = {
+            "ok": True,
+            "answer": result.answer,
+            "artifact_dir": str(result.artifact_dir),
+            "oracle_call_id": result.oracle_call_id,
+            "provider": result.provider,
+        }
+    except (FileNotFoundError, RuntimeError, subprocess.TimeoutExpired) as exc:
         payload = {"ok": False, "detail": str(exc)}
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -2712,6 +2755,26 @@ def build_parser() -> argparse.ArgumentParser:
     firstproof_run.add_argument("--run-dir", default=env("COVERIFY_RUN_DIR", ".coverify/runs"))
     firstproof_run.add_argument("--json", action="store_true", help="print structured result JSON")
     firstproof_run.set_defaults(func=cmd_firstproof_run)
+
+    danus = sub.add_parser("danus", help="drive one Danus multi-agent proving project lifecycle")
+    danus_sub = danus.add_subparsers(dest="danus_command", required=True)
+    danus_run = danus_sub.add_parser("run", help="scaffold, start, poll, and surface candidate facts (no auto-finalize)")
+    danus_run.add_argument("message", nargs="*", help="problem text; stdin is used when omitted")
+    danus_run.add_argument("--message", dest="message_text", default="", help="problem text")
+    danus_run.add_argument("--message-file", default="", help="problem text file, or '-' for stdin")
+    danus_run.add_argument("--project", default=env("COVERIFY_DANUS_PROJECT", "coverify_target"), help="Danus project name")
+    danus_run.add_argument("--danus-root", default=env("COVERIFY_DANUS_ROOT", "."), help="cwd for the danus command (the Danus repo for a local deployment)")
+    danus_run.add_argument("--danus-command", default=env("COVERIFY_DANUS_COMMAND", "bin/danus"), help="base danus control command, e.g. 'bin/danus' or 'ssh jupiter danus'")
+    danus_run.add_argument("--roles", default=env("COVERIFY_DANUS_ROLES", "high:3,xhigh:4"), help="worker roster passed to danus new")
+    danus_run.add_argument("--model", default=env("COVERIFY_DANUS_MODEL", ""), help="model passed to danus new")
+    danus_run.add_argument("--projects-root", default=env("COVERIFY_DANUS_PROJECTS_ROOT", ""), help="local path holding runtime/projects; default <danus-root>/runtime/projects")
+    danus_run.add_argument("--no-write-problem", action="store_true", help="do not write PROBLEM.md (set it out of band, e.g. for a remote deployment)")
+    danus_run.add_argument("--poll-interval", type=float, default=float(env("COVERIFY_DANUS_POLL_SECONDS", "30")), help="seconds between status polls")
+    danus_run.add_argument("--deadline", type=int, default=int(env("COVERIFY_DANUS_DEADLINE_SECONDS", "3600")), help="stop workers gracefully after this many seconds")
+    danus_run.add_argument("--verb-timeout", type=int, default=int(env("COVERIFY_DANUS_VERB_TIMEOUT", "120")), help="timeout per danus verb invocation")
+    danus_run.add_argument("--run-dir", default=env("COVERIFY_RUN_DIR", ".coverify/runs"))
+    danus_run.add_argument("--json", action="store_true", help="print structured result JSON")
+    danus_run.set_defaults(func=cmd_danus_run)
 
     ask = sub.add_parser("ask-oracle", help="send one prompt to a backend oracle")
     ask.add_argument("message", nargs="*", help="prompt text; stdin is used when omitted")
