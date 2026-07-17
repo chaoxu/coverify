@@ -376,6 +376,7 @@ Core boundary:
 - This attempt bundle stores private work.
 - Do not put raw transcripts, scratch calculations, huge logs, or half-written proof fragments into the final Coflat/Cosheaf artifact.
 - Do not hard-wrap ordinary prose paragraphs at arbitrary source-column widths.
+- Do not use `>` blockquotes in Coflat artifacts; use a `::: {{.blockquote}}` fenced div.
 - Source-grounded claims need exact paths, ranges, and hashes when applicable.
 - Label status honestly: proved, checked computation, conjectural, obstruction, precise gap, failed route, or speculative route.
 - Identify the closest known failed route and explain why this attempt is materially different, or state that no close failed route was found.

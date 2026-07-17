@@ -30,6 +30,11 @@ Markdown. It is not needed for pure mathematical oracle calls.
 
 ```text
 Write Coflat Markdown, a Pandoc Markdown flavor. The only conventions to note:
+- Write each ordinary prose paragraph on ONE logical source line; never
+  hard-wrap prose. A source newline is preserved visually by the Coflat
+  reader, so wrapped prose renders with ragged line breaks.
+- Never use `>` blockquotes; Coflat removed them. Use a
+  `::: {.blockquote}` fenced div when set-off quotation is needed.
 - Use `$...$` and `$$...$$` for formulas; code fences are only for literal
   data, code, command output, or certificates.
 - Use Pandoc fenced divs for citeable math objects, such as:
@@ -41,6 +46,12 @@ Write Coflat Markdown, a Pandoc Markdown flavor. The only conventions to note:
   referenced.
 - When writing a whole page, start with one H1 and do not add YAML frontmatter.
 ```
+
+The canonical agent-facing delta rules now lead the Coflat spec itself: see
+the "Rules for Agents" section at the top of
+[Coflat `FORMAT.md`](https://github.com/chaoxu/coflat/blob/main/FORMAT.md).
+Prefer injecting or pointing at that section when a longer rule set is
+useful.
 
 ## Required Output Shape
 
@@ -167,6 +178,9 @@ Proof.
 - Do not use triple-backtick code fences for proofs, theorems, definitions, or
   remarks.
 - Do not use triple-backtick code fences as a substitute for math display mode.
+- Do not hard-wrap ordinary prose paragraphs; each paragraph is one logical
+  source line.
+- Do not use `>` blockquotes; use `::: {.blockquote}` fenced divs.
 - Do not use raw HTML comments.
 - Do not include frontmatter unless explicitly asked.
 - Treat branch/PR/review/issue context according to the context builder's
