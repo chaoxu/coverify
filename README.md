@@ -33,8 +33,15 @@ Optional user limits (the harness imposes none of its own): `--agent-limit N`
 role runs `anthropic/claude-opus-5@high`. Override globally with
 `COVERIFY_MODEL` (judgment/verification roles) or per role with
 `COVERIFY_MODEL_{COORDINATOR,WORKER,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}`.
-`prove`/`resume` preflight the API keys each configured provider needs
-(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). A pleasant side effect of the
+Auth per provider is an env API key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`)
+**or subscription OAuth** — `coverify login anthropic` (Claude Pro/Max) and
+`coverify login openai-codex` (ChatGPT Plus/Pro; its catalog serves
+`gpt-5.6-sol`, so workers can run the workhorse on subscription with
+`COVERIFY_MODEL_WORKER=openai-codex/gpt-5.6-sol@xhigh` once the
+subscription has headroom). Credentials persist in
+`~/.config/coverify/auth.json` (0600) with automatic token refresh;
+`prove`/`resume` preflight that every configured role's provider has usable
+auth of either kind. A pleasant side effect of the
 default split: GPT-produced candidates are verified by Anthropic-family
 auditors — stage verification is cross-family out of the box, and the
 journal records the family per call.

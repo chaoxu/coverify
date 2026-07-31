@@ -2,7 +2,7 @@
 import * as path from "node:path";
 import { campaignExists, initCampaign, readJournal, readLedger } from "./campaign.js";
 import { GateStore, recordStatement } from "./gates.js";
-import { ROLE_NAMES, roleModelSpec, specLabel } from "./roles.js";
+import { buildModels, ROLE_NAMES, roleModelSpec, specLabel } from "./roles.js";
 import { runCampaign } from "./harness.js";
 
 function usage(): never {
@@ -11,6 +11,9 @@ function usage(): never {
   coverify resume [--dir campaign] [--agent-limit N] [--max-wakes N]
   coverify status [--dir campaign]
   coverify amend [--dir campaign]   accept an explicit user amendment of STATEMENT.md
+  coverify login <provider>         subscription OAuth (anthropic = Claude Pro/Max,
+                                    openai-codex = ChatGPT; credential -> ~/.config/coverify/auth.json)
+  coverify logout <provider>
 
 env: ANTHROPIC_API_KEY (+ OPENAI_API_KEY for openai/* roles — workers default to openai/gpt-5.6-sol@xhigh),
      COVERIFY_MODEL and per-role COVERIFY_MODEL_{COORDINATOR,WORKER,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}
@@ -47,14 +50,26 @@ function optionalInt(name: string): number | undefined {
 }
 
 async function prove(resume: boolean): Promise<void> {
-  const keyOf = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY" } as const;
+  // Auth preflight: a provider is usable via an env API key or a stored
+  // OAuth subscription credential (coverify login <provider>).
+  const models = buildModels();
   const missing = new Set<string>();
   for (const role of ROLE_NAMES) {
-    const key = keyOf[roleModelSpec(role).provider];
-    if (!process.env[key]) missing.add(`${key} (role ${role}: ${specLabel(roleModelSpec(role))})`);
+    const provider = roleModelSpec(role).provider;
+    let ok = false;
+    try {
+      ok = (await models.getAuth(provider)) !== undefined;
+    } catch {
+      ok = false;
+    }
+    if (!ok) missing.add(`${provider} (role ${role}: ${specLabel(roleModelSpec(role))})`);
   }
   if (missing.size > 0) {
-    console.error(`missing API keys for configured role models:\n  ${[...missing].join("\n  ")}\n(fetch via: fleet-secret get <app>/<name>, or re-point the role with COVERIFY_MODEL_*)`);
+    console.error(
+      `no usable auth for configured role providers:\n  ${[...missing].join("\n  ")}\n` +
+        "fix with an API key env var (fleet-secret get <app>/<name>), 'coverify login <provider>' " +
+        "for subscription OAuth, or re-point the role with COVERIFY_MODEL_*",
+    );
     process.exit(1);
   }
   if (!resume) {
@@ -75,7 +90,46 @@ async function prove(resume: boolean): Promise<void> {
   console.log(synthesis);
 }
 
+async function oauth(action: "login" | "logout"): Promise<void> {
+  const provider = positional[0];
+  if (!provider) usage();
+  const models = buildModels();
+  if (action === "logout") {
+    await models.logout(provider);
+    console.error(`[coverify] logged out of ${provider}`);
+    return;
+  }
+  const { createInterface } = await import("node:readline/promises");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    await models.login(provider, "oauth", {
+      prompt: async (p: { type: string; message: string; options?: readonly { id: string; label: string }[] }) => {
+        if (p.type === "select" && p.options) {
+          p.options.forEach((o, i) => console.log(`  ${i + 1}. ${o.label}`));
+          const n = Number(await rl.question(`${p.message} (1-${p.options.length}): `)) - 1;
+          return p.options[n]?.id ?? "";
+        }
+        return rl.question(`${p.message}: `);
+      },
+      notify: (event: { type: string; message?: string; url?: string; userCode?: string; verificationUri?: string }) => {
+        if (event.type === "auth_url") console.log(`Open: ${event.url}`);
+        else if (event.type === "device_code") console.log(`Code: ${event.userCode} at ${event.verificationUri}`);
+        else if (event.message) console.log(event.message);
+      },
+    });
+    console.error(`[coverify] logged in to ${provider}; credential saved to ~/.config/coverify/auth.json`);
+  } finally {
+    rl.close();
+  }
+}
+
 switch (command) {
+  case "login":
+    await oauth("login");
+    break;
+  case "logout":
+    await oauth("logout");
+    break;
   case "prove":
     await prove(false);
     break;

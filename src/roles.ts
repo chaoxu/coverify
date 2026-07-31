@@ -4,6 +4,8 @@ import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
 import { createModels } from "@earendil-works/pi-ai";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
+import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
+import { fileCredentialStore } from "./credentials.js";
 import { Type } from "typebox";
 
 const OUTPUT_LIMIT = 50_000;
@@ -12,9 +14,12 @@ const BASH_TIMEOUT_MS = Number(process.env.COVERIFY_BASH_TIMEOUT_MS ?? 600_000);
 export type Models = ReturnType<typeof createModels>;
 
 export function buildModels(): Models {
-  const models = createModels();
+  // Persistent credential store: OAuth subscription logins (coverify login)
+  // survive across runs; API-key env vars keep working unchanged.
+  const models = createModels({ credentials: fileCredentialStore() });
   models.setProvider(anthropicProvider());
   models.setProvider(openaiProvider());
+  models.setProvider(openaiCodexProvider());
   return models;
 }
 
@@ -30,7 +35,7 @@ export type RoleName =
   | "comparator";
 
 export interface ModelSpec {
-  provider: "anthropic" | "openai";
+  provider: "anthropic" | "openai" | "openai-codex";
   modelId: string;
   thinking: ThinkingLevel;
 }
@@ -70,7 +75,7 @@ export function parseModelSpec(spec: string): ModelSpec {
   const slash = modelPart.indexOf("/");
   const provider = slash < 0 ? "anthropic" : modelPart.slice(0, slash);
   const modelId = slash < 0 ? modelPart : modelPart.slice(slash + 1);
-  if (provider !== "anthropic" && provider !== "openai") {
+  if (provider !== "anthropic" && provider !== "openai" && provider !== "openai-codex") {
     throw new Error(`unknown provider "${provider}" in model spec "${spec}"`);
   }
   return { provider, modelId, thinking: thinking as ThinkingLevel };
