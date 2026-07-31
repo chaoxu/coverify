@@ -55,13 +55,32 @@ export function initCampaign(dir: string, statement: string): void {
     path.join(dir, "CURRENT_FRONTIER.md"),
     "# CURRENT_FRONTIER\n\nCampaign initialized; no waves dispatched yet.\n",
   );
+  // Field templates are scaffolding, not schema: they quote the launcher's
+  // required fields so entry format survives coordinator changes. Nothing
+  // mechanical parses these files.
   fs.writeFileSync(
     path.join(dir, "REGISTRY.md"),
-    "# REGISTRY\n\nNo routes registered.\n",
+    "# REGISTRY\n\n<!-- per route (contract): exact claim · gap · smallest obstruction · " +
+      "next decisive test · status · retry novelty; grouped by mechanism × terminal gap; " +
+      "claim labels: candidate / self-audited / verifier-backed / promoted / independently audited -->\n\n" +
+      "No routes registered.\n",
   );
-  fs.writeFileSync(path.join(dir, "FAILED.md"), "# FAILED (append-only)\n");
-  fs.writeFileSync(path.join(dir, "PROVED.md"), "# PROVED (append-only)\n");
-  fs.writeFileSync(path.join(dir, "LESSONS.md"), "# LESSONS (process only)\n");
+  fs.writeFileSync(
+    path.join(dir, "FAILED.md"),
+    "# FAILED (append-only)\n\n<!-- per entry (contract): exact obstruction + evidence · " +
+      "what would make a retry materially new -->\n",
+  );
+  fs.writeFileSync(
+    path.join(dir, "PROVED.md"),
+    "# PROVED (append-only)\n\n<!-- per entry (contract): exact statement · proof/certificate " +
+      "revision · dependencies · audit artifacts (appended via record_promotion only) -->\n",
+  );
+  fs.writeFileSync(
+    path.join(dir, "LESSONS.md"),
+    "# LESSONS (process only)\n\n<!-- actionable = changes how a future wave/test/gate/allocation " +
+      "is run, else deferred with an activation test; mathematical facts belong in the ledgers; " +
+      "mark cross-campaign lessons 'graduate' -->\n",
+  );
 }
 
 export function campaignExists(dir: string): boolean {

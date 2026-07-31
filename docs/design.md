@@ -154,6 +154,27 @@ as a second versioning system; git remains a user convention. Mechanical
 checkpoint-ordering enforcement and coordinator-cache machinery were struck
 from the roadmap as over-constraint waiting to happen.
 
+## Planned capability: CLI coding agents (design reserved, not built)
+
+Workers will be able to run coding experiments through the subscription
+harnesses directly — `claude -p` / `codex exec` — via a harness-provided
+`run_coding_agent` tool. Shape decided in advance so nothing has to move:
+
+- The harness spawns the CLI as a supervised child process (never through the
+  worker's sandboxed bash, which would block the CLI's own state writes),
+  cwd'd to an experiment directory inside the worker's `EVIDENCE/<id>/`;
+  output is saved as an evidence artifact; the journal records the model
+  family and that provenance is self-attested — the exact pattern
+  `fable-review` already uses.
+- Base commands are configurable (`COVERIFY_CLAUDE_CMD` / `COVERIFY_CODEX_CMD`)
+  so flag drift in the CLIs never requires a harness release — the lesson
+  from 1.0's Danus adapter.
+- Bonus this unlocks: `codex` is a demonstrably different model family, so
+  the launcher's independent different-family audit can run on subscription
+  rather than API pricing; `fable-review` (file-path interface: CANDIDATE
+  STATEMENT DEPENDENCIES EVIDENCE_DIR) plugs into the EVIDENCE layout as-is
+  for the Anthropic-side outside review.
+
 ## Status / roadmap
 
 - [x] Launcher loading with no-fallback rule; conformance token check (`bun run check`)
@@ -166,6 +187,9 @@ from the roadmap as over-constraint waiting to happen.
 - [ ] Retraction bookkeeping helper (registry relabel + dependent demotion)
 - [ ] Non-load-bearing delta-audit carry-forward path (currently always full re-verification — stricter than the contract, acceptable)
 - [ ] Compute handles via the fleet scheduler front door (Nomad)
-- [ ] Independent different-family audit path (fable-review integration)
+- [ ] `run_coding_agent` worker tool (claude/codex CLI, design above)
+- [ ] Independent different-family audit path (fable-review for the Anthropic
+      side; codex CLI as the different-family reviewer)
+- [ ] Citation lint (mechanics: cited evidence paths exist; never parses content)
 - [ ] Linux write-sandbox backend (bubblewrap/sandbox equivalent)
 - [ ] First live campaign; then revisit `docs/skill-feedback.md`
