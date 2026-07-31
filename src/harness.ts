@@ -22,7 +22,14 @@ import {
   type WorkerPacket,
 } from "./gates.js";
 import { loadLauncherContract } from "./launcher.js";
-import { buildModels, CHARGES, runRole, type WriteScope } from "./roles.js";
+import {
+  buildModels,
+  CHARGES,
+  createRoleSession,
+  runRole,
+  type RoleSession,
+  type WriteScope,
+} from "./roles.js";
 
 export interface CampaignOptions {
   campaignDir: string;
@@ -43,6 +50,14 @@ interface Handle {
  *  before the harness pauses operationally to stop runaway spend. This is an
  *  operational pause (campaign stays authorized), never a completion. */
 const NOOP_WAKE_PAUSE = 3;
+
+/** Coordinator context cap (approx tokens). The coordinator stays resident
+ *  across wakes — matching how the skill runs in a live harness session —
+ *  until this cap, which is the compaction analog: the session is rebuilt
+ *  via the launcher's restart rule (reread statement, frontier, lessons,
+ *  registry index). Mechanics: the cap changes cost, not semantics, because
+ *  every decision must be externalized to the ledgers regardless. */
+const COORDINATOR_CONTEXT_TOKENS = Number(process.env.COVERIFY_COORDINATOR_CONTEXT_TOKENS ?? 150_000);
 
 function toolText(text: string) {
   return { content: [{ type: "text" as const, text }], details: {} };
@@ -394,6 +409,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
 
   let wakeCount = 0;
   let noopWakes = 0;
+  let coordinator: RoleSession | undefined;
   while (true) {
     wakeCount++;
     if (opts.maxWakes !== undefined && wakeCount > opts.maxWakes) {
@@ -423,19 +439,36 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         ? "\nNothing is live and no new reports arrived. Per the contract the campaign remains " +
           "authorized: dispatch the next materially new wave, or explicitly declare_campaign_state."
         : "";
-    lastWakeText = await runRole({
-      contract,
-      charge: CHARGES.coordinator,
-      prompt: `${resumeBundle(dir)}\n\n---\n\nCampaign directory: ${dir}\n${lostNote}${digest}${idleNudge}\n\n${
-        reportSections.length > 0
-          ? `# Newly completed work\n\n${reportSections.join("\n\n---\n\n")}`
-          : "No new completions this wake."
-      }`,
-      bash: { cwd: dir, scope: coordinatorScope },
-      extraTools: [dispatchWorker, dispatchGateCritic, requestVerification, recordPromotion, declareState],
-      modelId: opts.modelId,
-      models,
-    });
+    // Resident coordinator: rebuild only at start or past the context cap
+    // (the compaction analog — the launcher's restart rule is the rebuild).
+    if (coordinator && coordinator.approxTokens() > COORDINATOR_CONTEXT_TOKENS) {
+      appendJournal(dir, {
+        kind: "note",
+        note: `coordinator context cap (${COORDINATOR_CONTEXT_TOKENS} tok) reached; rebuilding via restart rule`,
+      });
+      coordinator = undefined;
+    }
+    let fresh = false;
+    if (coordinator === undefined) {
+      fresh = true;
+      coordinator = createRoleSession({
+        contract,
+        charge: CHARGES.coordinator,
+        bash: { cwd: dir, scope: coordinatorScope },
+        extraTools: [dispatchWorker, dispatchGateCritic, requestVerification, recordPromotion, declareState],
+        modelId: opts.modelId,
+        models,
+      });
+    }
+    const newsBlock =
+      reportSections.length > 0
+        ? `# Newly completed work\n\n${reportSections.join("\n\n---\n\n")}`
+        : "No new completions this wake.";
+    lastWakeText = await coordinator.ask(
+      fresh
+        ? `${resumeBundle(dir)}\n\n---\n\nCampaign directory: ${dir}\n${lostNote}${digest}${idleNudge}\n\n${newsBlock}`
+        : `${lostNote}${digest}${idleNudge}\n\n${newsBlock}`,
+    );
     lostNote = "";
 
     // Frontier history: CURRENT_FRONTIER.md is rewritten by design, so the

@@ -71,8 +71,14 @@ gates.ts     dispatch gate, idea-gate ledger, two-stage verification, promotion
 harness.ts   handle table, event loop, wakes; the only persistent process
 ```
 
-- **Coordinator**: ephemeral per wake; verbs `dispatch`/`cancel`/`steer` plus
-  ledger edits. Sole ledger writer.
+- **Coordinator**: resident across wakes — matching how the skill runs in a
+  live Codex/Claude Code session — until a context cap
+  (`COVERIFY_COORDINATOR_CONTEXT_TOKENS`, default ~150k), which is the
+  compaction analog: the session is rebuilt via the launcher's restart rule.
+  Continuing wakes receive only new reports + status digest; the full resume
+  bundle is sent on (re)build. Sole ledger writer. Decisions must still be
+  externalized to the ledgers every wake — residency is continuity of soft
+  context, never a substitute for durable state.
 - **Workers**: fresh `Agent` instances; packet in, finite deliverable out;
   write access only to assigned `EVIDENCE/` paths.
 - **Verifiers**: stage-1 hostile auditor and stage-2 reconstructor are fresh

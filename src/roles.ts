@@ -132,6 +132,24 @@ export interface RoleRun {
  * restrictions are platform-enforced versus instructed.
  */
 export async function runRole(run: RoleRun): Promise<string> {
+  const session = createRoleSession(run);
+  return session.ask(run.prompt);
+}
+
+export interface RoleSession {
+  ask(prompt: string): Promise<string>;
+  /** Rough context size in tokens (chars/4 over the message history). */
+  approxTokens(): number;
+}
+
+/**
+ * A persistent role session: the same Agent instance across multiple asks,
+ * accumulating context like a live harness session does. Used for the
+ * coordinator, which stays resident until its context cap — the analog of
+ * running the skill in Codex/Claude Code until compaction. Single-shot roles
+ * (workers, critics, verifiers) go through runRole and never reuse a session.
+ */
+export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: string }): RoleSession {
   const tools = run.bash ? [bashTool(run.bash.cwd, run.bash.scope)] : [];
   if (run.extraTools) tools.push(...run.extraTools);
   const agent = new Agent({
@@ -143,8 +161,17 @@ export async function runRole(run: RoleRun): Promise<string> {
     },
     streamFn: run.models.streamSimple.bind(run.models),
   });
-  await agent.prompt(run.prompt);
-  return finalText(agent);
+  return {
+    async ask(prompt: string): Promise<string> {
+      await agent.prompt(prompt);
+      return finalText(agent);
+    },
+    approxTokens(): number {
+      let chars = 0;
+      for (const m of agent.state.messages) chars += JSON.stringify(m).length;
+      return Math.round(chars / 4);
+    },
+  };
 }
 
 /** Role charges. Each states only the role's scope; policy comes from the contract above it. */

@@ -40,9 +40,12 @@ session treats `coverify` as an ordinary tool and reads the campaign files.
 The harness (TypeScript, the only persistent process) owns the scheduler and
 the gates; ephemeral model calls own the judgment:
 
-- **Coordinator** — fresh instance per wake, built from the campaign files;
-  sole ledger writer; verbs: `dispatch_worker`, `dispatch_gate_critic`,
-  `request_verification`, plus bash in the campaign dir for ledger edits.
+- **Coordinator** — a resident session across wakes (as when the skill runs
+  live in Codex/Claude Code), rebuilt from the campaign files at a context
+  cap — the compaction analog; sole ledger writer; tools:
+  `dispatch_worker`, `dispatch_gate_critic`, `request_verification`,
+  `record_promotion`, `declare_campaign_state`, plus bash in the campaign
+  dir for ledger edits.
 - **Workers** — fresh instances, one packet with one finite mathematical
   deliverable, write access only to their assigned `EVIDENCE/` directory.
 - **Verification** — the launcher's two-stage cadence as three fresh calls:
