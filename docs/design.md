@@ -214,6 +214,10 @@ harnesses directly — `claude -p` / `codex exec` — via a harness-provided
 - [ ] Independent different-family audit path (fable-review for the Anthropic
       side; codex CLI as the different-family reviewer)
 - [ ] Citation lint (mechanics: cited evidence paths exist; never parses content)
+- [ ] Per-call token accounting in the journal (from pi usage events) —
+      prerequisite for the evals token gauges and per-role model routing
+- [ ] Per-role / per-wake model routing (cheap wakes vs promotion wakes;
+      cheap critics) — decided by eval evidence, not defaults
 - [ ] Linux write-sandbox backend (bubblewrap/sandbox equivalent)
 - [ ] Trigger + contract-adherence evals per `docs/evals.md` (toy campaign
       + fresh-context contract judge); blind A/B reserved for real changes
