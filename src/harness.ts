@@ -44,6 +44,7 @@ interface Handle {
   id: string;
   mechanism: string;
   promise: Promise<string>;
+  session: RoleSession;
 }
 
 /** Consecutive wakes with no dispatch, no verification, and no declaration
@@ -163,17 +164,25 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       const evidenceDir = path.join(dir, "EVIDENCE", id);
       fs.mkdirSync(evidenceDir, { recursive: true });
       store.append({ kind: "dispatch", id, mechanism: packet.mechanism, task: packet.task });
-      const promise = runRole({
+      const session = createRoleSession({
         contract,
         charge: CHARGES.worker,
-        prompt: `Assigned evidence directory: ${evidenceDir}\n\n# Task\n\n${packet.task}\n\n# Deliverable\n\n${packet.deliverable}\n\n# Context\n\n${packet.context}`,
         bash: { cwd: evidenceDir, scope: { allow: [evidenceDir], deny: [] } },
         modelId: opts.modelId,
         models,
       });
-      const handle: Handle = { id, mechanism: packet.mechanism, promise };
+      const promise = session.ask(
+        `Assigned evidence directory: ${evidenceDir}\n\n# Task\n\n${packet.task}\n\n# Deliverable\n\n${packet.deliverable}\n\n# Context\n\n${packet.context}`,
+      );
+      const handle: Handle = { id, mechanism: packet.mechanism, promise, session };
       handles.set(id, handle);
-      promise.then((report) => settledQueue.push({ h: handle, report }));
+      promise
+        .then((report) => {
+          if (handles.has(id)) settledQueue.push({ h: handle, report });
+        })
+        .catch((err: unknown) => {
+          if (handles.has(id)) settledQueue.push({ h: handle, report: `[worker ${id} failed: ${String(err)}]` });
+        });
       dispatchedThisWake++;
       return toolText(
         `dispatched ${id} (${handles.size} live). The report will arrive at a later wake.` +
@@ -456,6 +465,51 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     },
   } as AgentTool;
 
+  const cancelWorker: AgentTool = {
+    name: "cancel_worker",
+    label: "Cancel worker",
+    description:
+      "Interrupt a running worker. Per the contract, only on observable struggle evidence, a user " +
+      "pause/stop, a safety issue, or an explicit user-specified deadline — never merely because " +
+      "it is slow or quiet.",
+    parameters: Type.Object({
+      id: Type.String(),
+      reason: Type.String({ description: "The observable evidence or authorized trigger" }),
+    }),
+    executionMode: "sequential",
+    execute: async (_id: string, params: unknown) => {
+      const p = params as { id: string; reason: string };
+      const handle = handles.get(p.id);
+      if (!handle) return toolText(`no running worker ${p.id}`);
+      handles.delete(p.id);
+      handle.session.abort();
+      appendJournal(dir, { kind: "cancel", id: p.id, reason: p.reason });
+      store.append({ kind: "completion", id: p.id, cancelled: true, reason: p.reason });
+      return toolText(`cancelled ${p.id}. Record the route state in the ledgers per the contract.`);
+    },
+  } as AgentTool;
+
+  const steerWorker: AgentTool = {
+    name: "steer_worker",
+    label: "Steer worker",
+    description:
+      "Inject a redirecting message into a running worker without interrupting it. Same contract " +
+      "triggers as cancellation: observable struggle evidence, not slowness.",
+    parameters: Type.Object({
+      id: Type.String(),
+      message: Type.String(),
+    }),
+    executionMode: "sequential",
+    execute: async (_id: string, params: unknown) => {
+      const p = params as { id: string; message: string };
+      const handle = handles.get(p.id);
+      if (!handle) return toolText(`no running worker ${p.id}`);
+      handle.session.steer(p.message);
+      appendJournal(dir, { kind: "note", note: `steered ${p.id}`, message: p.message });
+      return toolText(`steering message delivered to ${p.id}.`);
+    },
+  } as AgentTool;
+
   const declareState: AgentTool = {
     name: "declare_campaign_state",
     label: "Declare campaign state",
@@ -501,12 +555,15 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     }
     dispatchedThisWake = 0;
     verifiedThisWake = 0;
+    const limits: string[] = [];
+    if (opts.userAgentLimit !== undefined) limits.push(`agents ${handles.size}/${opts.userAgentLimit}`);
+    if (opts.maxWakes !== undefined) limits.push(`wakes ${wakeCount}/${opts.maxWakes}`);
     const digest =
-      handles.size === 0
+      (handles.size === 0
         ? "No workers are currently running."
         : `Still running (do not interrupt for slowness): ${[...handles.values()]
             .map((h) => `${h.id} [${h.mechanism}]`)
-            .join(", ")}`;
+            .join(", ")}`) + (limits.length > 0 ? `\nUser limits: ${limits.join("; ")}.` : "");
     const reports = settledQueue.splice(0, settledQueue.length);
     for (const s of reports) handles.delete(s.h.id);
     const reportSections = reports.map((s) => {
@@ -538,7 +595,15 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         contract,
         charge: CHARGES.coordinator,
         bash: { cwd: dir, scope: coordinatorScope },
-        extraTools: [dispatchWorker, dispatchGateCritic, requestVerification, recordPromotion, declareState],
+        extraTools: [
+          dispatchWorker,
+          dispatchGateCritic,
+          requestVerification,
+          recordPromotion,
+          cancelWorker,
+          steerWorker,
+          declareState,
+        ],
         modelId: opts.modelId,
         models,
       });

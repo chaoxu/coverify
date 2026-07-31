@@ -140,6 +140,10 @@ export interface RoleSession {
   ask(prompt: string): Promise<string>;
   /** Rough context size in tokens (chars/4 over the message history). */
   approxTokens(): number;
+  /** Inject a steering message while the session is running. */
+  steer(text: string): void;
+  /** Abort the session's current run. */
+  abort(): void;
 }
 
 /**
@@ -171,6 +175,12 @@ export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: stri
       for (const m of agent.state.messages) chars += JSON.stringify(m).length;
       return Math.round(chars / 4);
     },
+    steer(text: string): void {
+      agent.steer({ role: "user", content: text, timestamp: Date.now() });
+    },
+    abort(): void {
+      agent.abort();
+    },
   };
 }
 
@@ -194,7 +204,8 @@ work may be edited freely, but never edit a file you have already cited or repor
 changes to citable artifacts get a new revision-suffixed filename. Return a conclusion-first
 report: the deliverable — a proved lemma, explicit construction, counterexample/certificate — or
 the precise failing implication with evidence. Status reports and vague optimism are not
-deliverables.`,
+deliverables. Your packet may cite evidence paths and ledger locations; read them via bash when
+your task needs depth — the packet is curated context, not the limit of what you may consult.`,
   gateCritic: `You are a fresh idea-gate critic. You receive only the frozen target, promoted
 premises, one proposed mechanism, and its claimed first nontrivial implication. Your VERY FIRST
 line must be exactly one of: IDEA PASS / IDEA FAIL / IDEA REPAIR. Then give the justification the
