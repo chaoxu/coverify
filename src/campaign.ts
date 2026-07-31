@@ -18,7 +18,7 @@ export const LEDGERS = [
   "REGISTRY.md",
   "FAILED.md",
   "PROVED.md",
-  "LESSONS.md",
+  "PROCESS_LESSONS.md",
 ] as const;
 
 export interface JournalEntry {
@@ -76,8 +76,8 @@ export function initCampaign(dir: string, statement: string): void {
       "revision · dependencies · audit artifacts (appended via record_promotion only) -->\n",
   );
   fs.writeFileSync(
-    path.join(dir, "LESSONS.md"),
-    "# LESSONS (process only)\n\n<!-- actionable = changes how a future wave/test/gate/allocation " +
+    path.join(dir, "PROCESS_LESSONS.md"),
+    "# PROCESS_LESSONS\n\n<!-- actionable = changes how a future wave/test/gate/allocation " +
       "is run, else deferred with an activation test; mathematical facts belong in the ledgers; " +
       "mark cross-campaign lessons 'graduate' -->\n",
   );
@@ -156,6 +156,6 @@ export function resumeBundle(dir: string): string {
     readLedger(dir, "STATEMENT.md"),
     readLedger(dir, "CURRENT_FRONTIER.md"),
     readLedger(dir, "REGISTRY.md"),
-    readLedger(dir, "LESSONS.md"),
+    readLedger(dir, "PROCESS_LESSONS.md"),
   ].join("\n\n---\n\n");
 }

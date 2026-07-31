@@ -19,7 +19,7 @@ const REQUIRED: { token: string; usedBy: string }[] = [
   { token: "REGISTRY.md", usedBy: "campaign.ts ledger set" },
   { token: "FAILED.md", usedBy: "campaign.ts ledger set / dispatch schema" },
   { token: "PROVED.md", usedBy: "campaign.ts ledger set / record_promotion" },
-  { token: "LESSONS.md", usedBy: "campaign.ts ledger set" },
+  { token: "PROCESS_LESSONS.md", usedBy: "campaign.ts ledger set" },
   { token: "candidate", usedBy: "campaign.ts CLAIM_LABELS" },
   { token: "self-audited", usedBy: "campaign.ts CLAIM_LABELS" },
   { token: "verifier-backed", usedBy: "campaign.ts CLAIM_LABELS" },

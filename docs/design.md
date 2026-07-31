@@ -34,7 +34,7 @@ CURRENT_FRONTIER.md   derived operational summary; rewritten last at checkpoints
 REGISTRY.md           canonical route + claim-label index (mechanism × terminal gap)
 FAILED.md             append-only closed routes with obstructions + retry-novelty bar
 PROVED.md             append-only promotions with dependencies + audit provenance
-LESSONS.md            process lessons only
+PROCESS_LESSONS.md    process lessons only — the name itself carries the rule
 EVIDENCE/             append-only, revision-suffixed artifacts; identity = filename
 .coverify/journal.jsonl   harness audit metadata (write-only mirror; gates never read it)
 ```

@@ -9,7 +9,7 @@ harness is that the rules that matter are enforced in code and cannot drift.
 A project is a folder. There is no server, no worker daemon, no deploy
 pipeline, and no Cosheaf. The campaign directory uses the launcher's exact
 file layout (`STATEMENT.md`, `CURRENT_FRONTIER.md`, `REGISTRY.md`,
-`FAILED.md`, `PROVED.md`, `LESSONS.md`, `EVIDENCE/`), so a Claude Code or
+`FAILED.md`, `PROVED.md`, `PROCESS_LESSONS.md`, `EVIDENCE/`), so a Claude Code or
 Codex session running the skill can resume a coverify campaign and vice versa.
 
 ## Use
