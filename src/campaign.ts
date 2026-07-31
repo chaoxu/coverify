@@ -2,37 +2,9 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-/** Claim labels — closed vocabulary from the launcher ("Claim labels — literal, never inflated"). */
-export const CLAIM_LABELS = [
-  "candidate",
-  "self-audited",
-  "verifier-backed",
-  "promoted",
-  "independently audited",
-] as const;
-export type ClaimLabel = (typeof CLAIM_LABELS)[number];
-
-export const LEDGERS = [
-  "STATEMENT.md",
-  "CURRENT_FRONTIER.md",
-  "REGISTRY.md",
-  "FAILED.md",
-  "PROVED.md",
-  "PROCESS_LESSONS.md",
-] as const;
-
 export interface JournalEntry {
   ts: string;
-  kind:
-    | "dispatch"
-    | "completion"
-    | "gate-verdict"
-    | "audit"
-    | "reconstruction"
-    | "promotion"
-    | "cancel"
-    | "wake"
-    | "note";
+  kind: "note" | "wake";
   [key: string]: unknown;
 }
 
@@ -87,25 +59,28 @@ export function campaignExists(dir: string): boolean {
   return fs.existsSync(path.join(dir, "STATEMENT.md"));
 }
 
-export function readLedger(dir: string, name: (typeof LEDGERS)[number]): string {
+export function readLedger(dir: string, name: string): string {
   return fs.readFileSync(path.join(dir, name), "utf-8");
 }
 
 /**
- * Reserve an append-only evidence path. Launcher: "every semantic change is a
- * new revision-suffixed filename, a cited artifact is never edited in place".
- * Throws if the revision already exists — in-place edits are impossible.
+ * Reserve the next free append-only evidence path for a basename. Launcher:
+ * "every semantic change is a new revision-suffixed filename, a cited
+ * artifact is never edited in place." Never returns an existing path, so
+ * overwriting is impossible by construction. Creates parent directories.
  */
-export function newEvidencePath(dir: string, base: string, revision: number): string {
+export function newEvidencePath(dir: string, base: string): string {
   const safe = base.replace(/[^A-Za-z0-9._/-]/g, "-").replace(/\.\.+/g, ".");
-  const p = path.join(dir, "EVIDENCE", `${safe}.r${revision}.md`);
-  if (!p.startsWith(path.join(dir, "EVIDENCE") + path.sep)) {
-    throw new Error(`evidence path escapes EVIDENCE/: ${base}`);
+  for (let r = 1; ; r++) {
+    const p = path.join(dir, "EVIDENCE", `${safe}.r${r}.md`);
+    if (!p.startsWith(path.join(dir, "EVIDENCE") + path.sep)) {
+      throw new Error(`evidence path escapes EVIDENCE/: ${base}`);
+    }
+    if (!fs.existsSync(p)) {
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      return p;
+    }
   }
-  if (fs.existsSync(p)) {
-    throw new Error(`evidence revision already exists: ${p} (evidence is append-only)`);
-  }
-  return p;
 }
 
 /** Harness-generated audit metadata — permitted by the launcher's EVIDENCE bullet. */

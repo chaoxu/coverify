@@ -21,6 +21,7 @@ export ANTHROPIC_API_KEY=...   # fleet: fleet-secret get <app>/<name>
 bun run src/cli.ts prove "Exact statement to resolve." --dir campaign
 bun run src/cli.ts status --dir campaign
 bun run src/cli.ts resume --dir campaign
+bun run src/cli.ts amend --dir campaign    # accept an explicit user amendment of STATEMENT.md
 ```
 
 Optional user limits (the harness imposes none of its own): `--agent-limit N`
@@ -44,20 +45,23 @@ the gates; ephemeral model calls own the judgment:
   live in Codex/Claude Code), rebuilt from the campaign files at a context
   cap — the compaction analog; sole ledger writer; tools:
   `dispatch_worker`, `dispatch_gate_critic`, `request_verification`,
-  `record_promotion`, `declare_campaign_state`, plus bash in the campaign
-  dir for ledger edits.
+  `record_promotion`, `cancel_worker`, `steer_worker`,
+  `declare_campaign_state`, plus bash in the campaign dir for ledger edits.
 - **Workers** — fresh instances, one packet with one finite mathematical
   deliverable, write access only to their assigned `EVIDENCE/` directory.
-- **Verification** — the launcher's two-stage cadence as three fresh calls:
-  hostile audit; blind reconstruction (bundle built by the harness: statement,
-  key ideas, allowed sources, promoted premises — never the proof); then a
-  comparison mapping the reconstruction to the candidate's conclusions and
-  dependencies, which carries stage 2's verdict. All three outputs are saved
-  as citable EVIDENCE artifacts; verdicts are content-hash-bound, and
-  `record_promotion` (the only writer of PROVED.md) re-checks everything.
+- **Verification** — the launcher's two-stage cadence as four fresh calls:
+  hostile audit; bundle certification (a fresh agent shown candidate + bundle
+  certifies the coordinator-authored key ideas/sources leak nothing; a leaky
+  bundle is hash-blocked from retry); blind reconstruction (the harness
+  withholds the candidate); then a comparison mapping the reconstruction to
+  the candidate's conclusions and dependencies, which carries stage 2's
+  verdict. All four outputs are saved as citable EVIDENCE artifacts; verdicts
+  are content-hash-bound, and `record_promotion` (the only writer of
+  PROVED.md) re-checks everything.
 - **Gates in code** — packet schema + FAILED.md check field on every
-  dispatch; idea-gate (`IDEA PASS` on file) before any follow-up wave on a
-  mechanism; user limits at dispatch; no wall-clock timeouts on proof work,
+  dispatch; idea-gate (`IDEA PASS` on file) before a second concurrent worker
+  on a mechanism (sequential retries get an advisory — that judgment is the
+  coordinator's); user limits at dispatch; no wall-clock timeouts on proof work,
   ever.
 
 ## Project layout convention

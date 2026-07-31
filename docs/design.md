@@ -63,7 +63,7 @@ project directories.)
 ## Runtime shape
 
 ```
-cli.ts       prove / resume / status
+cli.ts       prove / resume / status / amend
 campaign.ts  state layer: init, revisions, append-only evidence, resume bundle
 launcher.ts  load + extract the fenced launcher contract (no fallback)
 roles.ts     prompt assembly (launcher verbatim + role charge); pi Agent runner
@@ -81,13 +81,16 @@ harness.ts   handle table, event loop, wakes; the only persistent process
   context, never a substitute for durable state.
 - **Workers**: fresh `Agent` instances; packet in, finite deliverable out;
   write access only to assigned `EVIDENCE/` paths.
-- **Verifiers**: stage-1 hostile auditor and stage-2 reconstructor are fresh
-  instances whose input bundles are built by the harness — blindness is
-  platform-enforced by construction, and the journal records supplied inputs,
-  visibility, and model family per audit.
-- **Dispatch is the primitive**: workers, critics, auditors, reconstructors,
-  and supervised computations are all handles in one table. No polling —
-  completions wake the coordinator with a rebuilt minimal bundle.
+- **Verifiers**: the stage-1 hostile auditor, bundle certifier, stage-2
+  blind reconstructor, and comparator are fresh instances; the harness
+  withholds the candidate from the reconstructor (platform-enforced), while
+  the keyIdeas/allowedSources bundle is coordinator-authored and gated by
+  certification (see honesty ledger). The journal records supplied inputs,
+  visibility, and model family per call.
+- **Workers are the async primitive**: worker dispatches are handles in one
+  table; completions wake the coordinator — no polling. Gate critics and the
+  verification chain run synchronously inside the coordinator's tool call.
+  (Supervised computation handles: roadmap.)
 
 ## Conformance table
 
@@ -96,21 +99,19 @@ harness.ts   handle table, event loop, wakes; the only persistent process
 | `STATEMENT.md` written once; new revision only via explicit user amendment; completion evidence invalidated | "Fix its revision before search; only an explicit user amendment may replace it…" |
 | Campaign file set + `EVIDENCE/` append-only, revision-suffixed, no in-place edits | "Durable campaign state" bullets |
 | Workers get no ledger-write capability; only assigned evidence paths | "The coordinator is the sole ledger writer; workers… write only assigned evidence artifacts" |
-| Resume bundle = launcher + STATEMENT + FRONTIER + actionable lessons + registry index (never the whole campaign) | "After restart or context compaction, reread…" |
-| Claim labels are a closed enum; derived claims inherit the weakest premise label | "Claim labels — literal, never inflated" |
+| Resume bundle = STATEMENT + FRONTIER + full REGISTRY.md + full PROCESS_LESSONS.md, launcher embedded verbatim in the system prompt (never FAILED.md, PROVED.md, or EVIDENCE/ wholesale) | "After restart or context compaction, reread…" |
+| Claim-label vocabulary quoted verbatim into the ledger templates at init; label discipline and weakest-premise inheritance are contract-instructed model judgment | "Claim labels — literal, never inflated" |
 | Dispatch schema requires the FAILED.md check field (`no close prior route` / `closest is X; differs because…`) | "Before every route, materially changed retry, or variant, check `FAILED.md`…" |
-| Worker packet requires a finite mathematical deliverable; report schema is deliverable-or-precise-gap | "Every exploration agent must return a proved lemma, explicit construction, counterexample/certificate, or a precise failing implication" |
+| Worker packet schema requires a finite mathematical deliverable; the deliverable-or-precise-gap report form is charged in the role prompt, not parsed | "Every exploration agent must return a proved lemma, explicit construction, counterexample/certificate, or a precise failing implication" |
 | No harness timeouts on proof/audit/reconstruction work (a per-shell-command cap is surfaced in the tool description and env-tunable) | "Do not impose a coordinator-created elapsed-time limit…" |
 | Wave gate: a second **concurrent** worker on a mechanism requires `IDEA PASS` on file; sequential retries get an advisory reminder, not a refusal (that judgment is the coordinator's); single first-wave scouts exempt | "Do not allow recursive subagent fan-out or a large route wave before the parent mechanism receives `IDEA PASS`…" |
 | Verification = stage 1 (fresh hostile audit) then stage 2: bundle certification (fresh agent sees candidate + bundle; leaky bundle refused, same-bundle retry hash-blocked) → blind reconstruction (no verdict) → fresh comparison carrying stage 2's verdict with the contract's match semantics; all outputs saved as citable EVIDENCE artifacts, hash-bound | "Verification cadence" 1–2 (2026-07-31 revision): bundle certification, "a fresh comparison agent…", explicit PASS/mismatch semantics |
 | Anti-verdict-shopping: a substantive audit/comparison FAIL on the exact revision contents blocks re-verification unless a recorded rebuttal artifact is supplied; every attempt stays on record | "A substantive FAIL from any stage stands… Do not rerun a failed stage on an unchanged revision in search of a PASS" |
-| Load-bearing change ⇒ both stages invalidated, fresh verifiers (never one that influenced the repair); non-load-bearing ⇒ delta audit + recorded carry-forward; uncertain ⇒ load-bearing | Revision-impact rules |
+| Any content change ⇒ both stages invalidated (verdicts hash-bound to candidate + STATEMENT.md; every verifier call is a fresh instance). The non-load-bearing delta-audit carry-forward is not implemented — every change gets full re-verification, stricter than the contract (see roadmap) | Revision-impact rules |
 | `record_promotion` is the sole writer of `PROVED.md` (direct writes OS-denied); legal only when both stage records exist for the exact revision with matching content hashes; entry carries dependency identities and audit-artifact citations | "Promotion records the revision and dependency identities plus every audit…" |
-| Campaign ends only by explicit `declare_campaign_state`; "complete" refused with zero promotions on record; an idle wake gets a nudge, and 3 consecutive no-op wakes trigger an operational *pause* (never a completion) as spend protection | "Do not mark it complete until the final result passes the full cadence…"; "Failed attempts… are not permission to return"; "Pause is operational state" |
-| Retraction flow: registry relabel, FAILED append, PROVED marked historical, dependents demoted before reuse | "If a promoted revision later fails…" |
-| Checkpoint ordering: dispatch stopped, harvest, reconcile, lessons, conservative clean, `CURRENT_FRONTIER.md` rewritten **last**; running workers carried forward, not interrupted | "Checkpoint and learning loop" 1–5 |
+| Campaign ends only by explicit `declare_campaign_state`; "complete" refused with zero promotions on record; an idle wake gets a nudge, and 3 consecutive no-op wakes trigger an operational *pause* (never a completion) as spend protection | "Do not mark it complete until the final result passes the full cadence…"; "Failed attempts… are not permission to return"; "Pause is operational state" (pause stops further wakes; running workers are not force-aborted — use cancel_worker) |
+| Harvest before judgment: worker reports are saved to EVIDENCE/ and completion-recorded before any model sees them; checkpoint ordering itself is contract-instructed, not enforced (struck as over-constraint — see review record) | "Checkpoint and learning loop" |
 | Campaign loop persists across restarts until user stop or completion; pause = cease dispatch, interrupt agents, checkpoint | "The initial resolution request remains authorization…" |
-| Compute dispatch requires the REGISTRY.md preregistration record (source, command/scheduler job, limits, outputs, cancellation); raw stdout/stderr preserved; goes through the scheduler front door; no detached compute | "Reporting, computation, and sources" compute paragraphs |
 | Journal records each audit's supplied inputs, visibility, model family, and instructed-vs-platform-enforced restrictions | "Every audit records the supplied inputs, workspace/tool visibility, model-family provenance…" |
 | No agent-count ceiling; budget gate enforces only user/workspace/runtime limits | "Do not impose a fixed agent-count ceiling… scaling to available concurrency and any explicit user, workspace, or runtime limits" |
 
@@ -136,8 +137,8 @@ Non-darwin platforms: write confinement instructed-only.
 Verify at trust boundaries (promotions, resolution claims), not per
 micro-fact; gate before the wave; finite deliverables, never clocks; the
 FAILED/REGISTRY indexes stop re-funding dead routes; budgets enforced at
-dispatch; workers are warm cached sessions while fresh cold instances are
-reserved for the two places they buy trust (critics, verifiers).
+dispatch; every role instance is fresh — workers get one packet each, and
+fresh instances are mandatory where they buy trust (critics, verifiers).
 
 ## Skill feedback
 
@@ -203,7 +204,7 @@ harnesses directly — `claude -p` / `codex exec` — via a harness-provided
 - [x] Campaign state layer in the skill's format; append-only evidence
 - [x] Role prompts embedding the launcher verbatim
 - [x] Dispatch gate (FAILED-check field, concurrent wave gate, user limits)
-- [x] Three-call verification cadence (audit / blind reconstruction / comparison), hash-bound, artifacts in EVIDENCE
+- [x] Four-call verification cadence (audit / bundle certification / blind reconstruction / comparison), hash-bound, artifacts in EVIDENCE
 - [x] `record_promotion` as sole PROVED.md writer; OS write sandbox (macOS)
 - [x] Out-of-tree gate store; statement freeze + `coverify amend`; run version stamps
 - [ ] Retraction bookkeeping helper (registry relabel + dependent demotion)

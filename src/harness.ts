@@ -13,6 +13,7 @@ import {
 } from "./campaign.js";
 import {
   acceptedStatementHash,
+  recordStatement,
   checkPromotion,
   checkWorkerDispatch,
   GateStore,
@@ -27,6 +28,7 @@ import {
   CHARGES,
   createRoleSession,
   runRole,
+  toolText,
   type RoleSession,
   type WriteScope,
 } from "./roles.js";
@@ -60,10 +62,6 @@ const NOOP_WAKE_PAUSE = 3;
  *  every decision must be externalized to the ledgers regardless. */
 const COORDINATOR_CONTEXT_TOKENS = Number(process.env.COVERIFY_COORDINATOR_CONTEXT_TOKENS ?? 150_000);
 
-function toolText(text: string) {
-  return { content: [{ type: "text" as const, text }], details: {} };
-}
-
 function harnessRevision(): string {
   try {
     return execSync("git rev-parse HEAD", { cwd: path.dirname(new URL(import.meta.url).pathname) })
@@ -75,9 +73,9 @@ function harnessRevision(): string {
 }
 
 /**
- * The harness event loop — the only persistent process. Completions wake an
- * ephemeral coordinator with a rebuilt minimal bundle; there is no resident
- * model conversation and no polling.
+ * The harness event loop — the only persistent process. Completions wake the
+ * resident coordinator session (rebuilt from the ledgers at its context cap —
+ * the compaction analog); there is no polling.
  */
 export async function runCampaign(opts: CampaignOptions): Promise<string> {
   const dir = path.resolve(opts.campaignDir);
@@ -97,7 +95,11 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   // Statement freeze: hard-stop if STATEMENT.md changed without a recorded
   // user amendment ("only an explicit user amendment may replace it").
   const accepted = acceptedStatementHash(store);
-  if (accepted !== undefined && accepted !== statementHash(dir)) {
+  if (accepted === undefined) {
+    // Foreign or pre-harness campaign (e.g. created by a skill session):
+    // adopt the current statement as the accepted baseline so the freeze arms.
+    recordStatement(store, dir, "adopted existing campaign at first coverify run");
+  } else if (accepted !== statementHash(dir)) {
     throw new Error(
       "STATEMENT.md differs from the last user-accepted revision. If this is an explicit user " +
         "amendment, run 'coverify amend' to accept it (starting a new statement revision and " +
@@ -108,8 +110,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   const handles = new Map<string, Handle>();
   const settledQueue: { h: Handle; report: string }[] = [];
   let nextId = store.maxWorkerId() + 1;
-  let dispatchedThisWake = 0;
-  let verifiedThisWake = 0;
+  let activityThisWake = 0;
   let declaration: { state: "pause" | "complete"; reason: string } | undefined;
   let lastWakeText = "";
 
@@ -183,7 +184,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         .catch((err: unknown) => {
           if (handles.has(id)) settledQueue.push({ h: handle, report: `[worker ${id} failed: ${String(err)}]` });
         });
-      dispatchedThisWake++;
+      activityThisWake++;
       return toolText(
         `dispatched ${id} (${handles.size} live). The report will arrive at a later wake.` +
           (decision.warning ? `\n${decision.warning}` : ""),
@@ -213,6 +214,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         modelId: opts.modelId,
         models,
       });
+      activityThisWake++;
       const verdict = recordGateVerdict(store, p.mechanism, text);
       if (verdict === "UNPARSEABLE") {
         return toolText(
@@ -229,7 +231,8 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     label: "Verification cadence",
     description:
       "Run the two-stage verification cadence on one exact candidate revision (an EVIDENCE-relative " +
-      "filename). Stage 1: fresh hostile audit of the candidate. Stage 2: fresh no-context " +
+      "filename). Stage 1: fresh hostile audit of the candidate. Stage 2: fresh bundle certification " +
+      "(a leaky keyIdeas/allowedSources bundle is refused and hash-blocked), then no-context " +
       "reconstruction from statement + key ideas + allowed sources + promoted premises (never the " +
       "proof), then a fresh comparison mapping the reconstruction to the candidate's conclusions and " +
       "dependencies. Code records all verdicts bound to content hashes; promotion (record_promotion) " +
@@ -268,6 +271,8 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       const candidate = fs.readFileSync(candidatePath, "utf-8");
       const candidateHash = sha256File(candidatePath);
       const stmtHash = statementHash(dir);
+      const passOf = (text: string) =>
+        parseFirstLineVerdict(text, ["VERDICT: PASS", "VERDICT: FAIL"]) === "VERDICT: PASS";
 
       // Anti-verdict-shopping (contract): a substantive FAIL stands against
       // the exact revision contents; re-attempt only with a recorded rebuttal.
@@ -308,7 +313,6 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           );
         }
         store.append({ kind: "rebuttal", revision: rel, artifact: rebuttalRel });
-        appendJournal(dir, { kind: "note", note: `rebuttal recorded for ${rel}: ${rebuttalRel}` });
       }
       const statement = readLedger(dir, "STATEMENT.md");
       const proved = readLedger(dir, "PROVED.md");
@@ -322,9 +326,8 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         modelId: opts.modelId,
         models,
       });
-      const auditPass = parseFirstLineVerdict(auditText, ["VERDICT: PASS", "VERDICT: FAIL"]) === "VERDICT: PASS";
-      const auditEvidence = newEvidencePath(dir, `audits/${slug}.audit`, nextEvidenceRev(dir, `audits/${slug}.audit`));
-      fs.mkdirSync(path.dirname(auditEvidence), { recursive: true });
+      const auditPass = passOf(auditText);
+      const auditEvidence = newEvidencePath(dir, `audits/${slug}.audit`);
       fs.writeFileSync(auditEvidence, auditText);
       store.append({
         kind: "audit",
@@ -338,7 +341,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           "fresh instance (enforced); bundle built by harness (enforced); declaredDependencies coordinator-authored (instructed only)",
         modelFamily: `anthropic/${opts.modelId}`,
       });
-      verifiedThisWake++;
+      activityThisWake++;
       if (!auditPass) {
         return toolText(`STAGE 1 FAIL — not verifier-backed. Audit saved: ${path.relative(dir, auditEvidence)}\n\n${auditText}`);
       }
@@ -353,8 +356,8 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         modelId: opts.modelId,
         models,
       });
-      const certPass = parseFirstLineVerdict(certText, ["VERDICT: PASS", "VERDICT: FAIL"]) === "VERDICT: PASS";
-      const certEvidence = newEvidencePath(dir, `audits/${slug}.bundle-cert`, nextEvidenceRev(dir, `audits/${slug}.bundle-cert`));
+      const certPass = passOf(certText);
+      const certEvidence = newEvidencePath(dir, `audits/${slug}.bundle-cert`);
       fs.writeFileSync(certEvidence, certText);
       store.append({
         kind: "bundle-cert",
@@ -383,7 +386,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         modelId: opts.modelId,
         models,
       });
-      const reconEvidence = newEvidencePath(dir, `audits/${slug}.reconstruction`, nextEvidenceRev(dir, `audits/${slug}.reconstruction`));
+      const reconEvidence = newEvidencePath(dir, `audits/${slug}.reconstruction`);
       fs.writeFileSync(reconEvidence, reconText);
       store.append({
         kind: "reconstruction",
@@ -406,8 +409,8 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         modelId: opts.modelId,
         models,
       });
-      const comparePass = parseFirstLineVerdict(compareText, ["VERDICT: PASS", "VERDICT: FAIL"]) === "VERDICT: PASS";
-      const compareEvidence = newEvidencePath(dir, `audits/${slug}.comparison`, nextEvidenceRev(dir, `audits/${slug}.comparison`));
+      const comparePass = passOf(compareText);
+      const compareEvidence = newEvidencePath(dir, `audits/${slug}.comparison`);
       fs.writeFileSync(compareEvidence, compareText);
       store.append({
         kind: "comparison",
@@ -461,6 +464,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         `**Audit artifacts:** ${artifacts}\n`;
       fs.appendFileSync(path.join(dir, "PROVED.md"), entry);
       store.append({ kind: "promotion", revision: rel });
+      activityThisWake++;
       return toolText(`Promotion recorded in PROVED.md for ${rel}. Update REGISTRY.md to label it 'promoted'.`);
     },
   } as AgentTool;
@@ -482,9 +486,11 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       const handle = handles.get(p.id);
       if (!handle) return toolText(`no running worker ${p.id}`);
       handles.delete(p.id);
+      const queued = settledQueue.findIndex((s) => s.h.id === p.id);
+      if (queued >= 0) settledQueue.splice(queued, 1);
       handle.session.abort();
-      appendJournal(dir, { kind: "cancel", id: p.id, reason: p.reason });
       store.append({ kind: "completion", id: p.id, cancelled: true, reason: p.reason });
+      activityThisWake++;
       return toolText(`cancelled ${p.id}. Record the route state in the ledgers per the contract.`);
     },
   } as AgentTool;
@@ -536,7 +542,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   } as AgentTool;
 
   // Surface work lost to a previous crash: dispatched, never completed.
-  const lost = store.dispatchesWithoutCompletion().filter((d) => !handles.has(d.id as string));
+  const lost = store.dispatchesWithoutCompletion();
   let lostNote =
     lost.length > 0
       ? `Lost to a previous restart (dispatched, no report): ${lost
@@ -553,8 +559,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       appendJournal(dir, { kind: "note", note: `user wake limit ${opts.maxWakes} reached; pausing` });
       return `${lastWakeText}\n\n[coverify: user wake limit reached; campaign paused, resume with 'coverify resume']`;
     }
-    dispatchedThisWake = 0;
-    verifiedThisWake = 0;
+    activityThisWake = 0;
     const limits: string[] = [];
     if (opts.userAgentLimit !== undefined) limits.push(`agents ${handles.size}/${opts.userAgentLimit}`);
     if (opts.maxWakes !== undefined) limits.push(`wakes ${wakeCount}/${opts.maxWakes}`);
@@ -567,8 +572,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     const reports = settledQueue.splice(0, settledQueue.length);
     for (const s of reports) handles.delete(s.h.id);
     const reportSections = reports.map((s) => {
-      const reportPath = newEvidencePath(dir, `${s.h.id}/report`, nextEvidenceRev(dir, `${s.h.id}/report`));
-      fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+      const reportPath = newEvidencePath(dir, `${s.h.id}/report`);
       fs.writeFileSync(reportPath, s.report);
       store.append({ kind: "completion", id: s.h.id, report: path.relative(dir, reportPath) });
       return `## ${s.h.id} [${s.h.mechanism}] (saved: ${path.relative(dir, reportPath)})\n\n${s.report}`;
@@ -643,7 +647,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       return `${lastWakeText}\n\n[coverify: campaign ${declaration.state} — ${declaration.reason}]`;
     }
     if (handles.size === 0 && settledQueue.length === 0) {
-      noopWakes = dispatchedThisWake === 0 && verifiedThisWake === 0 ? noopWakes + 1 : 0;
+      noopWakes = activityThisWake === 0 ? noopWakes + 1 : 0;
       if (noopWakes >= NOOP_WAKE_PAUSE) {
         appendJournal(dir, {
           kind: "note",
@@ -651,7 +655,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         });
         return `${lastWakeText}\n\n[coverify: harness safety pause after ${NOOP_WAKE_PAUSE} idle wakes — the campaign remains authorized and incomplete; resume with 'coverify resume']`;
       }
-      if (dispatchedThisWake === 0) continue;
+      continue;
     } else {
       noopWakes = 0;
     }
@@ -661,10 +665,3 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   }
 }
 
-/** Next free revision number for an evidence basename (append-only naming). */
-function nextEvidenceRev(dir: string, base: string): number {
-  for (let r = 1; ; r++) {
-    const safe = base.replace(/[^A-Za-z0-9._\/-]/g, "-");
-    if (!fs.existsSync(path.join(dir, "EVIDENCE", `${safe}.r${r}.md`))) return r;
-  }
-}

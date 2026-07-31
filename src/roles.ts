@@ -16,7 +16,7 @@ export function buildModels(): Models {
   return models;
 }
 
-export function getModel(models: Models, modelId: string) {
+function getModel(models: Models, modelId: string) {
   const model = models.getModel("anthropic", modelId);
   if (!model) {
     throw new Error(`unknown anthropic model id "${modelId}"; set COVERIFY_MODEL`);
@@ -39,7 +39,7 @@ function finalText(agent: Agent): string {
   return "";
 }
 
-function toolText(text: string) {
+export function toolText(text: string) {
   return { content: [{ type: "text" as const, text }], details: {} };
 }
 
@@ -61,7 +61,7 @@ function sbplLiteral(p: string): string {
  * non-darwin platforms the command runs unsandboxed and callers must treat
  * write confinement as instructed-only.
  */
-export function sandboxedCommand(command: string, scope: WriteScope): { file: string; args: string[] } {
+function sandboxedCommand(command: string, scope: WriteScope): { file: string; args: string[] } {
   if (process.platform !== "darwin") {
     return { file: "bash", args: ["-c", command] };
   }
@@ -81,7 +81,7 @@ export function sandboxedCommand(command: string, scope: WriteScope): { file: st
   return { file: "sandbox-exec", args: ["-p", profile, "bash", "-c", command] };
 }
 
-export function bashTool(cwd: string, scope: WriteScope): AgentTool {
+function bashTool(cwd: string, scope: WriteScope): AgentTool {
   return {
     name: "bash",
     label: "Bash",
@@ -125,11 +125,12 @@ export interface RoleRun {
 }
 
 /**
- * Run one fresh, ephemeral role instance. Every role — coordinator wake,
- * worker, idea-gate critic, hostile auditor, reconstructor, comparator — is a
- * new Agent with no shared history. What each instance can see is decided by
- * the bundle its caller builds; the journal records supplied inputs and which
- * restrictions are platform-enforced versus instructed.
+ * Run one fresh, ephemeral role instance (single-shot roles: idea-gate
+ * critic, hostile auditor, bundle certifier, reconstructor, comparator).
+ * The coordinator and workers use createRoleSession directly. What each
+ * instance sees is decided by the bundle its caller builds; the journal
+ * records supplied inputs and which restrictions are platform-enforced
+ * versus instructed.
  */
 export async function runRole(run: RoleRun): Promise<string> {
   const session = createRoleSession(run);
@@ -193,8 +194,9 @@ reconstructions, and evidence drafting to minimal-context subagents; you retain 
 control, prior-route registration, assignments, promotion and ledger decisions, user updates, and
 final synthesis. Doing proof work inline pollutes this long-lived context — dispatch a packet
 instead. You are the sole ledger writer. Tools beyond bash: dispatch_worker, dispatch_gate_critic,
-request_verification, record_promotion (the only way to append to PROVED.md), and
-declare_campaign_state (pause/complete). Your bash working directory is the campaign directory;
+request_verification, record_promotion (the only way to append to PROVED.md), cancel_worker and
+steer_worker (contract triggers only — observable struggle, user pause/stop, safety, explicit
+deadline), and declare_campaign_state (pause/complete). Your bash working directory is the campaign directory;
 edit the ledgers per the contract. STATEMENT.md, PROVED.md, and the harness journal are
 write-protected. End every wake with your decisions recorded in the ledgers and
 CURRENT_FRONTIER.md consistent with them.`,
