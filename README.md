@@ -45,22 +45,47 @@ the gates; ephemeral model calls own the judgment:
   `request_verification`, plus bash in the campaign dir for ledger edits.
 - **Workers** — fresh instances, one packet with one finite mathematical
   deliverable, write access only to their assigned `EVIDENCE/` directory.
-- **Verification** — the launcher's two-stage cadence: fresh hostile audit,
-  then fresh no-context reconstruction whose bundle (statement, key ideas,
-  promoted premises — never the proof) is constructed by the harness, so
-  blindness is platform-enforced. Code counts the verdicts; promotion is
-  impossible without both stages passing on the exact revision.
+- **Verification** — the launcher's two-stage cadence as three fresh calls:
+  hostile audit; blind reconstruction (bundle built by the harness: statement,
+  key ideas, allowed sources, promoted premises — never the proof); then a
+  comparison mapping the reconstruction to the candidate's conclusions and
+  dependencies, which carries stage 2's verdict. All three outputs are saved
+  as citable EVIDENCE artifacts; verdicts are content-hash-bound, and
+  `record_promotion` (the only writer of PROVED.md) re-checks everything.
 - **Gates in code** — packet schema + FAILED.md check field on every
   dispatch; idea-gate (`IDEA PASS` on file) before any follow-up wave on a
   mechanism; user limits at dispatch; no wall-clock timeouts on proof work,
   ever.
 
+## Project layout convention
+
+A research project is a folder containing campaigns (convention only — no
+machinery reads this):
+
+```
+myproject/                git repo (committing/pushing is your call; the
+  PROJECT.md              harness never runs git)
+  notes/                  free-form thinking — not campaign state
+  tools/                  domain checkers, search scripts (workers reach them via bash)
+  campaigns/
+    2026-07-31-some-statement/    one frozen statement each, launcher layout
+  papers/
+```
+
+Cross-campaign citation: a promoted result from another campaign is an
+**imported theorem** — cite it by path and verify its exact hypotheses in the
+importing campaign, like any external source. There is deliberately no
+project-level promoted-results index; that would be a second proof-state
+system. Keep campaigns out of the system temp tree (the write sandbox
+blanket-allows temp).
+
 See `docs/design.md` for the full conformance table (each enforcement →
-launcher clause), `docs/retrospective.md` for why 1.0 was replaced, and
-`docs/skill-feedback.md` for the skill-improvement ledger.
+launcher clause) and the adversarial review record, `docs/retrospective.md`
+for why 1.0 was replaced, and `docs/skill-feedback.md` for the
+skill-improvement ledger.
 
 ## Checks
 
 ```bash
-bunx tsc --noEmit
+bun run check   # typecheck + launcher-token conformance check
 ```

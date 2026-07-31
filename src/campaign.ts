@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -77,8 +78,11 @@ export function readLedger(dir: string, name: (typeof LEDGERS)[number]): string 
  * Throws if the revision already exists — in-place edits are impossible.
  */
 export function newEvidencePath(dir: string, base: string, revision: number): string {
-  const safe = base.replace(/[^A-Za-z0-9._-]/g, "-");
+  const safe = base.replace(/[^A-Za-z0-9._/-]/g, "-").replace(/\.\.+/g, ".");
   const p = path.join(dir, "EVIDENCE", `${safe}.r${revision}.md`);
+  if (!p.startsWith(path.join(dir, "EVIDENCE") + path.sep)) {
+    throw new Error(`evidence path escapes EVIDENCE/: ${base}`);
+  }
   if (fs.existsSync(p)) {
     throw new Error(`evidence revision already exists: ${p} (evidence is append-only)`);
   }
@@ -101,11 +105,26 @@ export function appendJournal(
 export function readJournal(dir: string): JournalEntry[] {
   const p = path.join(dir, JOURNAL_DIR, "journal.jsonl");
   if (!fs.existsSync(p)) return [];
-  return fs
-    .readFileSync(p, "utf-8")
-    .split("\n")
-    .filter(Boolean)
-    .map((l: string) => JSON.parse(l) as JournalEntry);
+  const lines = fs.readFileSync(p, "utf-8").split("\n").filter(Boolean);
+  const entries: JournalEntry[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    try {
+      entries.push(JSON.parse(lines[i]) as JournalEntry);
+    } catch {
+      // Tolerate a torn trailing line from a crash mid-append; anything else is corruption.
+      if (i === lines.length - 1) break;
+      throw new Error(`corrupt journal line ${i + 1} in ${p}`);
+    }
+  }
+  return entries;
+}
+
+export function sha256Text(text: string): string {
+  return crypto.createHash("sha256").update(text).digest("hex");
+}
+
+export function sha256File(p: string): string {
+  return crypto.createHash("sha256").update(fs.readFileSync(p)).digest("hex");
 }
 
 /**

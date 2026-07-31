@@ -1,9 +1,100 @@
-import { appendJournal, readJournal } from "./campaign.js";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { appendJournal, sha256File, sha256Text } from "./campaign.js";
 
 /**
- * Dispatch gate. The model requests; this code decides legality. Every check
- * traces to a launcher clause (see docs/design.md conformance table).
+ * Gate state store. Gate decisions must not depend on files any role's bash
+ * can edit, so the authoritative record lives OUTSIDE the campaign directory
+ * (in ~/.local/state/coverify/<campaign-id>/gates.jsonl) and is mirrored into
+ * the campaign journal for auditability. Content hashes recorded here are
+ * harness-generated audit metadata, which the launcher explicitly permits.
  */
+export interface GateRecord {
+  ts: string;
+  kind:
+    | "statement"
+    | "dispatch"
+    | "completion"
+    | "gate-verdict"
+    | "audit"
+    | "reconstruction"
+    | "comparison"
+    | "promotion";
+  [key: string]: unknown;
+}
+
+export class GateStore {
+  private records: GateRecord[];
+  private file: string;
+  readonly campaignDir: string;
+
+  constructor(campaignDir: string) {
+    this.campaignDir = path.resolve(campaignDir);
+    const id = sha256Text(this.campaignDir).slice(0, 16);
+    const stateDir =
+      process.env.COVERIFY_STATE_DIR ?? path.join(os.homedir(), ".local/state/coverify");
+    const dir = path.join(stateDir, id);
+    fs.mkdirSync(dir, { recursive: true });
+    this.file = path.join(dir, "gates.jsonl");
+    this.records = fs.existsSync(this.file)
+      ? fs
+          .readFileSync(this.file, "utf-8")
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => JSON.parse(l) as GateRecord)
+      : [];
+  }
+
+  append(record: { kind: GateRecord["kind"] } & Record<string, unknown>): GateRecord {
+    const full: GateRecord = { ts: new Date().toISOString(), ...record };
+    this.records.push(full);
+    fs.appendFileSync(this.file, JSON.stringify(full) + "\n");
+    // Audit mirror in the campaign journal (write-only; never read by gates).
+    appendJournal(this.campaignDir, { kind: "note", gate: full });
+    return full;
+  }
+
+  all(): readonly GateRecord[] {
+    return this.records;
+  }
+
+  maxWorkerId(): number {
+    let max = 0;
+    for (const r of this.records) {
+      if (r.kind === "dispatch" && typeof r.id === "string") {
+        const n = Number((r.id as string).replace(/^w/, ""));
+        if (Number.isFinite(n) && n > max) max = n;
+      }
+    }
+    return max;
+  }
+
+  dispatchesWithoutCompletion(): GateRecord[] {
+    const completed = new Set(
+      this.records.filter((r) => r.kind === "completion").map((r) => r.id as string),
+    );
+    return this.records.filter((r) => r.kind === "dispatch" && !completed.has(r.id as string));
+  }
+}
+
+/**
+ * Strict verdict parsing: only the first non-empty line counts, and it must
+ * be exactly the verdict token. Anything else fails closed — a quoted or
+ * hypothetical "VERDICT: PASS" deeper in a report never registers.
+ */
+export function parseFirstLineVerdict(
+  text: string,
+  tokens: readonly string[],
+): string | undefined {
+  const first = text
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.length > 0);
+  if (!first) return undefined;
+  return tokens.find((t) => first.toUpperCase() === t.toUpperCase());
+}
+
 export interface WorkerPacket {
   mechanism: string;
   task: string;
@@ -17,33 +108,30 @@ export interface WorkerPacket {
 export interface GateDecision {
   allowed: boolean;
   reason?: string;
+  warning?: string;
 }
 
 const FAILED_CHECK_RE = /^(no close prior route|closest prior route is .+; this differs materially because .+)/is;
 
-function ideaGatePassed(dir: string, mechanism: string): boolean {
-  return readJournal(dir).some(
-    (e) => e.kind === "gate-verdict" && e.mechanism === mechanism && e.verdict === "IDEA PASS",
-  );
-}
-
-function dispatchedCount(dir: string, mechanism: string): number {
-  return readJournal(dir).filter((e) => e.kind === "dispatch" && e.mechanism === mechanism).length;
+function ideaGatePassed(store: GateStore, mechanism: string): boolean {
+  return store
+    .all()
+    .some((e) => e.kind === "gate-verdict" && e.mechanism === mechanism && e.verdict === "IDEA PASS");
 }
 
 /**
- * Wave gate: a single first-wave scout on a mechanism is legal ungated; a
- * multi-worker wave (second or later dispatch on the same mechanism) requires
- * IDEA PASS on file. Launcher: "Do not allow recursive subagent fan-out or a
- * large route wave before the parent mechanism receives IDEA PASS...
- * Independent first-wave scouts may propose new mechanisms, but the
- * coordinator must gate any such mechanism before investing a follow-up wave."
+ * Wave gate. Launcher: "Do not allow recursive subagent fan-out or a large
+ * route wave before the parent mechanism receives IDEA PASS". Enforced only
+ * at the unambiguous threshold — a second CONCURRENT worker on the same
+ * mechanism. History-based cases (sequential retries) are the coordinator's
+ * judgment; the harness attaches an advisory reminder instead of refusing.
  */
 export function checkWorkerDispatch(
-  dir: string,
+  store: GateStore,
   packet: WorkerPacket,
   userAgentLimit: number | undefined,
   liveAgents: number,
+  liveOnMechanism: number,
 ): GateDecision {
   if (!packet.task || !packet.deliverable || !packet.mechanism) {
     return { allowed: false, reason: "packet must name a mechanism, task, and finite deliverable" };
@@ -56,58 +144,82 @@ export function checkWorkerDispatch(
         "'closest prior route is X; this differs materially because ...' (contract: FAILED.md check)",
     };
   }
-  // No fixed agent-count ceiling; only user/workspace/runtime limits apply.
   if (userAgentLimit !== undefined && liveAgents >= userAgentLimit) {
     return { allowed: false, reason: `user-set concurrent-agent limit (${userAgentLimit}) reached` };
   }
-  if (dispatchedCount(dir, packet.mechanism) >= 1 && !ideaGatePassed(dir, packet.mechanism)) {
+  if (liveOnMechanism >= 1 && !ideaGatePassed(store, packet.mechanism)) {
     return {
       allowed: false,
       reason:
-        `mechanism "${packet.mechanism}" has no IDEA PASS on file; a follow-up wave requires the ` +
-        "idea gate first (dispatch_gate_critic). A single first-wave scout was already permitted.",
+        `mechanism "${packet.mechanism}" already has ${liveOnMechanism} concurrent worker(s) and no ` +
+        "IDEA PASS on file; a multi-worker wave requires the idea gate first (dispatch_gate_critic).",
     };
   }
-  return { allowed: true };
+  const warning =
+    !ideaGatePassed(store, packet.mechanism) && wasDispatchedBefore(store, packet.mechanism)
+      ? `note: mechanism "${packet.mechanism}" was explored before without an IDEA PASS on file; ` +
+        "the contract requires gating before investing a follow-up wave — your judgment whether this is one."
+      : undefined;
+  return { allowed: true, warning };
 }
 
-export function recordGateVerdict(dir: string, mechanism: string, verdictText: string): string {
-  const m = verdictText.match(/IDEA (PASS|FAIL|REPAIR)/i);
-  const verdict = m ? `IDEA ${m[1].toUpperCase()}` : "IDEA FAIL";
-  appendJournal(dir, { kind: "gate-verdict", mechanism, verdict, text: verdictText });
+function wasDispatchedBefore(store: GateStore, mechanism: string): boolean {
+  return store.all().some((e) => e.kind === "dispatch" && e.mechanism === mechanism);
+}
+
+export function recordGateVerdict(store: GateStore, mechanism: string, verdictText: string): string {
+  const verdict =
+    parseFirstLineVerdict(verdictText, ["IDEA PASS", "IDEA FAIL", "IDEA REPAIR"]) ?? "UNPARSEABLE";
+  store.append({ kind: "gate-verdict", mechanism, verdict, text: verdictText });
   return verdict;
 }
 
-/**
- * Two-stage verification bookkeeping. `verifier-backed` requires, for the
- * exact revision: a stage-1 hostile-audit PASS and a stage-2 reconstruction
- * PASS, in that order, with recorded provenance. Counting is code, not model
- * judgment.
- */
-export function verificationState(dir: string, revision: string) {
-  const entries = readJournal(dir);
-  const audit = entries.find(
-    (e) => e.kind === "audit" && e.revision === revision && e.verdict === "PASS",
-  );
-  const reconstruction = entries.find(
-    (e) => e.kind === "reconstruction" && e.revision === revision && e.verdict === "PASS",
-  );
-  return {
-    stage1Passed: Boolean(audit),
-    stage2Passed: Boolean(reconstruction),
-    verifierBacked: Boolean(audit && reconstruction),
-  };
+export function statementHash(dir: string): string {
+  return sha256File(path.join(dir, "STATEMENT.md"));
 }
 
-export function checkPromotion(dir: string, revision: string): GateDecision {
-  const state = verificationState(dir, revision);
+export function recordStatement(store: GateStore, dir: string, why: string): void {
+  store.append({ kind: "statement", hash: statementHash(dir), why });
+}
+
+/** Latest user-accepted statement hash; undefined if never recorded. */
+export function acceptedStatementHash(store: GateStore): string | undefined {
+  const recs = store.all().filter((e) => e.kind === "statement");
+  return recs.length > 0 ? (recs[recs.length - 1].hash as string) : undefined;
+}
+
+/**
+ * Two-stage verification bookkeeping, bound to content: each stage record
+ * carries sha256 of the candidate file and of STATEMENT.md at verification
+ * time. `verifier-backed` requires a stage-1 audit PASS and a stage-2
+ * comparison PASS (the launcher's PASS belongs to the comparison mapping the
+ * reconstruction to the candidate, not to the blind reconstructor itself)
+ * whose hashes still match the files on disk.
+ */
+export function verificationState(store: GateStore, dir: string, revision: string) {
+  const candidatePath = path.join(dir, "EVIDENCE", revision);
+  const candidateHash = fs.existsSync(candidatePath) ? sha256File(candidatePath) : undefined;
+  const stmtHash = statementHash(dir);
+  const match = (e: GateRecord) =>
+    e.revision === revision &&
+    e.verdict === "PASS" &&
+    e.candidateHash === candidateHash &&
+    e.statementHash === stmtHash;
+  const stage1 = store.all().some((e) => e.kind === "audit" && match(e));
+  const stage2 = store.all().some((e) => e.kind === "comparison" && match(e));
+  return { stage1Passed: stage1, stage2Passed: stage2, verifierBacked: stage1 && stage2 };
+}
+
+export function checkPromotion(store: GateStore, dir: string, revision: string): GateDecision {
+  const state = verificationState(store, dir, revision);
   if (!state.verifierBacked) {
     return {
       allowed: false,
       reason:
-        `revision ${revision} is not verifier-backed ` +
-        `(stage 1 hostile audit passed: ${state.stage1Passed}; stage 2 reconstruction passed: ${state.stage2Passed}). ` +
-        "Promotion requires both stages on the exact revision.",
+        `revision ${revision} is not verifier-backed against the current file contents ` +
+        `(stage 1 hostile audit: ${state.stage1Passed}; stage 2 reconstruction+comparison: ${state.stage2Passed}). ` +
+        "Both stages must PASS on the exact revision, and the candidate and STATEMENT.md must be " +
+        "byte-identical to what was verified.",
     };
   }
   return { allowed: true };

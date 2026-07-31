@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import * as path from "node:path";
 import { campaignExists, initCampaign, readJournal, readLedger } from "./campaign.js";
+import { GateStore, recordStatement } from "./gates.js";
 import { runCampaign } from "./harness.js";
 
 function usage(): never {
@@ -8,6 +9,7 @@ function usage(): never {
   coverify prove "<exact statement>" [--dir campaign] [--agent-limit N] [--max-wakes N]
   coverify resume [--dir campaign] [--agent-limit N] [--max-wakes N]
   coverify status [--dir campaign]
+  coverify amend [--dir campaign]   accept an explicit user amendment of STATEMENT.md
 
 env: ANTHROPIC_API_KEY (required for prove/resume), COVERIFY_MODEL (default claude-opus-5),
      COVERIFY_LAUNCHER_PATH (default ~/kb/notes/agents/prompts/prompt-math-proof-search-launcher.md)`);
@@ -50,6 +52,7 @@ async function prove(resume: boolean): Promise<void> {
     const statement = positional[0];
     if (!statement) usage();
     initCampaign(dir, statement);
+    recordStatement(new GateStore(dir), dir, "init");
     console.error(`[coverify] campaign initialized at ${dir}`);
   } else if (!campaignExists(dir)) {
     console.error(`no campaign at ${dir}`);
@@ -71,6 +74,18 @@ switch (command) {
   case "resume":
     await prove(true);
     break;
+  case "amend": {
+    if (!campaignExists(dir)) {
+      console.error(`no campaign at ${dir}`);
+      process.exit(1);
+    }
+    recordStatement(new GateStore(dir), dir, "explicit user amendment");
+    console.error(
+      "[coverify] amendment accepted: new statement revision recorded; earlier completion evidence " +
+        "is invalidated per the contract (verifications are hash-bound and will not carry over).",
+    );
+    break;
+  }
   case "status": {
     if (!campaignExists(dir)) {
       console.error(`no campaign at ${dir}`);
