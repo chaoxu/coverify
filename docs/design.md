@@ -144,6 +144,15 @@ until this harness has run a real campaign; the only planned zero-risk edit
 is a note that a conformant harness exists and campaign directories are
 interchangeable.
 
+**Correction to the review record (2026-07-31):** the over-constraint audit's
+F2 struck "no inline proof work" from the coordinator charge as invented
+policy, but it had read only the launcher — SKILL.md's **thin-coordinator
+adapter** is also spec and mandates exactly that delegation ("delegate
+essentially all route exploration, proof or counterexample construction… to
+minimal-context subagents"). The charge now quotes the adapter. With a
+resident coordinator the rationale is structural: inline proof work pollutes
+the long-lived judgment context and accelerates compaction.
+
 ## Review record
 
 Before the first campaign, the design and code were adversarially reviewed by
