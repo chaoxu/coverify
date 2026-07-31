@@ -1,4 +1,6 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import * as os from "node:os";
+import * as path from "node:path";
 import * as fs from "node:fs";
 import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
 import { createModels } from "@earendil-works/pi-ai";
@@ -35,7 +37,7 @@ export type RoleName =
   | "comparator";
 
 export interface ModelSpec {
-  provider: "anthropic" | "openai" | "openai-codex";
+  provider: "anthropic" | "openai" | "openai-codex" | "claude-cli";
   modelId: string;
   thinking: ThinkingLevel;
 }
@@ -61,10 +63,19 @@ const ROLE_ENV: Record<RoleName, string> = {
 };
 
 /** Workhorse decision (user, 2026-07-31): workers run GPT-5.6 Sol in its
- *  high-effort ("Ultra") mode. Judgment and verification roles stay on the
- *  base model. Every role is overridable per-role or globally. */
+ *  high-effort ("Ultra") mode. Subscription decision (user, 2026-07-31): the
+ *  five single-shot verdict roles run through the official `claude -p` CLI —
+ *  the only path that bills the Claude subscription allowance (third-party
+ *  OAuth draws Extra Credits per current Anthropic billing). Only the
+ *  coordinator (tool loop) remains on the Anthropic API by default. Every
+ *  role is overridable per-role or globally. */
 const ROLE_DEFAULTS: Partial<Record<RoleName, string>> = {
   worker: "openai/gpt-5.6-sol@xhigh",
+  gateCritic: "claude-cli/opus",
+  hostileAuditor: "claude-cli/opus",
+  bundleCertifier: "claude-cli/opus",
+  reconstructor: "claude-cli/opus",
+  comparator: "claude-cli/opus",
 };
 
 const BASE_DEFAULT = "anthropic/claude-opus-5@high";
@@ -75,7 +86,12 @@ export function parseModelSpec(spec: string): ModelSpec {
   const slash = modelPart.indexOf("/");
   const provider = slash < 0 ? "anthropic" : modelPart.slice(0, slash);
   const modelId = slash < 0 ? modelPart : modelPart.slice(slash + 1);
-  if (provider !== "anthropic" && provider !== "openai" && provider !== "openai-codex") {
+  if (
+    provider !== "anthropic" &&
+    provider !== "openai" &&
+    provider !== "openai-codex" &&
+    provider !== "claude-cli"
+  ) {
     throw new Error(`unknown provider "${provider}" in model spec "${spec}"`);
   }
   return { provider, modelId, thinking: thinking as ThinkingLevel };
@@ -212,8 +228,48 @@ export interface RoleRun {
  * versus instructed.
  */
 export async function runRole(run: RoleRun): Promise<string> {
+  if (run.spec.provider === "claude-cli") {
+    if (run.bash || run.extraTools) {
+      throw new Error("claude-cli backend supports single-shot verdict roles only (no tools)");
+    }
+    return runClaudeCli(run.spec.modelId, `${systemText(run)}\n\n---\n\n${run.prompt}`);
+  }
   const session = createRoleSession(run);
   return session.ask(run.prompt);
+}
+
+function systemText(run: Pick<RoleRun, "contract" | "charge">): string {
+  return `The campaign contract below governs this work. Follow it exactly.\n\n<contract>\n${run.contract}\n</contract>\n\n${run.charge}`;
+}
+
+/**
+ * Run one single-shot role through the official Claude CLI (`claude -p`) so
+ * usage bills the Claude subscription allowance. Base command configurable
+ * via COVERIFY_CLAUDE_CMD (default "claude -p") so CLI flag drift never needs
+ * a harness release. cwd is a fresh empty temp dir; the CLI's own read tools
+ * find nothing there (instructed-only isolation — recorded honestly by
+ * callers). No timeout: audit and reconstruction work is never clocked.
+ */
+function runClaudeCli(modelId: string, fullPrompt: string): Promise<string> {
+  const base = (process.env.COVERIFY_CLAUDE_CMD ?? "claude -p").split(/\s+/);
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "coverify-cli-"));
+  return new Promise((resolve, reject) => {
+    const child = spawn(base[0], [...base.slice(1), "--model", modelId], {
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (d: Buffer) => (out += d));
+    child.stderr.on("data", (d: Buffer) => (err += d));
+    child.on("error", reject);
+    child.on("close", (code: number | null) => {
+      if (code === 0) resolve(out.trim());
+      else reject(new Error(`claude cli exited ${code}: ${err.slice(0, 500)}`));
+    });
+    child.stdin.write(fullPrompt);
+    child.stdin.end();
+  });
 }
 
 export interface RoleSession {
@@ -234,11 +290,14 @@ export interface RoleSession {
  * (workers, critics, verifiers) go through runRole and never reuse a session.
  */
 export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: string }): RoleSession {
+  if (run.spec.provider === "claude-cli") {
+    throw new Error("claude-cli backend supports single-shot verdict roles only, not sessions");
+  }
   const tools = run.bash ? [bashTool(run.bash.cwd, run.bash.scope)] : [];
   if (run.extraTools) tools.push(...run.extraTools);
   const agent = new Agent({
     initialState: {
-      systemPrompt: `The campaign contract below governs this work. Follow it exactly.\n\n<contract>\n${run.contract}\n</contract>\n\n${run.charge}`,
+      systemPrompt: systemText(run),
       model: getModel(run.models, run.spec),
       thinkingLevel: run.spec.thinking,
       tools,

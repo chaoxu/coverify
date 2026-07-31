@@ -28,20 +28,25 @@ Optional user limits (the harness imposes none of its own): `--agent-limit N`
 (concurrent workers), `--max-wakes N` (pause after N coordinator wakes).
 
 **Models are per-role.** Specs are `provider/model[@thinking]` (providers:
-`anthropic`, `openai`). Defaults: workers run `openai/gpt-5.6-sol@xhigh`
-(GPT-5.6 Sol in its high-effort "Ultra" mode — the workhorse); every other
-role runs `anthropic/claude-opus-5@high`. Override globally with
-`COVERIFY_MODEL` (judgment/verification roles) or per role with
+`anthropic`, `openai`, `openai-codex`, `claude-cli`). Defaults: workers run
+`openai/gpt-5.6-sol@xhigh` (GPT-5.6 Sol high-effort "Ultra" — the
+workhorse); the five single-shot verdict roles (critic, auditor, certifier,
+reconstructor, comparator) run `claude-cli/opus` — the official `claude -p`
+CLI, the one path that bills the Claude **subscription allowance**; the
+coordinator (tool loop — cannot ride `claude -p`) runs
+`anthropic/claude-opus-5@high` on the API. Override globally with
+`COVERIFY_MODEL` or per role with
 `COVERIFY_MODEL_{COORDINATOR,WORKER,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}`.
-Auth per provider is an env API key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`)
-**or subscription OAuth** — `coverify login anthropic` (Claude Pro/Max) and
-`coverify login openai-codex` (ChatGPT Plus/Pro; its catalog serves
-`gpt-5.6-sol`, so workers can run the workhorse on subscription with
-`COVERIFY_MODEL_WORKER=openai-codex/gpt-5.6-sol@xhigh` once the
-subscription has headroom). Credentials persist in
-`~/.config/coverify/auth.json` (0600) with automatic token refresh;
+`COVERIFY_CLAUDE_CMD` overrides the CLI base command (default `claude -p`).
+Auth per provider: env API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`),
+the `claude` binary for `claude-cli/*` roles (whatever `claude` is logged in
+as), or OAuth via `coverify login anthropic|openai-codex`
+(`~/.config/coverify/auth.json`, auto-refresh). **Billing caution:**
+third-party OAuth against Anthropic reportedly draws Extra Credits, not the
+subscription allowance — only the official `claude` CLI is guaranteed
+subscription-billed, which is why the verdict roles default to `claude-cli`.
 `prove`/`resume` preflight that every configured role's provider has usable
-auth of either kind. A pleasant side effect of the
+auth. A pleasant side effect of the
 default split: GPT-produced candidates are verified by Anthropic-family
 auditors — stage verification is cross-family out of the box, and the
 journal records the family per call.

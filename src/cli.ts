@@ -54,13 +54,19 @@ async function prove(resume: boolean): Promise<void> {
   // OAuth subscription credential (coverify login <provider>).
   const models = buildModels();
   const missing = new Set<string>();
+  const { spawnSync } = await import("node:child_process");
   for (const role of ROLE_NAMES) {
     const provider = roleModelSpec(role).provider;
     let ok = false;
-    try {
-      ok = (await models.getAuth(provider)) !== undefined;
-    } catch {
-      ok = false;
+    if (provider === "claude-cli") {
+      const bin = (process.env.COVERIFY_CLAUDE_CMD ?? "claude -p").split(/\s+/)[0];
+      ok = spawnSync("which", [bin]).status === 0;
+    } else {
+      try {
+        ok = (await models.getAuth(provider)) !== undefined;
+      } catch {
+        ok = false;
+      }
     }
     if (!ok) missing.add(`${provider} (role ${role}: ${specLabel(roleModelSpec(role))})`);
   }

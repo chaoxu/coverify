@@ -130,7 +130,11 @@ coordinator-authored but now passes a mandatory certification by a fresh
 agent before stage 2 runs (contract-required; the certification itself is
 model judgment, recorded as such); `declaredDependencies` remains
 instructed-only, mitigated by giving the stage-1 auditor PROVED.md.
-Non-darwin platforms: write confinement instructed-only.
+Non-darwin platforms: write confinement instructed-only. `claude-cli/*`
+verdict roles run as `claude -p` subprocesses: fresh process per call, run
+in an empty temp directory, but the CLI carries its own tools (file read,
+web search) — their isolation is instructed-only, and the journal's
+modelFamily field discloses the backend per call.
 
 ## Efficiency (the anti-Danus commitments)
 
@@ -216,9 +220,11 @@ harnesses directly — `claude -p` / `codex exec` — via a harness-provided
 - [ ] Citation lint (mechanics: cited evidence paths exist; never parses content)
 - [ ] Per-call token accounting in the journal (from pi usage events) —
       prerequisite for the evals token gauges and per-role model routing
-- [x] Per-role model specs (`provider/model[@thinking]`, anthropic + openai
-      providers, per-role env overrides; workers default to
-      `openai/gpt-5.6-sol@xhigh` — user decision 2026-07-31)
+- [x] Per-role model specs (`provider/model[@thinking]`; providers:
+      anthropic, openai, openai-codex (subscription OAuth), claude-cli
+      (`claude -p`, subscription-allowance billed). Defaults: workers
+      `openai/gpt-5.6-sol@xhigh`; verdict roles `claude-cli/opus`;
+      coordinator `anthropic/claude-opus-5@high` — user decisions 2026-07-31)
 - [ ] Per-wake model routing and eval-driven per-role tuning (cheap wakes vs
       promotion wakes; cheap critics) — decided by eval evidence
 - [ ] Linux write-sandbox backend (bubblewrap/sandbox equivalent)
