@@ -216,8 +216,11 @@ harnesses directly — `claude -p` / `codex exec` — via a harness-provided
 - [ ] Citation lint (mechanics: cited evidence paths exist; never parses content)
 - [ ] Per-call token accounting in the journal (from pi usage events) —
       prerequisite for the evals token gauges and per-role model routing
-- [ ] Per-role / per-wake model routing (cheap wakes vs promotion wakes;
-      cheap critics) — decided by eval evidence, not defaults
+- [x] Per-role model specs (`provider/model[@thinking]`, anthropic + openai
+      providers, per-role env overrides; workers default to
+      `openai/gpt-5.6-sol@xhigh` — user decision 2026-07-31)
+- [ ] Per-wake model routing and eval-driven per-role tuning (cheap wakes vs
+      promotion wakes; cheap critics) — decided by eval evidence
 - [ ] Linux write-sandbox backend (bubblewrap/sandbox equivalent)
 - [ ] Trigger + contract-adherence evals per `docs/evals.md` (toy campaign
       + fresh-context contract judge); blind A/B reserved for real changes

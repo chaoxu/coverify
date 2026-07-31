@@ -27,7 +27,9 @@ import {
   buildModels,
   CHARGES,
   createRoleSession,
+  roleModelSpec,
   runRole,
+  specLabel,
   toolText,
   type RoleSession,
   type WriteScope,
@@ -35,7 +37,6 @@ import {
 
 export interface CampaignOptions {
   campaignDir: string;
-  modelId: string;
   /** User-set limit only; the launcher forbids a fixed harness ceiling. */
   userAgentLimit?: number;
   /** Stop waking the coordinator after this many wakes (user runtime limit). */
@@ -169,7 +170,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         contract,
         charge: CHARGES.worker,
         bash: { cwd: evidenceDir, scope: { allow: [evidenceDir], deny: [] } },
-        modelId: opts.modelId,
+        spec: roleModelSpec("worker"),
         models,
       });
       const promise = session.ask(
@@ -211,7 +212,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         contract,
         charge: CHARGES.gateCritic,
         prompt: `# Frozen target\n\n${statement}\n\n# Promoted premises\n\n${proved}\n\n# Proposed mechanism\n\n${p.mechanism}\n\n# Claimed first nontrivial implication\n\n${p.firstImplication}`,
-        modelId: opts.modelId,
+        spec: roleModelSpec("gateCritic"),
         models,
       });
       activityThisWake++;
@@ -323,7 +324,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         contract,
         charge: CHARGES.hostileAuditor,
         prompt: `# Statement\n\n${statement}\n\n# Currently promoted (PROVED.md)\n\n${proved}\n\n# Declared dependencies (coordinator-authored)\n\n${p.declaredDependencies}\n\n# Candidate revision ${rel}\n\n${candidate}`,
-        modelId: opts.modelId,
+        spec: roleModelSpec("hostileAuditor"),
         models,
       });
       const auditPass = passOf(auditText);
@@ -339,7 +340,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         suppliedInputs: ["candidate revision", "statement", "PROVED.md", "declared dependencies"],
         blindness:
           "fresh instance (enforced); bundle built by harness (enforced); declaredDependencies coordinator-authored (instructed only)",
-        modelFamily: `anthropic/${opts.modelId}`,
+        modelFamily: specLabel(roleModelSpec("hostileAuditor")),
       });
       activityThisWake++;
       if (!auditPass) {
@@ -353,7 +354,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         contract,
         charge: CHARGES.bundleCertifier,
         prompt: `# Candidate revision ${rel}\n\n${candidate}\n\n# Proposed reconstruction bundle\n\n${bundle}`,
-        modelId: opts.modelId,
+        spec: roleModelSpec("bundleCertifier"),
         models,
       });
       const certPass = passOf(certText);
@@ -369,7 +370,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         artifact: path.relative(dir, certEvidence),
         suppliedInputs: ["candidate revision", "proposed bundle"],
         blindness: "fresh instance (enforced); sees candidate by design (certification step)",
-        modelFamily: `anthropic/${opts.modelId}`,
+        modelFamily: specLabel(roleModelSpec("bundleCertifier")),
       });
       if (!certPass) {
         return toolText(
@@ -383,7 +384,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         contract,
         charge: CHARGES.reconstructor,
         prompt: `# Statement\n\n${statement}\n\n# High-level key ideas\n\n${p.keyIdeas}\n\n# Allowed sources\n\n${p.allowedSources}\n\n# Promoted premises\n\n${proved}`,
-        modelId: opts.modelId,
+        spec: roleModelSpec("reconstructor"),
         models,
       });
       const reconEvidence = newEvidencePath(dir, `audits/${slug}.reconstruction`);
@@ -397,7 +398,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         suppliedInputs: ["statement", "key ideas", "allowed sources", "promoted premises"],
         blindness:
           "fresh instance (enforced); candidate file withheld by harness (enforced); keyIdeas coordinator-authored (instructed only — paraphrase risk not machine-checked)",
-        modelFamily: `anthropic/${opts.modelId}`,
+        modelFamily: specLabel(roleModelSpec("reconstructor")),
       });
 
       // Stage 2b — comparison: maps the reconstruction to the candidate's
@@ -406,7 +407,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         contract,
         charge: CHARGES.comparator,
         prompt: `# Statement\n\n${statement}\n\n# Independent reconstruction\n\n${reconText}\n\n# Candidate revision ${rel}\n\n${candidate}\n\n# Declared dependencies\n\n${p.declaredDependencies}`,
-        modelId: opts.modelId,
+        spec: roleModelSpec("comparator"),
         models,
       });
       const comparePass = passOf(compareText);
@@ -421,7 +422,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         artifact: path.relative(dir, compareEvidence),
         suppliedInputs: ["statement", "reconstruction", "candidate", "declared dependencies"],
         blindness: "fresh instance (enforced); sees both sides by design (comparison step)",
-        modelFamily: `anthropic/${opts.modelId}`,
+        modelFamily: specLabel(roleModelSpec("comparator")),
       });
       const promotion = checkPromotion(store, dir, rel);
       return toolText(
@@ -608,7 +609,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           steerWorker,
           declareState,
         ],
-        modelId: opts.modelId,
+        spec: roleModelSpec("coordinator"),
         models,
       });
     }

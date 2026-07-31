@@ -26,7 +26,18 @@ bun run src/cli.ts amend --dir campaign    # accept an explicit user amendment o
 
 Optional user limits (the harness imposes none of its own): `--agent-limit N`
 (concurrent workers), `--max-wakes N` (pause after N coordinator wakes).
-Default model: `claude-opus-5` (`COVERIFY_MODEL` to override).
+
+**Models are per-role.** Specs are `provider/model[@thinking]` (providers:
+`anthropic`, `openai`). Defaults: workers run `openai/gpt-5.6-sol@xhigh`
+(GPT-5.6 Sol in its high-effort "Ultra" mode — the workhorse); every other
+role runs `anthropic/claude-opus-5@high`. Override globally with
+`COVERIFY_MODEL` (judgment/verification roles) or per role with
+`COVERIFY_MODEL_{COORDINATOR,WORKER,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}`.
+`prove`/`resume` preflight the API keys each configured provider needs
+(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). A pleasant side effect of the
+default split: GPT-produced candidates are verified by Anthropic-family
+auditors — stage verification is cross-family out of the box, and the
+journal records the family per call.
 
 The launcher contract is read at runtime from
 `~/kb/notes/agents/prompts/prompt-math-proof-search-launcher.md`

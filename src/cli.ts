@@ -2,6 +2,7 @@
 import * as path from "node:path";
 import { campaignExists, initCampaign, readJournal, readLedger } from "./campaign.js";
 import { GateStore, recordStatement } from "./gates.js";
+import { ROLE_NAMES, roleModelSpec, specLabel } from "./roles.js";
 import { runCampaign } from "./harness.js";
 
 function usage(): never {
@@ -11,7 +12,9 @@ function usage(): never {
   coverify status [--dir campaign]
   coverify amend [--dir campaign]   accept an explicit user amendment of STATEMENT.md
 
-env: ANTHROPIC_API_KEY (required for prove/resume), COVERIFY_MODEL (default claude-opus-5),
+env: ANTHROPIC_API_KEY (+ OPENAI_API_KEY for openai/* roles — workers default to openai/gpt-5.6-sol@xhigh),
+     COVERIFY_MODEL and per-role COVERIFY_MODEL_{COORDINATOR,WORKER,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}
+       as "provider/model[@thinking]" specs (base default anthropic/claude-opus-5@high),
      COVERIFY_LAUNCHER_PATH (default ~/kb/notes/agents/prompts/prompt-math-proof-search-launcher.md)`);
   process.exit(2);
 }
@@ -44,8 +47,14 @@ function optionalInt(name: string): number | undefined {
 }
 
 async function prove(resume: boolean): Promise<void> {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error("ANTHROPIC_API_KEY is not set (fetch via: fleet-secret get <app>/<name>)");
+  const keyOf = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY" } as const;
+  const missing = new Set<string>();
+  for (const role of ROLE_NAMES) {
+    const key = keyOf[roleModelSpec(role).provider];
+    if (!process.env[key]) missing.add(`${key} (role ${role}: ${specLabel(roleModelSpec(role))})`);
+  }
+  if (missing.size > 0) {
+    console.error(`missing API keys for configured role models:\n  ${[...missing].join("\n  ")}\n(fetch via: fleet-secret get <app>/<name>, or re-point the role with COVERIFY_MODEL_*)`);
     process.exit(1);
   }
   if (!resume) {
@@ -60,7 +69,6 @@ async function prove(resume: boolean): Promise<void> {
   }
   const synthesis = await runCampaign({
     campaignDir: dir,
-    modelId: process.env.COVERIFY_MODEL ?? "claude-opus-5",
     userAgentLimit: optionalInt("agent-limit"),
     maxWakes: optionalInt("max-wakes"),
   });

@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
 import { createModels } from "@earendil-works/pi-ai";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
+import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { Type } from "typebox";
 
 const OUTPUT_LIMIT = 50_000;
@@ -13,13 +14,86 @@ export type Models = ReturnType<typeof createModels>;
 export function buildModels(): Models {
   const models = createModels();
   models.setProvider(anthropicProvider());
+  models.setProvider(openaiProvider());
   return models;
 }
 
-function getModel(models: Models, modelId: string) {
-  const model = models.getModel("anthropic", modelId);
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+export type RoleName =
+  | "coordinator"
+  | "worker"
+  | "gateCritic"
+  | "hostileAuditor"
+  | "bundleCertifier"
+  | "reconstructor"
+  | "comparator";
+
+export interface ModelSpec {
+  provider: "anthropic" | "openai";
+  modelId: string;
+  thinking: ThinkingLevel;
+}
+
+export const ROLE_NAMES: RoleName[] = [
+  "coordinator",
+  "worker",
+  "gateCritic",
+  "hostileAuditor",
+  "bundleCertifier",
+  "reconstructor",
+  "comparator",
+];
+
+const ROLE_ENV: Record<RoleName, string> = {
+  coordinator: "COVERIFY_MODEL_COORDINATOR",
+  worker: "COVERIFY_MODEL_WORKER",
+  gateCritic: "COVERIFY_MODEL_CRITIC",
+  hostileAuditor: "COVERIFY_MODEL_AUDITOR",
+  bundleCertifier: "COVERIFY_MODEL_CERTIFIER",
+  reconstructor: "COVERIFY_MODEL_RECONSTRUCTOR",
+  comparator: "COVERIFY_MODEL_COMPARATOR",
+};
+
+/** Workhorse decision (user, 2026-07-31): workers run GPT-5.6 Sol in its
+ *  high-effort ("Ultra") mode. Judgment and verification roles stay on the
+ *  base model. Every role is overridable per-role or globally. */
+const ROLE_DEFAULTS: Partial<Record<RoleName, string>> = {
+  worker: "openai/gpt-5.6-sol@xhigh",
+};
+
+const BASE_DEFAULT = "anthropic/claude-opus-5@high";
+
+/** Spec format: `provider/model[@thinking]`; bare model id means anthropic. */
+export function parseModelSpec(spec: string): ModelSpec {
+  const [modelPart, thinking = "high"] = spec.split("@");
+  const slash = modelPart.indexOf("/");
+  const provider = slash < 0 ? "anthropic" : modelPart.slice(0, slash);
+  const modelId = slash < 0 ? modelPart : modelPart.slice(slash + 1);
+  if (provider !== "anthropic" && provider !== "openai") {
+    throw new Error(`unknown provider "${provider}" in model spec "${spec}"`);
+  }
+  return { provider, modelId, thinking: thinking as ThinkingLevel };
+}
+
+/** Resolution: COVERIFY_MODEL_<ROLE> > role default > COVERIFY_MODEL > base. */
+export function roleModelSpec(role: RoleName): ModelSpec {
+  return parseModelSpec(
+    process.env[ROLE_ENV[role]] ?? ROLE_DEFAULTS[role] ?? process.env.COVERIFY_MODEL ?? BASE_DEFAULT,
+  );
+}
+
+export function specLabel(spec: ModelSpec): string {
+  return `${spec.provider}/${spec.modelId}`;
+}
+
+function getModel(models: Models, spec: ModelSpec) {
+  const model = models.getModel(spec.provider, spec.modelId);
   if (!model) {
-    throw new Error(`unknown anthropic model id "${modelId}"; set COVERIFY_MODEL`);
+    throw new Error(
+      `unknown ${spec.provider} model id "${spec.modelId}"; check the COVERIFY_MODEL* spec ` +
+        `(and ${spec.provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"} for auth)`,
+    );
   }
   return model;
 }
@@ -120,7 +194,7 @@ export interface RoleRun {
   /** Give the role bash at this cwd with this write scope. */
   bash?: { cwd: string; scope: WriteScope };
   extraTools?: AgentTool[];
-  modelId: string;
+  spec: ModelSpec;
   models: Models;
 }
 
@@ -160,8 +234,8 @@ export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: stri
   const agent = new Agent({
     initialState: {
       systemPrompt: `The campaign contract below governs this work. Follow it exactly.\n\n<contract>\n${run.contract}\n</contract>\n\n${run.charge}`,
-      model: getModel(run.models, run.modelId),
-      thinkingLevel: "high",
+      model: getModel(run.models, run.spec),
+      thinkingLevel: run.spec.thinking,
       tools,
     },
     streamFn: run.models.streamSimple.bind(run.models),
