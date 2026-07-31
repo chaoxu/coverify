@@ -39,7 +39,7 @@ export type RoleName =
   | "comparator";
 
 export interface ModelSpec {
-  provider: "anthropic" | "openai" | "openai-codex" | "google" | "claude-cli" | "codex-cli";
+  provider: "anthropic" | "openai" | "openai-codex" | "google" | "claude-cli" | "codex-cli" | "chatgpt-cli";
   modelId: string;
   thinking: ThinkingLevel;
 }
@@ -87,8 +87,7 @@ const BASE_DEFAULT = "anthropic/claude-opus-5@high";
 export function parseModelSpec(spec: string): ModelSpec {
   const [modelPart, thinking = "high"] = spec.split("@");
   const slash = modelPart.indexOf("/");
-  let provider = slash < 0 ? "anthropic" : modelPart.slice(0, slash);
-  if (provider === "chatgpt-cli") provider = "codex-cli"; // alias
+  const provider = slash < 0 ? "anthropic" : modelPart.slice(0, slash);
   const modelId = slash < 0 ? modelPart : modelPart.slice(slash + 1);
   if (
     provider !== "anthropic" &&
@@ -96,7 +95,8 @@ export function parseModelSpec(spec: string): ModelSpec {
     provider !== "openai-codex" &&
     provider !== "google" &&
     provider !== "claude-cli" &&
-    provider !== "codex-cli"
+    provider !== "codex-cli" &&
+    provider !== "chatgpt-cli"
   ) {
     throw new Error(`unknown provider "${provider}" in model spec "${spec}"`);
   }
@@ -119,7 +119,7 @@ function getModel(models: Models, spec: ModelSpec) {
   if (!model) {
     throw new Error(
       `unknown ${spec.provider} model id "${spec.modelId}"; check the COVERIFY_MODEL* spec ` +
-        `(auth: ${{ anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", google: "GEMINI_API_KEY", "openai-codex": "coverify login openai-codex", "claude-cli": "claude binary", "codex-cli": "codex binary" }[spec.provider]})`,
+        `(auth: ${{ anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", google: "GEMINI_API_KEY", "openai-codex": "coverify login openai-codex", "claude-cli": "claude binary", "codex-cli": "codex binary", "chatgpt-cli": "chatgpt-cli binary (daemon must be running)" }[spec.provider]})`,
     );
   }
   return model;
@@ -252,11 +252,17 @@ export function isCliProvider(p: string): p is keyof typeof CLI_BACKENDS {
  *  templates are env-overridable so CLI flag drift never needs a harness
  *  release; {model} and {out} are substituted. */
 export const CLI_BACKENDS = {
-  "claude-cli": { env: "COVERIFY_CLAUDE_CMD", cmd: "claude -p --model {model}" },
+  "claude-cli": { env: "COVERIFY_CLAUDE_CMD", cmd: "claude -p --model {model}", output: "stdout" },
   "codex-cli": {
     env: "COVERIFY_CODEX_CMD",
     cmd: "codex exec --model {model} --sandbox read-only --skip-git-repo-check --output-last-message {out} -",
+    output: "outfile",
   },
+  /** Chao's chatgpt.com daemon CLI (gitea chaoxu/chatgpt-cli): the only road
+   *  to ChatGPT-Pro-only models (gpt-5.6-pro) — the deep one-shot prover.
+   *  The daemon picks the actual model; the spec's modelId is a provenance
+   *  label. Emits {ok, text, error} JSON on stdout. */
+  "chatgpt-cli": { env: "COVERIFY_CHATGPT_CMD", cmd: "chatgpt-cli oracle --quiet --timeout 6000", output: "oracle-json" },
 } as const;
 
 export function cliBackendCommand(provider: keyof typeof CLI_BACKENDS): string {
@@ -282,10 +288,11 @@ function runCliRole(
 ): Promise<string> {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "coverify-cli-"));
   const outFile = path.join(cwd, "last-message.txt");
-  let cmd = cliBackendCommand(provider);
-  if (!cmd.includes("{model}")) cmd += " --model {model}";
-  const usesOutFile = cmd.includes("{out}");
-  const parts = cmd.replaceAll("{model}", modelId).replaceAll("{out}", outFile).split(/\s+/);
+  const backend = CLI_BACKENDS[provider];
+  const parts = cliBackendCommand(provider)
+    .replaceAll("{model}", modelId)
+    .replaceAll("{out}", outFile)
+    .split(/\s+/);
   return new Promise((resolve, reject) => {
     const child = spawn(parts[0], parts.slice(1), { cwd, stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
@@ -294,8 +301,21 @@ function runCliRole(
     child.stderr.on("data", (d: Buffer) => (err += d));
     child.on("error", reject);
     child.on("close", (code: number | null) => {
+      if (backend.output === "oracle-json") {
+        try {
+          const payload = JSON.parse(out) as { ok?: boolean; text?: string; error?: string };
+          if (code !== 0 || !payload.ok || !payload.text?.trim()) {
+            return reject(new Error(`${provider} failed: ${payload.error ?? `exit ${code}`}`));
+          }
+          return resolve(payload.text.trim());
+        } catch {
+          return reject(new Error(`${provider} returned non-JSON output (exit ${code}): ${err.slice(0, 300)}`));
+        }
+      }
       if (code !== 0) return reject(new Error(`${provider} exited ${code}: ${err.slice(0, 500)}`));
-      if (usesOutFile && fs.existsSync(outFile)) return resolve(fs.readFileSync(outFile, "utf-8").trim());
+      if (backend.output === "outfile" && fs.existsSync(outFile)) {
+        return resolve(fs.readFileSync(outFile, "utf-8").trim());
+      }
       resolve(out.trim());
     });
     child.stdin.write(fullPrompt);

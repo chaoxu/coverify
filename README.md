@@ -29,9 +29,15 @@ Optional user limits (the harness imposes none of its own): `--agent-limit N`
 
 **Models are per-role.** Specs are `provider/model[@thinking]` (providers:
 `anthropic`, `openai`, `openai-codex`, `google` — Gemini via
-`GEMINI_API_KEY` — `claude-cli`, and `codex-cli` (alias `chatgpt-cli`): the
-official `codex exec` CLI, ChatGPT-subscription billed, read-only sandbox,
-for verdict roles when the subscription has headroom. Defaults: the coordinator and
+`GEMINI_API_KEY` — and three CLI backends: `claude-cli` (`claude -p`,
+Claude-subscription billed), `codex-cli` (official `codex exec`,
+ChatGPT-subscription billed, read-only sandbox), and `chatgpt-cli` (the
+chatgpt.com daemon CLI from gitea `chaoxu/chatgpt-cli` — the only road to
+ChatGPT-Pro-only models like `gpt-5.6-pro`; its daemon picks the model, the
+spec's modelId is a provenance label). A CLI-backed **worker** runs as a
+single-shot oracle: one deep attempt, no tools, the reply is the
+deliverable — e.g. `COVERIFY_MODEL_WORKER=chatgpt-cli/gpt-5.6-pro` turns
+workers into GPT-5.6 Pro deep provers. Defaults: the coordinator and
 workers run `openai/gpt-5.6-sol@xhigh` (GPT-5.6 Sol high-effort "Ultra");
 the five single-shot verdict roles (critic, auditor, certifier,
 reconstructor, comparator) run `claude-cli/opus` — the official `claude -p`

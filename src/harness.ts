@@ -27,6 +27,7 @@ import {
   buildModels,
   CHARGES,
   createRoleSession,
+  isCliProvider,
   roleModelSpec,
   runRole,
   specLabel,
@@ -47,7 +48,8 @@ interface Handle {
   id: string;
   mechanism: string;
   promise: Promise<string>;
-  session: RoleSession;
+  /** Absent for single-shot CLI workers (oracle attempts) — not steerable/abortable. */
+  session?: RoleSession;
 }
 
 /** Consecutive wakes with no dispatch, no verification, and no declaration
@@ -166,16 +168,32 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       const evidenceDir = path.join(dir, "EVIDENCE", id);
       fs.mkdirSync(evidenceDir, { recursive: true });
       store.append({ kind: "dispatch", id, mechanism: packet.mechanism, task: packet.task });
-      const session = createRoleSession({
-        contract,
-        charge: CHARGES.worker,
-        bash: { cwd: evidenceDir, scope: { allow: [evidenceDir], deny: [] } },
-        spec: roleModelSpec("worker"),
-        models,
-      });
-      const promise = session.ask(
-        `Assigned evidence directory: ${evidenceDir}\n\n# Task\n\n${packet.task}\n\n# Deliverable\n\n${packet.deliverable}\n\n# Context\n\n${packet.context}`,
-      );
+      const workerSpec = roleModelSpec("worker");
+      const packetPrompt = `# Task\n\n${packet.task}\n\n# Deliverable\n\n${packet.deliverable}\n\n# Context\n\n${packet.context}`;
+      let session: RoleSession | undefined;
+      let promise: Promise<string>;
+      if (isCliProvider(workerSpec.provider)) {
+        // Single-shot oracle worker (e.g. chatgpt-cli → gpt-5.6-pro): one
+        // deep attempt, no tools; the reply IS the deliverable.
+        promise = runRole({
+          contract,
+          charge:
+            CHARGES.worker +
+            "\nYou have no tools in this run: produce the deliverable directly and completely in your reply.",
+          prompt: packetPrompt,
+          spec: workerSpec,
+          models,
+        });
+      } else {
+        session = createRoleSession({
+          contract,
+          charge: CHARGES.worker,
+          bash: { cwd: evidenceDir, scope: { allow: [evidenceDir], deny: [] } },
+          spec: workerSpec,
+          models,
+        });
+        promise = session.ask(`Assigned evidence directory: ${evidenceDir}\n\n${packetPrompt}`);
+      }
       const handle: Handle = { id, mechanism: packet.mechanism, promise, session };
       handles.set(id, handle);
       promise
@@ -489,7 +507,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       handles.delete(p.id);
       const queued = settledQueue.findIndex((s) => s.h.id === p.id);
       if (queued >= 0) settledQueue.splice(queued, 1);
-      handle.session.abort();
+      handle.session?.abort();
       store.append({ kind: "completion", id: p.id, cancelled: true, reason: p.reason });
       activityThisWake++;
       return toolText(`cancelled ${p.id}. Record the route state in the ledgers per the contract.`);
@@ -511,6 +529,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       const p = params as { id: string; message: string };
       const handle = handles.get(p.id);
       if (!handle) return toolText(`no running worker ${p.id}`);
+      if (!handle.session) return toolText(`${p.id} is a single-shot CLI worker — not steerable; cancel or wait`);
       handle.session.steer(p.message);
       appendJournal(dir, { kind: "note", note: `steered ${p.id}`, message: p.message });
       return toolText(`steering message delivered to ${p.id}.`);
