@@ -214,4 +214,6 @@ harnesses directly — `claude -p` / `codex exec` — via a harness-provided
       side; codex CLI as the different-family reviewer)
 - [ ] Citation lint (mechanics: cited evidence paths exist; never parses content)
 - [ ] Linux write-sandbox backend (bubblewrap/sandbox equivalent)
+- [ ] Trigger + contract-adherence evals per `docs/evals.md` (toy campaign
+      + fresh-context contract judge); blind A/B reserved for real changes
 - [ ] First live campaign; then revisit `docs/skill-feedback.md`
