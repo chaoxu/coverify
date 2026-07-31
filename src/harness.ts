@@ -234,6 +234,14 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       allowedSources: Type.String({
         description: "Allowed sources for the reconstructor (named theorems, background references)",
       }),
+      rebuttalArtifact: Type.Optional(
+        Type.String({
+          description:
+            "EVIDENCE-relative rebuttal artifact refuting a prior substantive FAIL on this exact " +
+            "revision. Required to re-attempt after a FAIL (contract: a FAIL stands; do not rerun " +
+            "a failed stage on an unchanged revision in search of a PASS).",
+        }),
+      ),
     }),
     executionMode: "sequential",
     execute: async (_id: string, params: unknown) => {
@@ -242,6 +250,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         declaredDependencies: string;
         keyIdeas: string;
         allowedSources: string;
+        rebuttalArtifact?: string;
       };
       const rel = evidenceRelative(p.revision);
       if (!rel) return toolText(`revision must be a path inside EVIDENCE/ (got: ${p.revision})`);
@@ -250,6 +259,48 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       const candidate = fs.readFileSync(candidatePath, "utf-8");
       const candidateHash = sha256File(candidatePath);
       const stmtHash = statementHash(dir);
+
+      // Anti-verdict-shopping (contract): a substantive FAIL stands against
+      // the exact revision contents; re-attempt only with a recorded rebuttal.
+      // A bundle-cert FAIL is different: it faults the bundle, not the
+      // candidate — retry is legal with a changed bundle (hash-checked below).
+      const bundle = `# High-level key ideas\n\n${p.keyIdeas}\n\n# Allowed sources\n\n${p.allowedSources}`;
+      const sameBundleCertFail = store
+        .all()
+        .some(
+          (e) =>
+            e.kind === "bundle-cert" &&
+            e.revision === rel &&
+            e.bundleHash === sha256Text(bundle) &&
+            e.verdict === "FAIL",
+        );
+      if (sameBundleCertFail) {
+        return toolText(
+          "VERIFICATION REFUSED: this exact bundle already failed certification as leaking the " +
+            "candidate argument. Revise keyIdeas/allowedSources before retrying.",
+        );
+      }
+      const priorFail = store
+        .all()
+        .some(
+          (e) =>
+            (e.kind === "audit" || e.kind === "comparison") &&
+            e.revision === rel &&
+            e.candidateHash === candidateHash &&
+            e.verdict === "FAIL",
+        );
+      if (priorFail) {
+        const rebuttalRel = p.rebuttalArtifact ? evidenceRelative(p.rebuttalArtifact) : undefined;
+        if (!rebuttalRel || !fs.existsSync(path.join(dir, "EVIDENCE", rebuttalRel))) {
+          return toolText(
+            "VERIFICATION REFUSED: a substantive FAIL is on record for this exact revision. Per the " +
+              "contract, respond with a load-bearing repair (new revision), retraction, or a recorded " +
+              "rebuttal artifact refuting the exact reported gap (pass rebuttalArtifact).",
+          );
+        }
+        store.append({ kind: "rebuttal", revision: rel, artifact: rebuttalRel });
+        appendJournal(dir, { kind: "note", note: `rebuttal recorded for ${rel}: ${rebuttalRel}` });
+      }
       const statement = readLedger(dir, "STATEMENT.md");
       const proved = readLedger(dir, "PROVED.md");
       const slug = rel.replace(/[\/]/g, "_");
@@ -281,6 +332,38 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       verifiedThisWake++;
       if (!auditPass) {
         return toolText(`STAGE 1 FAIL — not verifier-backed. Audit saved: ${path.relative(dir, auditEvidence)}\n\n${auditText}`);
+      }
+
+      // Bundle certification (contract): a fresh agent shown both the
+      // candidate and the bundle certifies no element is a stepwise
+      // paraphrase of — or contains — the candidate argument.
+      const certText = await runRole({
+        contract,
+        charge: CHARGES.bundleCertifier,
+        prompt: `# Candidate revision ${rel}\n\n${candidate}\n\n# Proposed reconstruction bundle\n\n${bundle}`,
+        modelId: opts.modelId,
+        models,
+      });
+      const certPass = parseFirstLineVerdict(certText, ["VERDICT: PASS", "VERDICT: FAIL"]) === "VERDICT: PASS";
+      const certEvidence = newEvidencePath(dir, `audits/${slug}.bundle-cert`, nextEvidenceRev(dir, `audits/${slug}.bundle-cert`));
+      fs.writeFileSync(certEvidence, certText);
+      store.append({
+        kind: "bundle-cert",
+        revision: rel,
+        verdict: certPass ? "PASS" : "FAIL",
+        candidateHash,
+        statementHash: stmtHash,
+        bundleHash: sha256Text(bundle),
+        artifact: path.relative(dir, certEvidence),
+        suppliedInputs: ["candidate revision", "proposed bundle"],
+        blindness: "fresh instance (enforced); sees candidate by design (certification step)",
+        modelFamily: `anthropic/${opts.modelId}`,
+      });
+      if (!certPass) {
+        return toolText(
+          `BUNDLE CERTIFICATION FAIL — the bundle leaks the candidate argument; stage 2 refused. ` +
+            `Revise keyIdeas/allowedSources and retry. Cert saved: ${path.relative(dir, certEvidence)}\n\n${certText}`,
+        );
       }
 
       // Stage 2a — blind reconstruction (no verdict; the PASS belongs to the comparison).

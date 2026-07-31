@@ -177,7 +177,7 @@ export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: stri
 /** Role charges. Each states only the role's scope; policy comes from the contract above it. */
 export const CHARGES = {
   coordinator: `You are the resident coordinator of an ongoing proof-search campaign; this session
-persists across wakes until its context cap. Per the skill's thin-coordinator adapter: delegate
+persists across wakes until its context cap. Per the contract's delegation rule: delegate
 essentially all route exploration, proof or counterexample construction, computations, audits,
 reconstructions, and evidence drafting to minimal-context subagents; you retain exact-statement
 control, prior-route registration, assignments, promotion and ledger decisions, user updates, and
@@ -203,6 +203,11 @@ contract requires for that verdict.`,
 the exact candidate revision, its statement, declared dependencies, and the current PROVED.md so
 you can check what is actually promoted. Refute the candidate. Your VERY FIRST line must be exactly
 VERDICT: PASS or VERDICT: FAIL; then the smallest concrete gap (on FAIL) or what you checked.`,
+  bundleCertifier: `You certify a reconstruction bundle before blind reconstruction begins. You
+receive the candidate and the proposed bundle (key ideas + allowed sources). Certify that no bundle
+element amounts to a stepwise paraphrase of the candidate argument or contains it. A too-thin
+bundle is safe and passes; a leaky one fails. Your VERY FIRST line must be exactly
+VERDICT: PASS or VERDICT: FAIL; then the specific leaky element (on FAIL).`,
   reconstructor: `You are stage 2a of the verification cadence: a fresh no-context reconstructor.
 You receive only the statement, high-level key ideas, allowed sources, and promoted premises — not
 the candidate proof. Produce an end-to-end reconstruction using only that bundle. Do not give a

@@ -102,7 +102,8 @@ harness.ts   handle table, event loop, wakes; the only persistent process
 | Worker packet requires a finite mathematical deliverable; report schema is deliverable-or-precise-gap | "Every exploration agent must return a proved lemma, explicit construction, counterexample/certificate, or a precise failing implication" |
 | No harness timeouts on proof/audit/reconstruction work (a per-shell-command cap is surfaced in the tool description and env-tunable) | "Do not impose a coordinator-created elapsed-time limit…" |
 | Wave gate: a second **concurrent** worker on a mechanism requires `IDEA PASS` on file; sequential retries get an advisory reminder, not a refusal (that judgment is the coordinator's); single first-wave scouts exempt | "Do not allow recursive subagent fan-out or a large route wave before the parent mechanism receives `IDEA PASS`…" |
-| Verification = stage 1 (fresh hostile audit: candidate + statement + PROVED.md + declared deps) then stage 2a (fresh blind reconstruction from statement + key ideas + allowed sources + promoted premises — no verdict) then stage 2b (fresh comparison mapping the reconstruction to the candidate's conclusions and dependencies — this verdict is stage 2's PASS); all three outputs saved as citable EVIDENCE artifacts | "Verification cadence" 1–2: "…Preserve a comparison that maps the reconstruction to every conclusion and declared dependency of the candidate" |
+| Verification = stage 1 (fresh hostile audit) then stage 2: bundle certification (fresh agent sees candidate + bundle; leaky bundle refused, same-bundle retry hash-blocked) → blind reconstruction (no verdict) → fresh comparison carrying stage 2's verdict with the contract's match semantics; all outputs saved as citable EVIDENCE artifacts, hash-bound | "Verification cadence" 1–2 (2026-07-31 revision): bundle certification, "a fresh comparison agent…", explicit PASS/mismatch semantics |
+| Anti-verdict-shopping: a substantive audit/comparison FAIL on the exact revision contents blocks re-verification unless a recorded rebuttal artifact is supplied; every attempt stays on record | "A substantive FAIL from any stage stands… Do not rerun a failed stage on an unchanged revision in search of a PASS" |
 | Load-bearing change ⇒ both stages invalidated, fresh verifiers (never one that influenced the repair); non-load-bearing ⇒ delta audit + recorded carry-forward; uncertain ⇒ load-bearing | Revision-impact rules |
 | `record_promotion` is the sole writer of `PROVED.md` (direct writes OS-denied); legal only when both stage records exist for the exact revision with matching content hashes; entry carries dependency identities and audit-artifact citations | "Promotion records the revision and dependency identities plus every audit…" |
 | Campaign ends only by explicit `declare_campaign_state`; "complete" refused with zero promotions on record; an idle wake gets a nudge, and 3 consecutive no-op wakes trigger an operational *pause* (never a completion) as spend protection | "Do not mark it complete until the final result passes the full cadence…"; "Failed attempts… are not permission to return"; "Pause is operational state" |
@@ -123,10 +124,12 @@ version stamps.
 
 **Honesty ledger** (launcher: record instructed-vs-platform-enforced): the
 candidate withheld from the reconstructor and all write confinement are
-platform-enforced (macOS); `keyIdeas`/`declaredDependencies` are
-coordinator-authored free text — paraphrase and mis-declaration risk is
-instructed-only and the journal says so per audit. Non-darwin platforms:
-write confinement instructed-only.
+platform-enforced (macOS); the bundle (`keyIdeas`/`allowedSources`) is
+coordinator-authored but now passes a mandatory certification by a fresh
+agent before stage 2 runs (contract-required; the certification itself is
+model judgment, recorded as such); `declaredDependencies` remains
+instructed-only, mitigated by giving the stage-1 auditor PROVED.md.
+Non-darwin platforms: write confinement instructed-only.
 
 ## Efficiency (the anti-Danus commitments)
 
@@ -146,12 +149,16 @@ interchangeable.
 
 **Correction to the review record (2026-07-31):** the over-constraint audit's
 F2 struck "no inline proof work" from the coordinator charge as invented
-policy, but it had read only the launcher — SKILL.md's **thin-coordinator
-adapter** is also spec and mandates exactly that delegation ("delegate
-essentially all route exploration, proof or counterexample construction… to
-minimal-context subagents"). The charge now quotes the adapter. With a
-resident coordinator the rationale is structural: inline proof work pollutes
-the long-lived judgment context and accelerates compaction.
+policy, but it had read only the launcher — the delegation rule lived in
+SKILL.md's thin-coordinator adapter. A subsequent spec audit (third
+adversarial review, 2026-07-31) folded that rule and the non-circular
+reduction gate natively into the launcher, rewrote verification stage 2
+(bundle certification → blind reconstruction → named comparison agent with
+explicit match semantics), added the anti-verdict-shopping rules, and
+slimmed both SKILL.md adapters to runtime-specific mechanics. The charge now
+cites the launcher directly. With a resident coordinator the delegation
+rationale is structural: inline proof work pollutes the long-lived judgment
+context and accelerates compaction.
 
 ## Review record
 

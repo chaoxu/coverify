@@ -18,8 +18,10 @@ export interface GateRecord {
     | "completion"
     | "gate-verdict"
     | "audit"
+    | "bundle-cert"
     | "reconstruction"
     | "comparison"
+    | "rebuttal"
     | "promotion";
   [key: string]: unknown;
 }

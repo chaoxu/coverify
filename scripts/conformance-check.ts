@@ -26,7 +26,9 @@ const REQUIRED: { token: string; usedBy: string }[] = [
   { token: "promoted", usedBy: "campaign.ts CLAIM_LABELS" },
   { token: "independently audited", usedBy: "campaign.ts CLAIM_LABELS" },
   { token: "hostile auditor", usedBy: "roles.ts CHARGES.hostileAuditor (stage 1)" },
-  { token: "Preserve a comparison", usedBy: "harness.ts stage 2b comparator" },
+  { token: "fresh comparison agent", usedBy: "harness.ts stage 2 comparator" },
+  { token: "stepwise paraphrase", usedBy: "harness.ts bundle certification" },
+  { token: "Do not rerun a failed stage", usedBy: "harness.ts anti-verdict-shopping gate" },
 ];
 
 const contract = loadLauncherContract();
