@@ -28,8 +28,10 @@ Optional user limits (the harness imposes none of its own): `--agent-limit N`
 (concurrent workers), `--max-wakes N` (pause after N coordinator wakes).
 
 **Models are per-role.** Specs are `provider/model[@thinking]` (providers:
-`anthropic`, `openai`, `openai-codex`, `google` — Gemini via `GEMINI_API_KEY`,
-strongest in catalog: `gemini-3.1-pro-preview` — and `claude-cli`). Defaults: the coordinator and
+`anthropic`, `openai`, `openai-codex`, `google` — Gemini via
+`GEMINI_API_KEY` — `claude-cli`, and `codex-cli` (alias `chatgpt-cli`): the
+official `codex exec` CLI, ChatGPT-subscription billed, read-only sandbox,
+for verdict roles when the subscription has headroom. Defaults: the coordinator and
 workers run `openai/gpt-5.6-sol@xhigh` (GPT-5.6 Sol high-effort "Ultra");
 the five single-shot verdict roles (critic, auditor, certifier,
 reconstructor, comparator) run `claude-cli/opus` — the official `claude -p`
@@ -47,10 +49,13 @@ third-party OAuth against Anthropic reportedly draws Extra Credits, not the
 subscription allowance — only the official `claude` CLI is guaranteed
 subscription-billed, which is why the verdict roles default to `claude-cli`.
 `prove`/`resume` preflight that every configured role's provider has usable
-auth. With three families available, verification diversity is one env var:
-e.g. `COVERIFY_MODEL_RECONSTRUCTOR=google/gemini-3.1-pro-preview` puts a
-third family inside the cadence (GPT produces, Gemini reconstructs blind,
-Claude audits and compares). A pleasant side effect of the
+auth. With three families available, verification diversity is one env var —
+the current trial candidate is cheap Gemini flash for
+review/reconstruction: `COVERIFY_MODEL_RECONSTRUCTOR=google/gemini-3.6-flash`
+(GPT produces, Gemini reconstructs blind, Claude audits and compares);
+whether flash-tier is good enough is a layer-2 eval question.
+`COVERIFY_CLAUDE_CMD`/`COVERIFY_CODEX_CMD` override the CLI templates
+({model}/{out} substituted). A pleasant side effect of the
 default split: GPT-produced candidates are verified by Anthropic-family
 auditors — stage verification is cross-family out of the box, and the
 journal records the family per call.

@@ -39,7 +39,7 @@ export type RoleName =
   | "comparator";
 
 export interface ModelSpec {
-  provider: "anthropic" | "openai" | "openai-codex" | "google" | "claude-cli";
+  provider: "anthropic" | "openai" | "openai-codex" | "google" | "claude-cli" | "codex-cli";
   modelId: string;
   thinking: ThinkingLevel;
 }
@@ -87,14 +87,16 @@ const BASE_DEFAULT = "anthropic/claude-opus-5@high";
 export function parseModelSpec(spec: string): ModelSpec {
   const [modelPart, thinking = "high"] = spec.split("@");
   const slash = modelPart.indexOf("/");
-  const provider = slash < 0 ? "anthropic" : modelPart.slice(0, slash);
+  let provider = slash < 0 ? "anthropic" : modelPart.slice(0, slash);
+  if (provider === "chatgpt-cli") provider = "codex-cli"; // alias
   const modelId = slash < 0 ? modelPart : modelPart.slice(slash + 1);
   if (
     provider !== "anthropic" &&
     provider !== "openai" &&
     provider !== "openai-codex" &&
     provider !== "google" &&
-    provider !== "claude-cli"
+    provider !== "claude-cli" &&
+    provider !== "codex-cli"
   ) {
     throw new Error(`unknown provider "${provider}" in model spec "${spec}"`);
   }
@@ -117,7 +119,7 @@ function getModel(models: Models, spec: ModelSpec) {
   if (!model) {
     throw new Error(
       `unknown ${spec.provider} model id "${spec.modelId}"; check the COVERIFY_MODEL* spec ` +
-        `(auth: ${{ anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", google: "GEMINI_API_KEY", "openai-codex": "coverify login openai-codex", "claude-cli": "claude binary" }[spec.provider]})`,
+        `(auth: ${{ anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", google: "GEMINI_API_KEY", "openai-codex": "coverify login openai-codex", "claude-cli": "claude binary", "codex-cli": "codex binary" }[spec.provider]})`,
     );
   }
   return model;
@@ -232,14 +234,34 @@ export interface RoleRun {
  * versus instructed.
  */
 export async function runRole(run: RoleRun): Promise<string> {
-  if (run.spec.provider === "claude-cli") {
+  if (isCliProvider(run.spec.provider)) {
     if (run.bash || run.extraTools) {
-      throw new Error("claude-cli backend supports single-shot verdict roles only (no tools)");
+      throw new Error("CLI backends support single-shot verdict roles only (no tools)");
     }
-    return runClaudeCli(run.spec.modelId, `${systemText(run)}\n\n---\n\n${run.prompt}`);
+    return runCliRole(run.spec.provider, run.spec.modelId, `${systemText(run)}\n\n---\n\n${run.prompt}`);
   }
   const session = createRoleSession(run);
   return session.ask(run.prompt);
+}
+
+export function isCliProvider(p: string): p is keyof typeof CLI_BACKENDS {
+  return p in CLI_BACKENDS;
+}
+
+/** Subscription-billed official CLIs as verdict-role backends. Command
+ *  templates are env-overridable so CLI flag drift never needs a harness
+ *  release; {model} and {out} are substituted. */
+export const CLI_BACKENDS = {
+  "claude-cli": { env: "COVERIFY_CLAUDE_CMD", cmd: "claude -p --model {model}" },
+  "codex-cli": {
+    env: "COVERIFY_CODEX_CMD",
+    cmd: "codex exec --model {model} --sandbox read-only --skip-git-repo-check --output-last-message {out} -",
+  },
+} as const;
+
+export function cliBackendCommand(provider: keyof typeof CLI_BACKENDS): string {
+  const backend = CLI_BACKENDS[provider];
+  return process.env[backend.env] ?? backend.cmd;
 }
 
 function systemText(run: Pick<RoleRun, "contract" | "charge">): string {
@@ -247,29 +269,34 @@ function systemText(run: Pick<RoleRun, "contract" | "charge">): string {
 }
 
 /**
- * Run one single-shot role through the official Claude CLI (`claude -p`) so
- * usage bills the Claude subscription allowance. Base command configurable
- * via COVERIFY_CLAUDE_CMD (default "claude -p") so CLI flag drift never needs
- * a harness release. cwd is a fresh empty temp dir; the CLI's own read tools
- * find nothing there (instructed-only isolation — recorded honestly by
- * callers). No timeout: audit and reconstruction work is never clocked.
+ * Run one single-shot role through an official subscription CLI. cwd is a
+ * fresh empty temp dir; the CLI's own tools find nothing there
+ * (instructed-only isolation — recorded honestly by callers). No timeout:
+ * audit and reconstruction work is never clocked. Output comes from the
+ * {out} file when the template names one (codex), else stdout (claude).
  */
-function runClaudeCli(modelId: string, fullPrompt: string): Promise<string> {
-  const base = (process.env.COVERIFY_CLAUDE_CMD ?? "claude -p").split(/\s+/);
+function runCliRole(
+  provider: keyof typeof CLI_BACKENDS,
+  modelId: string,
+  fullPrompt: string,
+): Promise<string> {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "coverify-cli-"));
+  const outFile = path.join(cwd, "last-message.txt");
+  let cmd = cliBackendCommand(provider);
+  if (!cmd.includes("{model}")) cmd += " --model {model}";
+  const usesOutFile = cmd.includes("{out}");
+  const parts = cmd.replaceAll("{model}", modelId).replaceAll("{out}", outFile).split(/\s+/);
   return new Promise((resolve, reject) => {
-    const child = spawn(base[0], [...base.slice(1), "--model", modelId], {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const child = spawn(parts[0], parts.slice(1), { cwd, stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
     let err = "";
     child.stdout.on("data", (d: Buffer) => (out += d));
     child.stderr.on("data", (d: Buffer) => (err += d));
     child.on("error", reject);
     child.on("close", (code: number | null) => {
-      if (code === 0) resolve(out.trim());
-      else reject(new Error(`claude cli exited ${code}: ${err.slice(0, 500)}`));
+      if (code !== 0) return reject(new Error(`${provider} exited ${code}: ${err.slice(0, 500)}`));
+      if (usesOutFile && fs.existsSync(outFile)) return resolve(fs.readFileSync(outFile, "utf-8").trim());
+      resolve(out.trim());
     });
     child.stdin.write(fullPrompt);
     child.stdin.end();
@@ -294,8 +321,8 @@ export interface RoleSession {
  * (workers, critics, verifiers) go through runRole and never reuse a session.
  */
 export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: string }): RoleSession {
-  if (run.spec.provider === "claude-cli") {
-    throw new Error("claude-cli backend supports single-shot verdict roles only, not sessions");
+  if (isCliProvider(run.spec.provider)) {
+    throw new Error("CLI backends support single-shot verdict roles only, not sessions");
   }
   const tools = run.bash ? [bashTool(run.bash.cwd, run.bash.scope)] : [];
   if (run.extraTools) tools.push(...run.extraTools);

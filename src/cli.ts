@@ -58,9 +58,9 @@ async function prove(resume: boolean): Promise<void> {
   for (const role of ROLE_NAMES) {
     const provider = roleModelSpec(role).provider;
     let ok = false;
-    if (provider === "claude-cli") {
-      const bin = (process.env.COVERIFY_CLAUDE_CMD ?? "claude -p").split(/\s+/)[0];
-      ok = spawnSync("which", [bin]).status === 0;
+    if (provider === "claude-cli" || provider === "codex-cli") {
+      const { cliBackendCommand } = await import("./roles.js");
+      ok = spawnSync("which", [cliBackendCommand(provider).split(/\s+/)[0]]).status === 0;
     } else {
       try {
         ok = (await models.getAuth(provider)) !== undefined;
