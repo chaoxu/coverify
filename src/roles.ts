@@ -7,6 +7,7 @@ import { createModels } from "@earendil-works/pi-ai";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
+import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import { fileCredentialStore } from "./credentials.js";
 import { Type } from "typebox";
 
@@ -22,6 +23,7 @@ export function buildModels(): Models {
   models.setProvider(anthropicProvider());
   models.setProvider(openaiProvider());
   models.setProvider(openaiCodexProvider());
+  models.setProvider(googleProvider());
   return models;
 }
 
@@ -37,7 +39,7 @@ export type RoleName =
   | "comparator";
 
 export interface ModelSpec {
-  provider: "anthropic" | "openai" | "openai-codex" | "claude-cli";
+  provider: "anthropic" | "openai" | "openai-codex" | "google" | "claude-cli";
   modelId: string;
   thinking: ThinkingLevel;
 }
@@ -91,6 +93,7 @@ export function parseModelSpec(spec: string): ModelSpec {
     provider !== "anthropic" &&
     provider !== "openai" &&
     provider !== "openai-codex" &&
+    provider !== "google" &&
     provider !== "claude-cli"
   ) {
     throw new Error(`unknown provider "${provider}" in model spec "${spec}"`);
@@ -114,7 +117,7 @@ function getModel(models: Models, spec: ModelSpec) {
   if (!model) {
     throw new Error(
       `unknown ${spec.provider} model id "${spec.modelId}"; check the COVERIFY_MODEL* spec ` +
-        `(and ${spec.provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"} for auth)`,
+        `(auth: ${{ anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", google: "GEMINI_API_KEY", "openai-codex": "coverify login openai-codex", "claude-cli": "claude binary" }[spec.provider]})`,
     );
   }
   return model;
