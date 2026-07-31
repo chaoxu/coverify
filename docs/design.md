@@ -222,9 +222,10 @@ harnesses directly — `claude -p` / `codex exec` — via a harness-provided
       prerequisite for the evals token gauges and per-role model routing
 - [x] Per-role model specs (`provider/model[@thinking]`; providers:
       anthropic, openai, openai-codex (subscription OAuth), claude-cli
-      (`claude -p`, subscription-allowance billed). Defaults: workers
-      `openai/gpt-5.6-sol@xhigh`; verdict roles `claude-cli/opus`;
-      coordinator `anthropic/claude-opus-5@high` — user decisions 2026-07-31)
+      (`claude -p`, subscription-allowance billed). Defaults: coordinator + workers
+      `openai/gpt-5.6-sol@xhigh`; verdict roles `claude-cli/opus`
+      (subscription-billed; cross-family vs both producers) — user
+      decisions 2026-07-31)
 - [ ] Per-wake model routing and eval-driven per-role tuning (cheap wakes vs
       promotion wakes; cheap critics) — decided by eval evidence
 - [ ] Linux write-sandbox backend (bubblewrap/sandbox equivalent)

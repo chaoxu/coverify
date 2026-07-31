@@ -70,6 +70,7 @@ const ROLE_ENV: Record<RoleName, string> = {
  *  coordinator (tool loop) remains on the Anthropic API by default. Every
  *  role is overridable per-role or globally. */
 const ROLE_DEFAULTS: Partial<Record<RoleName, string>> = {
+  coordinator: "openai/gpt-5.6-sol@xhigh",
   worker: "openai/gpt-5.6-sol@xhigh",
   gateCritic: "claude-cli/opus",
   hostileAuditor: "claude-cli/opus",

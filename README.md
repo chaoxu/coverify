@@ -28,13 +28,13 @@ Optional user limits (the harness imposes none of its own): `--agent-limit N`
 (concurrent workers), `--max-wakes N` (pause after N coordinator wakes).
 
 **Models are per-role.** Specs are `provider/model[@thinking]` (providers:
-`anthropic`, `openai`, `openai-codex`, `claude-cli`). Defaults: workers run
-`openai/gpt-5.6-sol@xhigh` (GPT-5.6 Sol high-effort "Ultra" — the
-workhorse); the five single-shot verdict roles (critic, auditor, certifier,
+`anthropic`, `openai`, `openai-codex`, `claude-cli`). Defaults: the coordinator and
+workers run `openai/gpt-5.6-sol@xhigh` (GPT-5.6 Sol high-effort "Ultra");
+the five single-shot verdict roles (critic, auditor, certifier,
 reconstructor, comparator) run `claude-cli/opus` — the official `claude -p`
-CLI, the one path that bills the Claude **subscription allowance**; the
-coordinator (tool loop — cannot ride `claude -p`) runs
-`anthropic/claude-opus-5@high` on the API. Override globally with
+CLI, the one path that bills the Claude **subscription allowance**. Every
+verification is therefore cross-family from both producers (GPT coordinator
+and workers vs Claude verifiers). Override globally with
 `COVERIFY_MODEL` or per role with
 `COVERIFY_MODEL_{COORDINATOR,WORKER,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}`.
 `COVERIFY_CLAUDE_CMD` overrides the CLI base command (default `claude -p`).
