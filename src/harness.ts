@@ -464,10 +464,18 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       reportSections.length > 0
         ? `# Newly completed work\n\n${reportSections.join("\n\n---\n\n")}`
         : "No new completions this wake.";
+    // Pre-compaction warning: past 80% of the cap, remind the coordinator
+    // that the next rebuild will start from the ledgers alone.
+    const compactionWarning =
+      !fresh && coordinator.approxTokens() > COORDINATOR_CONTEXT_TOKENS * 0.8
+        ? "\nNote: your session is approaching its context cap and will soon be rebuilt from the " +
+          "ledgers alone (the contract's restart rule). Anything living only in this conversation " +
+          "will be lost — ensure CURRENT_FRONTIER.md and the registry capture it now."
+        : "";
     lastWakeText = await coordinator.ask(
       fresh
         ? `${resumeBundle(dir)}\n\n---\n\nCampaign directory: ${dir}\n${lostNote}${digest}${idleNudge}\n\n${newsBlock}`
-        : `${lostNote}${digest}${idleNudge}\n\n${newsBlock}`,
+        : `${lostNote}${digest}${idleNudge}${compactionWarning}\n\n${newsBlock}`,
     );
     lostNote = "";
 
