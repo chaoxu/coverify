@@ -1,4 +1,0 @@
-interface:
-  display_name: "Coverify Planner"
-  short_description: "Answer, plan, and package targets"
-  default_prompt: "Use $coverify-exploration-planner to answer source-grounded questions, compare routes, or package exact mathematical-resolution targets from current Cosheaf knowledge and things already tried."

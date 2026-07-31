@@ -1,4 +1,0 @@
-interface:
-  display_name: "Coverify Context"
-  short_description: "Build compact Coverify task context"
-  default_prompt: "Use $coverify-context-builder to build concise task context from relevant Cosheaf pages, accepted facts, issues, PRs, reviews, tried routes, artifacts, and any forced constraints."

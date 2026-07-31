@@ -1,1 +1,0 @@
-{"id":"t0-infinite-primes-proof","task_set":"T0","prompt":"Give a concise proof that there are infinitely many prime numbers.","grader":"contains_all","expect":{"required":["infinitely many prime","contradicting","Therefore"]}}

@@ -1,4 +1,0 @@
-interface:
-  display_name: "Coverify Review"
-  short_description: "Review math PRs before merge"
-  default_prompt: "Use $coverify-proof-review to review a Cosheaf PR for mathematical correctness, source support, status labels, and target or forced-method fidelity before merge."

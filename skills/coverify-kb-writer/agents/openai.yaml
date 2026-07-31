@@ -1,4 +1,0 @@
-interface:
-  display_name: "Coverify KB Writer"
-  short_description: "Distill material into wiki content"
-  default_prompt: "Use $coverify-kb-writer to turn useful source material into compact Cosheaf wiki or PR content without adding new mathematics, while labeling facts, gaps, speculation, and resolution artifacts honestly."

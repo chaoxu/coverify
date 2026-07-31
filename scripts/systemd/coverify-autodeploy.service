@@ -1,6 +1,0 @@
-[Unit]
-Description=Deploy the Coverify chat worker from origin/main when it moves
-
-[Service]
-Type=oneshot
-ExecStart=/home/chaoxu/coverify-src/scripts/deploy-chat-worker.sh

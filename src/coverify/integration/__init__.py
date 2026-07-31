@@ -1,1 +1,0 @@
-"""coverify integration layer."""
