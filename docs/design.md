@@ -259,8 +259,14 @@ journal as a self-contained HTML timeline: agent lifetimes as ranges,
 verification and gate verdicts as points, coordinator wakes as bands, plus
 summary tiles and a table view. The widget is vis-timeline, vendored and
 inlined at render time, so a trace opens offline and under a strict CSP.
-`--format perfetto` emits the same trace as Chrome Trace Event JSON for
-ui.perfetto.dev or chrome://tracing — agent lifetimes as slices on their own
+The HTML page also embeds the real Perfetto UI: it hands the trace to
+ui.perfetto.dev over Perfetto's `postMessage` deep-link protocol (PING/PONG,
+then an ArrayBuffer), so opening the page on a host like `artifacts.lab`
+shows the full Perfetto timeline with data already loaded — no download, no
+drag-and-drop. Perfetto asks once per origin whether to trust the page
+("Always trust" makes it permanent) and never uploads the trace.
+`--format perfetto` emits the same trace as standalone Chrome Trace Event
+JSON for ui.perfetto.dev or chrome://tracing — agent lifetimes as slices on their own
 track, verdicts and wakes as instants, live-agent count as a counter track.
 Perfetto parses locally in the browser, so campaign data stays on the
 machine unless you explicitly share it; verified against Perfetto's own

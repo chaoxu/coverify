@@ -127,7 +127,8 @@ export function renderTrace(dir: string): string {
 <body>
 ${body}
 <script>${vendored(VENDOR_JS)}</script>
-<script>const DATA = ${JSON.stringify(data)};</script>
+<script>const DATA = ${JSON.stringify({ ...data, title, slug: name })};</script>
+<script>const PERFETTO = ${JSON.stringify(perfettoTrace(dir))};</script>
 <script>${VIEW}</script>
 </body>
 </html>

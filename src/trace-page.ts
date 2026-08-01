@@ -100,6 +100,12 @@ export const STYLES = String.raw`
   .vis-tooltip .t-task { color: var(--ink-2); margin-top: 4px; }
   .vis-current-time { background-color: transparent; }
 
+  .embed { position: relative; height: 720px; background: var(--surface); }
+  .embed iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .embed .fallback { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; padding: 24px; color: var(--ink-3); font-size: 13px; }
+  .embed .fallback p { margin: 0; max-width: 46ch; }
+  .status { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
   caption { text-align: left; padding: 11px 14px; color: var(--ink-3); font-size: 12.5px; }
   th, td { text-align: left; padding: 7px 14px; border-bottom: 1px solid var(--rule); }
@@ -131,6 +137,28 @@ export const BODY = String.raw`
   </header>
 
   <section class="tiles" id="tiles"></section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>Full trace in Perfetto</h2>
+        <p class="note" id="pstatus">Handing the trace to ui.perfetto.dev&hellip;</p>
+        <p class="note">Perfetto asks whether to trust this page &mdash; click <b>Always trust</b> and it
+          never asks again for this host. The trace is passed in-browser and never uploaded. Then: W/S zoom, A/D pan, <kbd>/</kbd> search, SQL in the sidebar.</p>
+      </div>
+      <div class="controls">
+        <button class="ctl" id="popout">Open in a new tab</button>
+        <button class="ctl" id="download">Download .json</button>
+      </div>
+    </div>
+    <div class="embed" id="embed">
+      <div class="fallback" id="pfallback">
+        <p>The Perfetto UI loads from ui.perfetto.dev, so this panel needs network access.
+          Everything below works offline.</p>
+        <button class="ctl" id="retry">Load Perfetto</button>
+      </div>
+    </div>
+  </section>
 
   <section class="panel">
     <div class="panel-head">
@@ -365,5 +393,62 @@ export const VIEW = String.raw`
   }
   document.getElementById("findings").innerHTML = findings
     .map(([h, p]) => '<div class="finding"><h3>' + h + "</h3><p>" + p + "</p></div>").join("");
+
+  // ---- hand the same trace to the real Perfetto UI ----
+  // Deep-linking protocol: open (or embed) ui.perfetto.dev, PING until it
+  // answers PONG, then post the trace buffer. Perfetto never uploads it — the
+  // data stays in the browser, which is why this works for a private campaign.
+  const ORIGIN = "https://ui.perfetto.dev";
+  const status = document.getElementById("pstatus");
+  const buffer = () => new TextEncoder().encode(JSON.stringify(PERFETTO)).buffer;
+  const payload = () => ({
+    perfetto: { buffer: buffer(), title: DATA.title || "coverify campaign", fileName: (DATA.slug || "campaign") + ".perfetto.json" },
+  });
+  function handOff(target, onDone) {
+    let tries = 0;
+    const ping = setInterval(() => {
+      if (++tries > 120) { clearInterval(ping); onDone(false); return; }
+      try { target.postMessage("PING", ORIGIN); } catch (e) { /* not ready */ }
+    }, 250);
+    const onMsg = (e) => {
+      if (e.data !== "PONG") return;
+      clearInterval(ping);
+      window.removeEventListener("message", onMsg);
+      target.postMessage(payload(), ORIGIN);
+      onDone(true);
+    };
+    window.addEventListener("message", onMsg);
+  }
+  function embed() {
+    const host = document.getElementById("embed");
+    const fb = document.getElementById("pfallback");
+    const frame = document.createElement("iframe");
+    frame.src = ORIGIN + "/#!/?mode=embedded";
+    frame.title = "Perfetto UI";
+    frame.setAttribute("referrerpolicy", "no-referrer");
+    host.insertBefore(frame, fb);
+    status.textContent = "Waiting for ui.perfetto.dev\u2026";
+    handOff(frame.contentWindow, (ok) => {
+      status.textContent = ok
+        ? "Trace sent to Perfetto \u2014 answer its trust prompt to view it."
+        : "ui.perfetto.dev did not respond \u2014 use the buttons above, or the timeline below.";
+      if (ok) fb.style.display = "none";
+    });
+  }
+  document.getElementById("retry").addEventListener("click", embed);
+  document.getElementById("popout").addEventListener("click", () => {
+    const win = window.open(ORIGIN);
+    if (!win) { status.textContent = "Popup blocked \u2014 allow popups, or use the embedded view."; return; }
+    handOff(win, (ok) => { status.textContent = ok ? "Opened in a new tab." : "The new tab did not respond."; });
+  });
+  document.getElementById("download").addEventListener("click", () => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(PERFETTO)], { type: "application/json" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = (DATA.slug || "campaign") + ".perfetto.json";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  });
+  embed();
 })();
 `;
