@@ -47,6 +47,29 @@ candidate and of `STATEMENT.md` at verification time) — a file edited after
 its PASS is no longer verifier-backed, and a statement edit without
 `coverify amend` hard-stops the next run.
 
+## Threat model
+
+Roles are **careless, not adversarial**, and the host is expected to be a
+sandbox. Confinement exists to stop the accidents that actually happened or
+would silently corrupt a campaign:
+
+1. **Runaway compute** — unsupervised or uncapped search that eats the host
+   (a campaign's detached search jobs kernel-panicked saturn on 2026-08-01).
+2. **Accidental destruction of campaign state** — a rewrite that erases
+   closed-route history, a cited artifact edited in place, a promotion
+   recorded without its verification.
+3. **Silent contamination of verification** — anything that lets the blind
+   reconstruction see the candidate, or a verdict be attributed to work that
+   did not happen.
+
+A role deliberately evading these mechanisms is **out of scope**: it holds
+model weights and a filesystem, and no in-process check is a security
+boundary against it. So findings are ranked by whether a reasonable role
+doing its job could trip them, not by whether an attacker could. Where a
+mechanism has a known evasion (a survivor that leaves its session and
+`exec`s an unrelated binary; a symlink raced between check and use), it is
+stated rather than claimed away.
+
 ## Workspace tools and confinement
 
 Roles have no general shell. The workspace surface is pi's `read`, `ls`, and
