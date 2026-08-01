@@ -249,15 +249,17 @@ export interface RoleRun {
  * records supplied inputs and which restrictions are platform-enforced
  * versus instructed.
  */
-export async function runRole(run: RoleRun): Promise<string> {
+export async function runRole(run: RoleRun): Promise<RoleResult> {
   if (isCliProvider(run.spec.provider)) {
     if (run.bash || run.extraTools) {
       throw new Error("CLI backends support single-shot verdict roles only (no tools)");
     }
-    return runCliRole(run.spec.provider, run.spec.modelId, `${systemText(run)}\n\n---\n\n${run.prompt}`);
+    const text = await runCliRole(run.spec.provider, run.spec.modelId, `${systemText(run)}\n\n---\n\n${run.prompt}`);
+    return { text };
   }
   const session = createRoleSession(run);
-  return session.ask(run.prompt);
+  const text = await session.ask(run.prompt);
+  return { text, usage: session.usage() };
 }
 
 export function isCliProvider(p: string): p is keyof typeof CLI_BACKENDS {
@@ -343,10 +345,42 @@ export interface RoleSession {
   ask(prompt: string): Promise<string>;
   /** Rough context size in tokens (chars/4 over the message history). */
   approxTokens(): number;
+  /** Cumulative provider-reported token usage across the session's calls. */
+  usage(): RoleUsage;
   /** Inject a steering message while the session is running. */
   steer(text: string): void;
   /** Abort the session's current run. */
   abort(): void;
+}
+
+/** Provider-reported token usage (pi-ai Usage, summed). CLI backends report
+ *  none — mechanics only; nothing reads this except the journal. */
+export interface RoleUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  reasoning?: number;
+}
+
+function agentUsage(agent: Agent): RoleUsage {
+  const total: RoleUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  for (const m of agent.state.messages) {
+    const u = (m as { role?: string; usage?: RoleUsage }).usage;
+    if ((m as { role?: string }).role !== "assistant" || !u) continue;
+    total.input += u.input ?? 0;
+    total.output += u.output ?? 0;
+    total.cacheRead += u.cacheRead ?? 0;
+    total.cacheWrite += u.cacheWrite ?? 0;
+    if (u.reasoning !== undefined) total.reasoning = (total.reasoning ?? 0) + u.reasoning;
+  }
+  return total;
+}
+
+export interface RoleResult {
+  text: string;
+  /** Undefined for CLI backends (no usage reporting). */
+  usage?: RoleUsage;
 }
 
 /**
@@ -380,6 +414,9 @@ export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: stri
       let chars = 0;
       for (const m of agent.state.messages) chars += JSON.stringify(m).length;
       return Math.round(chars / 4);
+    },
+    usage(): RoleUsage {
+      return agentUsage(agent);
     },
     steer(text: string): void {
       agent.steer({ role: "user", content: text, timestamp: Date.now() });

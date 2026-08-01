@@ -30,6 +30,7 @@ import {
   isCliProvider,
   roleModelSpec,
   runRole,
+  type RoleUsage,
   specLabel,
   toolText,
   type RoleSession,
@@ -50,6 +51,8 @@ interface Handle {
   promise: Promise<string>;
   /** Absent for single-shot CLI workers (oracle attempts) — not steerable/abortable. */
   session?: RoleSession;
+  /** Provider-reported usage, read at completion (undefined for CLI oracles). */
+  usage?: () => RoleUsage | undefined;
 }
 
 /** Consecutive wakes with no dispatch, no verification, and no declaration
@@ -178,6 +181,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       const packetPrompt = `# Task\n\n${packet.task}\n\n# Deliverable\n\n${packet.deliverable}\n\n# Context\n\n${packet.context}`;
       let session: RoleSession | undefined;
       let promise: Promise<string>;
+      let oracleUsage: RoleUsage | undefined;
       if (isCliProvider(workerSpec.provider)) {
         // Single-shot oracle worker (e.g. chatgpt-cli → gpt-5.6-pro): one
         // deep attempt, no tools; the reply IS the deliverable.
@@ -189,6 +193,9 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           prompt: packetPrompt,
           spec: workerSpec,
           models,
+        }).then((r) => {
+          oracleUsage = r.usage;
+          return r.text;
         });
       } else {
         session = createRoleSession({
@@ -200,7 +207,13 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         });
         promise = session.ask(`Assigned evidence directory: ${evidenceDir}\n\n${packetPrompt}`);
       }
-      const handle: Handle = { id, mechanism: packet.mechanism, promise, session };
+      const handle: Handle = {
+        id,
+        mechanism: packet.mechanism,
+        promise,
+        session,
+        usage: () => session?.usage() ?? oracleUsage,
+      };
       handles.set(id, handle);
       promise
         .then((report) => {
@@ -232,7 +245,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       const p = params as { mechanism: string; firstImplication: string };
       const statement = readLedger(dir, "STATEMENT.md");
       const proved = readLedger(dir, "PROVED.md");
-      const text = await runRole({
+      const { text, usage: criticUsage } = await runRole({
         contract,
         charge: CHARGES.gateCritic,
         prompt: `# Frozen target\n\n${statement}\n\n# Promoted premises\n\n${proved}\n\n# Proposed mechanism\n\n${p.mechanism}\n\n# Claimed first nontrivial implication\n\n${p.firstImplication}`,
@@ -240,7 +253,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         models,
       });
       activityThisWake++;
-      const verdict = recordGateVerdict(store, p.mechanism, text);
+      const verdict = recordGateVerdict(store, p.mechanism, text, criticUsage);
       if (verdict === "UNPARSEABLE") {
         return toolText(
           `UNPARSEABLE verdict (recorded as such; does not unlock waves). The critic's first line ` +
@@ -344,7 +357,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       const slug = rel.replace(/[\/]/g, "_");
 
       // Stage 1 — hostile audit (bundle includes PROVED.md so promoted claims are checkable).
-      const auditText = await runRole({
+      const { text: auditText, usage: auditTextUsage } = await runRole({
         contract,
         charge: CHARGES.hostileAuditor,
         prompt: `# Statement\n\n${statement}\n\n# Currently promoted (PROVED.md)\n\n${proved}\n\n# Declared dependencies (coordinator-authored)\n\n${p.declaredDependencies}\n\n# Candidate revision ${rel}\n\n${candidate}`,
@@ -365,6 +378,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         blindness:
           "fresh instance (enforced); bundle built by harness (enforced); declaredDependencies coordinator-authored (instructed only)",
         modelFamily: specLabel(roleModelSpec("hostileAuditor")),
+        usage: auditTextUsage,
       });
       activityThisWake++;
       if (!auditPass) {
@@ -374,7 +388,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       // Bundle certification (contract): a fresh agent shown both the
       // candidate and the bundle certifies no element is a stepwise
       // paraphrase of — or contains — the candidate argument.
-      const certText = await runRole({
+      const { text: certText, usage: certTextUsage } = await runRole({
         contract,
         charge: CHARGES.bundleCertifier,
         prompt: `# Candidate revision ${rel}\n\n${candidate}\n\n# Proposed reconstruction bundle\n\n${bundle}`,
@@ -395,6 +409,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         suppliedInputs: ["candidate revision", "proposed bundle"],
         blindness: "fresh instance (enforced); sees candidate by design (certification step)",
         modelFamily: specLabel(roleModelSpec("bundleCertifier")),
+        usage: certTextUsage,
       });
       if (!certPass) {
         return toolText(
@@ -404,7 +419,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       }
 
       // Stage 2a — blind reconstruction (no verdict; the PASS belongs to the comparison).
-      const reconText = await runRole({
+      const { text: reconText, usage: reconTextUsage } = await runRole({
         contract,
         charge: CHARGES.reconstructor,
         prompt: `# Statement\n\n${statement}\n\n# High-level key ideas\n\n${p.keyIdeas}\n\n# Allowed sources\n\n${p.allowedSources}\n\n# Promoted premises\n\n${proved}`,
@@ -423,11 +438,12 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         blindness:
           "fresh instance (enforced); candidate file withheld by harness (enforced); keyIdeas coordinator-authored (instructed only — paraphrase risk not machine-checked)",
         modelFamily: specLabel(roleModelSpec("reconstructor")),
+        usage: reconTextUsage,
       });
 
       // Stage 2b — comparison: maps the reconstruction to the candidate's
       // conclusions and declared dependencies. This verdict is stage 2's PASS.
-      const compareText = await runRole({
+      const { text: compareText, usage: compareTextUsage } = await runRole({
         contract,
         charge: CHARGES.comparator,
         prompt: `# Statement\n\n${statement}\n\n# Independent reconstruction\n\n${reconText}\n\n# Candidate revision ${rel}\n\n${candidate}\n\n# Declared dependencies\n\n${p.declaredDependencies}`,
@@ -447,6 +463,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         suppliedInputs: ["statement", "reconstruction", "candidate", "declared dependencies"],
         blindness: "fresh instance (enforced); sees both sides by design (comparison step)",
         modelFamily: specLabel(roleModelSpec("comparator")),
+        usage: compareTextUsage,
       });
       const promotion = checkPromotion(store, dir, rel);
       return toolText(
@@ -600,7 +617,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     const reportSections = reports.map((s) => {
       const reportPath = newEvidencePath(dir, `${s.h.id}/report`);
       fs.writeFileSync(reportPath, s.report);
-      store.append({ kind: "completion", id: s.h.id, report: path.relative(dir, reportPath) });
+      store.append({ kind: "completion", id: s.h.id, report: path.relative(dir, reportPath), usage: s.h.usage?.() });
       return `## ${s.h.id} [${s.h.mechanism}] (saved: ${path.relative(dir, reportPath)})\n\n${s.report}`;
     });
     appendJournal(dir, { kind: "wake", wake: wakeCount, live: handles.size, newReports: reports.length });
@@ -655,6 +672,12 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         ? `${resumeBundle(dir)}\n\n---\n\nCampaign directory: ${dir}\n${lostNote}${digest}${idleNudge}\n\n${newsBlock}`
         : `${lostNote}${digest}${idleNudge}${compactionWarning}\n\n${newsBlock}`,
     );
+    appendJournal(dir, {
+      kind: "usage",
+      role: "coordinator",
+      cumulative: coordinator.usage(),
+      approxContextTokens: coordinator.approxTokens(),
+    });
     lostNote = "";
 
     // Frontier history: CURRENT_FRONTIER.md is rewritten by design, so the

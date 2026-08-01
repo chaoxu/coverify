@@ -169,10 +169,15 @@ function wasDispatchedBefore(store: GateStore, mechanism: string): boolean {
   return store.all().some((e) => e.kind === "dispatch" && e.mechanism === mechanism);
 }
 
-export function recordGateVerdict(store: GateStore, mechanism: string, verdictText: string): string {
+export function recordGateVerdict(
+  store: GateStore,
+  mechanism: string,
+  verdictText: string,
+  usage?: unknown,
+): string {
   const verdict =
     parseFirstLineVerdict(verdictText, ["IDEA PASS", "IDEA FAIL", "IDEA REPAIR"]) ?? "UNPARSEABLE";
-  store.append({ kind: "gate-verdict", mechanism, verdict, text: verdictText });
+  store.append({ kind: "gate-verdict", mechanism, verdict, text: verdictText, usage });
   return verdict;
 }
 

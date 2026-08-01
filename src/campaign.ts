@@ -4,7 +4,7 @@ import * as path from "node:path";
 
 export interface JournalEntry {
   ts: string;
-  kind: "note" | "wake";
+  kind: "note" | "wake" | "usage";
   [key: string]: unknown;
 }
 
