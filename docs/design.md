@@ -51,12 +51,19 @@ its PASS is no longer verifier-backed, and a statement edit without
 
 Roles have no general shell. The workspace surface is pi's `read`, `ls`, and
 `grep` (read-only) plus pi's `write` wrapped with an in-process scope check.
-Code is a gated grant, not a default: only a worker whose dispatch packet
-carries a `computation` declaration (launcher: "Use computation only for a
-preregistered finite domain and stopping rule…") gets `run_script` — the
-sole way any role executes code — and the right to write non-prose files;
-the coordinator and undeclared workers write `.md`/`.txt` only. The dispatch
-gate refuses a `computation` field with no concrete bounds. Workers' scope
+Code is a gated role, not a default: a dispatch packet carrying a
+`computation` declaration (launcher: "Use computation only for a
+preregistered finite domain and stopping rule…") dispatches a *computation
+technician* — a distinct worker charge whose mathematics is confined to
+faithfully encoding the preregistered statement into code; it advances no
+proofs and iterates only within the declared domain. Only the technician
+gets `run_script` — the sole way any role executes code — and the right to
+write non-prose files; reasoning workers and the coordinator write
+`.md`/`.txt` only and never execute anything. Because workers are already
+async handles, a technician dispatch IS the async computation: no separate
+computation-handle machinery is needed for local runs. The dispatch gate
+refuses a `computation` field with no concrete bounds and refuses a
+computation packet on a tool-less CLI oracle backend. Workers' scope
 is their assigned `EVIDENCE/<id>/` directory; the coordinator's is the
 campaign dir *except* `.coverify/`, `STATEMENT.md`, and `PROVED.md` (deny
 wins). `PROVED.md` is appendable only through the `record_promotion` tool,

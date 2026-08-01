@@ -158,9 +158,10 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       computation: Type.Optional(
         Type.String({
           description:
-            "Only if the worker must write and run code: the preregistered finite domain, stopping " +
-            "rule, and expected witness/certificate/table, with concrete bounds. Grants the worker " +
-            "write-code + run_script; omit for a pure-reasoning worker (prose tools only).",
+            "Dispatches a computation technician instead of a reasoning worker: state the " +
+            "preregistered finite domain, stopping rule, and expected witness/certificate/table " +
+            "with concrete bounds. The technician writes and runs code strictly for that " +
+            "computation and does no proof work; omit for a reasoning worker (prose tools only).",
         }),
       ),
       literature: Type.Optional(
@@ -201,6 +202,12 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       let session: RoleSession | undefined;
       let promise: Promise<string>;
       let oracleUsage: RoleUsage | undefined;
+      if (isCliProvider(workerSpec.provider) && packet.computation !== undefined) {
+        return toolText(
+          "DISPATCH REFUSED: the configured worker backend is a tool-less CLI oracle; a computation " +
+            "packet needs a tool-running technician backend",
+        );
+      }
       if (isCliProvider(workerSpec.provider)) {
         // Single-shot oracle worker (e.g. chatgpt-cli → gpt-5.6-pro): one
         // deep attempt, no tools; the reply IS the deliverable.
@@ -219,7 +226,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       } else {
         session = createRoleSession({
           contract,
-          charge: CHARGES.worker,
+          charge: packet.computation !== undefined ? CHARGES.computeWorker : CHARGES.worker,
           workspace: {
             cwd: evidenceDir,
             scope: { allow: [evidenceDir], deny: [] },
