@@ -141,28 +141,6 @@ export const BODY = String.raw`
   <section class="panel">
     <div class="panel-head">
       <div>
-        <h2>Full trace in Perfetto</h2>
-        <p class="note" id="pstatus">Handing the trace to ui.perfetto.dev&hellip;</p>
-        <p class="note">Perfetto asks whether to trust this page &mdash; click <b>Always trust</b> and it
-          never asks again for this host. The trace is passed in-browser and never uploaded. Then: W/S zoom, A/D pan, <kbd>/</kbd> search, SQL in the sidebar.</p>
-      </div>
-      <div class="controls">
-        <button class="ctl" id="popout">Open in a new tab</button>
-        <button class="ctl" id="download">Download .json</button>
-      </div>
-    </div>
-    <div class="embed" id="embed">
-      <div class="fallback" id="pfallback">
-        <p>The Perfetto UI loads from ui.perfetto.dev, so this panel needs network access.
-          Everything below works offline.</p>
-        <button class="ctl" id="retry">Load Perfetto</button>
-      </div>
-    </div>
-  </section>
-
-  <section class="panel">
-    <div class="panel-head">
-      <div>
         <h2>Agent lifetimes and verification calls</h2>
         <p class="note" id="hint">Shaded bands are coordinator wakes.</p>
       </div>
@@ -173,6 +151,22 @@ export const BODY = String.raw`
     </div>
     <div id="tl"></div>
     <div class="legend" id="legend"></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>Deep dive in Perfetto</h2>
+        <p class="note" id="pstatus">The same trace in the full Perfetto UI: microsecond zoom, search across
+          every slice, SQL over the whole run. Loads from ui.perfetto.dev on demand.</p>
+      </div>
+      <div class="controls">
+        <button class="ctl" id="retry">Load Perfetto here</button>
+        <button class="ctl" id="popout">Open in a new tab</button>
+        <button class="ctl" id="download">Download .json</button>
+      </div>
+    </div>
+    <div class="embed hidden" id="embed"></div>
   </section>
 
   <section class="panel">
@@ -421,18 +415,20 @@ export const VIEW = String.raw`
   }
   function embed() {
     const host = document.getElementById("embed");
-    const fb = document.getElementById("pfallback");
+    if (host.dataset.loaded) return;
+    host.dataset.loaded = "1";
+    host.classList.remove("hidden");
     const frame = document.createElement("iframe");
     frame.src = ORIGIN + "/#!/?mode=embedded";
     frame.title = "Perfetto UI";
     frame.setAttribute("referrerpolicy", "no-referrer");
-    host.insertBefore(frame, fb);
-    status.textContent = "Waiting for ui.perfetto.dev\u2026";
+    host.appendChild(frame);
+    status.textContent = "Waiting for ui.perfetto.dev\u2026 it will ask whether to trust this page; " +
+      "choose Always trust. The trace is passed in-browser and never uploaded.";
     handOff(frame.contentWindow, (ok) => {
       status.textContent = ok
-        ? "Trace sent to Perfetto \u2014 answer its trust prompt to view it."
-        : "ui.perfetto.dev did not respond \u2014 use the buttons above, or the timeline below.";
-      if (ok) fb.style.display = "none";
+        ? "Trace sent to Perfetto \u2014 answer its trust prompt to view it. W/S zoom, A/D pan, / search."
+        : "ui.perfetto.dev did not respond \u2014 no network? The timeline above works offline.";
     });
   }
   document.getElementById("retry").addEventListener("click", embed);
@@ -449,6 +445,5 @@ export const VIEW = String.raw`
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   });
-  embed();
 })();
 `;
