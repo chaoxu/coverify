@@ -98,9 +98,12 @@ convention.
 Web access is likewise a gated grant, and it is delegated: a reasoner whose
 packet carries a `literature` question gets `literature_search`, which
 spawns an external librarian CLI agent (`COVERIFY_LITERATURE_CMD`, default
-`agy` print-mode with live web search) as a supervised child and archives
-the full compiled report as `literature-<n>.md` evidence (self-attested
-provenance, like `fable-review`). The librarian runs under the role's write
+`agy` print-mode with live web search) through the *same* supervision as
+`run_script` — shared wall limit, RSS cap, whole-tree kill, exit reaper,
+abort signal — and archives the full compiled report as `literature-<n>.md`
+evidence (self-attested provenance, like `fable-review`). That name is
+harness-owned: no role may author or edit a `literature-<n>.md`, so a
+citation always corresponds to a search that actually ran. The librarian runs under the role's write
 sandbox plus a narrow allowance for its own state directories
 (`COVERIFY_LITERATURE_STATE_DIRS`, default the `agy`/Gemini dirs) — never
 `~/.claude`, `~/.codex`, or `~/.config`, which hold settings and hook files

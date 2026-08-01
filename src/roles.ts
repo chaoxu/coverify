@@ -239,9 +239,18 @@ function sandboxedArgv(argv: string[], scope: WriteScope): { file: string; args:
     '(literal "/dev/null")',
     ...scope.allow.filter((p) => fs.existsSync(p)).map((p) => `(subpath ${sbplLiteral(p)})`),
   ].join(" ");
+  // A deny target that does not exist yet must still be denied, or a script
+  // could *create* it (a forged PROVED.md). sbplLiteral needs a real path, so
+  // resolve the parent and re-attach the name.
   const denyEntries = scope.deny
-    .filter((p) => fs.existsSync(p))
-    .map((p) => `(subpath ${sbplLiteral(p)}) (literal ${sbplLiteral(p)})`)
+    .map((p) => {
+      if (fs.existsSync(p)) return `(subpath ${sbplLiteral(p)}) (literal ${sbplLiteral(p)})`;
+      const parent = path.dirname(p);
+      if (!fs.existsSync(parent)) return "";
+      const target = JSON.stringify(path.join(fs.realpathSync.native(parent), path.basename(p)));
+      return `(subpath ${target}) (literal ${target})`;
+    })
+    .filter(Boolean)
     .join(" ");
   const profile =
     `(version 1) (allow default) (deny file-write* (subpath "/")) (allow file-write* ${allows})` +
@@ -411,119 +420,14 @@ function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
           }
         }
       }
-      // Each job leads its own process group (detached) so everything it
-      // forks is reaped with it; the caps apply to the batch as a whole.
-      const children = jobs.map(({ argv }) => {
-        const { file, args } = sandboxedArgv(argv, scope);
-        return spawn(file, args, { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] });
-      });
-      const outs = jobs.map(() => ({ stdout: "", stderr: "" }));
-      children.forEach((child, i) => {
-        child.stdout.on("data", (d: Buffer) => {
-          if (outs[i].stdout.length <= OUTPUT_LIMIT) outs[i].stdout += d;
-        });
-        child.stderr.on("data", (d: Buffer) => {
-          if (outs[i].stderr.length <= OUTPUT_LIMIT) outs[i].stderr += d;
-        });
-      });
-      const roots = new Set(children.map((c) => c.pid).filter((p): p is number => p !== undefined));
-      // Command-line marks used to recognize this batch's processes. The
-      // working directory covers a helper the script launched in a new
-      // session running a *different* file in the same directory — that
-      // survivor matches no pid, group, or parent of ours once reparented.
-      const marks = [...new Set([cwd, ...jobs.map((j) => j.argv.find((a) => a.startsWith(cwd)) ?? j.argv[0])])];
-      let fate: string | undefined;
-      const killAll = async () => {
-        // Two passes: killing the parents first stops them forking more, and
-        // the second sweep catches anything spawned between sweep and kill.
-        for (let pass = 0; pass < 2; pass++) {
-          for (const child of children) {
-            if (child.pid !== undefined) {
-              try {
-                process.kill(-child.pid, "SIGKILL");
-              } catch {
-                /* group already gone */
-              }
-            }
-          }
-          const sweep = await processSweep(roots, marks).catch(() => undefined);
-          for (const pid of sweep?.members.keys() ?? []) {
-            try {
-              process.kill(pid, "SIGKILL");
-            } catch {
-              /* already gone */
-            }
-          }
-        }
-      };
-      // Synchronous best-effort reaper for process exit paths (no awaiting
-      // there): group kill only, which covers everything that stayed put.
-      const reapNow = () => {
-        for (const child of children) {
-          if (child.pid !== undefined) {
-            try {
-              process.kill(-child.pid, "SIGKILL");
-            } catch {
-              /* group already gone */
-            }
-          }
-        }
-      };
-      installReaperHooks();
-      liveReapers.add(reapNow);
-      const timer = setTimeout(() => {
-        fate = `batch timed out after ${Math.round(RUN_TIMEOUT_MS / 60000)} minutes`;
-        void killAll();
-      }, RUN_TIMEOUT_MS);
-      // cancel_agent aborts the role's session; stop the compute too, rather
-      // than letting it run to the batch limit unattended.
-      const onAbort = () => {
-        fate = "cancelled";
-        void killAll();
-      };
-      signal?.addEventListener("abort", onAbort, { once: true });
-      const memWatch = setInterval(() => {
-        if (fate) return;
-        processSweep(roots, marks).then(
-          ({ rssKb }) => {
-            if (fate) return;
-            if (rssKb > RUN_MEM_MB * 1024) {
-              fate = `batch exceeded the ${RUN_MEM_MB} MB combined memory cap (rss ${Math.round(rssKb / 1024)} MB)`;
-              void killAll();
-            }
-          },
-          (err: Error) => {
-            // A silently absent cap is worse than a loud one: kill the batch
-            // and say so rather than letting an unmetered search run.
-            fate = `memory watchdog unavailable (${err.message}); batch stopped rather than run uncapped`;
-            void killAll();
-          },
-        );
-      }, 500);
-      // "exit" (not "close"): a forked child holding the stdio pipes must not
-      // delay the tree kill that reaps it.
-      const codes = await Promise.all(
-        children.map(
-          (child) =>
-            new Promise<string>((res) => {
-              child.once("exit", (code, signal) => {
-                res(code === 0 ? "" : `exit ${code ?? `signal ${signal}`}`);
-              });
-              child.once("error", (error: Error) => res(error.message));
-            }),
-        ),
+      const { outs, fate } = await supervise(
+        jobs.map(({ argv }) => sandboxedArgv(argv, scope)),
+        { cwd, marks: [cwd, ...jobs.map((j) => j.argv.find((a) => a.startsWith(cwd)) ?? j.argv[0])], signal },
       );
-      clearTimeout(timer);
-      clearInterval(memWatch);
-      signal?.removeEventListener("abort", onAbort);
-      // Awaited: survivors that left the process group are reaped here, so
-      // nothing outlives the call even when the direct children exited fine.
-      await killAll();
-      liveReapers.delete(reapNow);
       const sections = jobs.map(({ label }, i) => {
         let out = [outs[i].stdout, outs[i].stderr].filter(Boolean).join("\n--- stderr ---\n");
         if (out.length > OUTPUT_LIMIT) out = out.slice(0, OUTPUT_LIMIT) + "\n[truncated]";
-        if (codes[i]) out = `${out}\n[error: ${codes[i]}]`;
+        if (outs[i].failure) out = `${out}\n[error: ${outs[i].failure}]`;
         return jobs.length === 1 ? out : `## ${label}\n${out || "(no output)"}`;
       });
       let combined = sections.join("\n\n");
@@ -531,6 +435,132 @@ function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
       return toolText(combined || "(no output)");
     },
   } as AgentTool;
+}
+
+
+interface SupervisedOut {
+  stdout: string;
+  stderr: string;
+  /** Non-empty when this process failed (non-zero exit, signal, spawn error). */
+  failure: string;
+}
+
+/**
+ * Run one or more argvs concurrently under a single supervision regime: shared
+ * wall limit, shared RSS cap, whole-tree kill on exit/timeout/abort, and a
+ * reaper so a dying harness takes the compute with it. Every path that
+ * executes anything goes through here — run_script and the delegated
+ * librarian alike — so neither becomes a doorway to the uncapped runaway that
+ * kernel-panicked the host on 2026-08-01.
+ */
+async function supervise(
+  specs: { file: string; args: string[] }[],
+  opts: { cwd: string; marks: string[]; signal?: AbortSignal; outputLimit?: number },
+): Promise<{ outs: SupervisedOut[]; fate?: string }> {
+  const limit = opts.outputLimit ?? OUTPUT_LIMIT;
+  const children = specs.map(({ file, args }) =>
+    spawn(file, args, { cwd: opts.cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] }),
+  );
+  const outs: SupervisedOut[] = specs.map(() => ({ stdout: "", stderr: "", failure: "" }));
+  children.forEach((child, i) => {
+    child.stdout.on("data", (d: Buffer) => {
+      if (outs[i].stdout.length <= limit) outs[i].stdout += d;
+    });
+    child.stderr.on("data", (d: Buffer) => {
+      if (outs[i].stderr.length <= limit) outs[i].stderr += d;
+    });
+  });
+  const roots = new Set(children.map((c) => c.pid).filter((p): p is number => p !== undefined));
+  let fate: string | undefined;
+  let finished = false;
+  const killGroups = () => {
+    for (const child of children) {
+      if (child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          /* group already gone */
+        }
+      }
+    }
+  };
+  const killAll = async () => {
+    // Two passes: killing the parents first stops them forking more, and the
+    // second sweep catches anything spawned between sweep and kill.
+    for (let pass = 0; pass < 2; pass++) {
+      killGroups();
+      const sweep = await processSweep(roots, opts.marks).catch(() => undefined);
+      for (const pid of sweep?.members.keys() ?? []) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+  };
+  installReaperHooks();
+  liveReapers.add(killGroups);
+  const timer = setTimeout(() => {
+    if (finished) return;
+    fate = `timed out after ${Math.round(RUN_TIMEOUT_MS / 60000)} minutes`;
+    void killAll();
+  }, RUN_TIMEOUT_MS);
+  const onAbort = () => {
+    if (finished) return;
+    fate = "cancelled";
+    void killAll();
+  };
+  // Pre-check: an abort that landed before this call never fires the listener.
+  if (opts.signal?.aborted) onAbort();
+  else opts.signal?.addEventListener("abort", onAbort, { once: true });
+  const memWatch = setInterval(() => {
+    if (fate || finished) return;
+    processSweep(roots, opts.marks).then(
+      ({ rssKb }) => {
+        // `finished` is re-read here: a sweep in flight when the batch ended
+        // must not report a completed run as killed.
+        if (fate || finished) return;
+        if (rssKb > RUN_MEM_MB * 1024) {
+          fate = `exceeded the ${RUN_MEM_MB} MB combined memory cap (rss ${Math.round(rssKb / 1024)} MB)`;
+          void killAll();
+        }
+      },
+      (err: Error) => {
+        if (fate || finished) return;
+        // A silently absent cap is worse than a loud one: stop rather than
+        // let an unmetered search run.
+        fate = `memory watchdog unavailable (${err.message}); stopped rather than run uncapped`;
+        void killAll();
+      },
+    );
+  }, 500);
+  // "exit", never "close": a survivor holding the inherited stdio pipes would
+  // otherwise keep this promise pending forever, wedging the whole campaign.
+  await Promise.all(
+    children.map(
+      (child, i) =>
+        new Promise<void>((res) => {
+          child.once("exit", (code, signal) => {
+            if (code !== 0) outs[i].failure = `exit ${code ?? `signal ${signal}`}`;
+            res();
+          });
+          child.once("error", (error: Error) => {
+            outs[i].failure = error.message;
+            res();
+          });
+        }),
+    ),
+  );
+  finished = true;
+  clearTimeout(timer);
+  clearInterval(memWatch);
+  opts.signal?.removeEventListener("abort", onAbort);
+  // Awaited: survivors that left the process group are reaped here, so nothing
+  // outlives the call even when the direct children exited cleanly.
+  await killAll();
+  liveReapers.delete(killGroups);
+  return { outs, fate };
 }
 
 /** Without a code grant, roles write prose artifacts only. */
@@ -591,70 +621,41 @@ function literatureSearchTool(cwd: string, scope: WriteScope): AgentTool {
       question: Type.String({ description: "The literature question, self-contained" }),
     }),
     executionMode: "sequential",
-    execute: async (_id: string, params: unknown) =>
-      new Promise((resolve) => {
-        const { question } = params as { question: string };
-        // Sandboxed like run_script: the librarian is a full coding agent
-        // (default argv skips its own permission prompts) driven by a
-        // role-authored question, so confine its writes to the campaign
-        // scope. Its own state directories stay writable — a CLI that cannot
-        // refresh its OAuth token fails as an opaque non-zero exit.
-        const { file, args } = sandboxedArgv([...LITERATURE_CMD, LIBRARIAN_CHARGE + question], {
-          allow: [...scope.allow, ...LIBRARIAN_STATE_DIRS],
-          deny: scope.deny,
-        });
-        const child = spawn(file, args, {
-          cwd,
-          detached: true,
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-        let stdout = "";
-        let stderr = "";
-        child.stdout.on("data", (d: Buffer) => {
-          if (stdout.length <= OUTPUT_LIMIT * 4) stdout += d;
-        });
-        child.stderr.on("data", (d: Buffer) => {
-          if (stderr.length <= OUTPUT_LIMIT) stderr += d;
-        });
-        const killGroup = () => {
-          if (child.pid !== undefined) {
-            try {
-              process.kill(-child.pid, "SIGKILL");
-            } catch {
-              /* group already gone */
-            }
-          }
-        };
-        let timedOut = false;
-        const timer = setTimeout(() => {
-          timedOut = true;
-          killGroup();
-        }, RUN_TIMEOUT_MS);
-        // "close" (not "exit"): the full report is the archived deliverable,
-        // so wait for the stdio pipes to drain before reading it.
-        child.once("close", (code) => {
-          clearTimeout(timer);
-          killGroup();
-          if (timedOut || code !== 0 || !stdout.trim()) {
-            const detail = timedOut ? "timed out" : `exit ${code}`;
-            return resolve(toolText(`[error: librarian ${detail}]${stderr ? `\n${stderr.slice(0, 2000)}` : ""}`));
-          }
-          const n = fs.readdirSync(cwd).filter((f) => /^literature-\d+\.md$/.test(f)).length + 1;
-          const artifact = path.join(cwd, `literature-${n}.md`);
-          fs.writeFileSync(
-            artifact,
-            `# Literature search ${n}\n\nLibrarian: \`${LITERATURE_CMD.join(" ")}\` (self-attested provenance)\n\n## Question\n\n${question}\n\n## Report\n\n${stdout}\n`,
-          );
-          let out = stdout;
-          if (out.length > OUTPUT_LIMIT) out = out.slice(0, OUTPUT_LIMIT) + "\n[truncated; full report in artifact]";
-          resolve(toolText(`[archived: ${artifact}]\n\n${out}`));
-        });
-        child.once("error", (error: Error) => {
-          clearTimeout(timer);
-          killGroup();
-          resolve(toolText(`[error: ${error.message}]`));
-        });
-      }),
+    execute: async (_id: string, params: unknown, signal?: AbortSignal) => {
+      const { question } = params as { question: string };
+      // Sandboxed and supervised exactly like run_script — the librarian is a
+      // full coding agent (its default argv skips its own permission prompts)
+      // driven by a role-authored question, so it gets the same write
+      // confinement, memory cap, tree kill, and reaper. Its own state
+      // directories stay writable: a CLI that cannot refresh its OAuth token
+      // fails as an opaque non-zero exit.
+      const spec = sandboxedArgv([...LITERATURE_CMD, LIBRARIAN_CHARGE + question], {
+        allow: [...scope.allow, ...LIBRARIAN_STATE_DIRS],
+        deny: scope.deny,
+      });
+      const { outs, fate } = await supervise([spec], {
+        cwd,
+        marks: [cwd],
+        signal,
+        outputLimit: OUTPUT_LIMIT * 4,
+      });
+      const { stdout, stderr, failure } = outs[0];
+      if (fate || failure || !stdout.trim()) {
+        const detail = fate ?? failure ?? "produced no report";
+        return toolText(`[error: librarian ${detail}]${stderr ? `\n${stderr.slice(0, 2000)}` : ""}`);
+      }
+      // The harness owns the archive name and content: a librarian report is
+      // provenance, so a role must never be able to author one by hand.
+      const n = fs.readdirSync(cwd).filter((f) => /^literature-\d+\.md$/i.test(f)).length + 1;
+      const artifact = path.join(cwd, `literature-${n}.md`);
+      fs.writeFileSync(
+        artifact,
+        `# Literature search ${n}\n\nLibrarian: \`${LITERATURE_CMD.join(" ")}\` (self-attested provenance)\n\n## Question\n\n${question}\n\n## Report\n\n${stdout}\n`,
+      );
+      let out = stdout;
+      if (out.length > OUTPUT_LIMIT) out = out.slice(0, OUTPUT_LIMIT) + "\n[truncated; full report in artifact]";
+      return toolText(`[archived: ${artifact}]\n\n${out}`);
+    },
   } as AgentTool;
 }
 
@@ -694,8 +695,11 @@ export function workspaceTools(
             );
           }
         }
-        if (/^literature-\d+\.md$/i.test(base) && fs.existsSync(real)) {
-          throw new Error("librarian reports are immutable evidence; write a new file instead");
+        if (/^literature-\d+\.md$/i.test(base)) {
+          throw new Error(
+            "literature-<n>.md names are owned by literature_search (provenance): a role may " +
+              "neither author nor edit one; use a different filename",
+          );
         }
         await fs.promises.writeFile(absolutePath, content);
       },

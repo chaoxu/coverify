@@ -89,10 +89,18 @@ describe("scoped write", () => {
     ).rejects.toThrow(/append-only/);
     expect(fs.readFileSync(ledger, "utf8")).toContain("route A");
   });
-  test("librarian reports immutable", async () => {
+  test("librarian report names are harness-owned (no forging, no editing)", async () => {
+    const fresh = path.join(ws, "literature-7.md");
+    await expect(prose.write.execute("t", { path: fresh, content: "# invented citation" })).rejects.toThrow(
+      /owned by literature_search/,
+    );
+    expect(fs.existsSync(fresh)).toBe(false);
     const rep = path.join(ws, "literature-1.md");
     fs.writeFileSync(rep, "report");
-    await expect(prose.write.execute("t", { path: rep, content: "tampered" })).rejects.toThrow(/immutable/);
+    await expect(prose.write.execute("t", { path: rep, content: "tampered" })).rejects.toThrow(
+      /owned by literature_search/,
+    );
+    expect(fs.readFileSync(rep, "utf8")).toBe("report");
   });
 });
 
@@ -252,6 +260,29 @@ describe("enforcement bypasses (regression)", () => {
       prose.write.execute("t", { path: link, content: "# history erased\n" }),
     ).rejects.toThrow(/append-only/);
     expect(fs.readFileSync(ledger, "utf8")).toContain("route A");
+  });
+  test("an already-aborted signal stops the batch immediately", async () => {
+    fs.writeFileSync(path.join(ws, "slow2.py"), "import time\ntime.sleep(120)\nprint('finished')\n");
+    const ac = new AbortController();
+    ac.abort();
+    const started = Date.now();
+    const out = text((await t.run_script.execute("t", { runs: [{ path: "slow2.py" }] }, ac.signal)) as any);
+    expect(Date.now() - started).toBeLessThan(10000);
+    expect(out).not.toContain("finished");
+    expect(out).toContain("cancelled");
+  }, 20000);
+  test("a script cannot create a denied file that does not exist yet", async () => {
+    const denied = path.join(ws, "PROVED.md");
+    fs.rmSync(denied, { force: true });
+    const guarded = Object.fromEntries(
+      workspaceTools(ws, { allow: [ws], deny: [denied] }, { code: true }).map((x: any) => [x.name, x]),
+    );
+    fs.writeFileSync(
+      path.join(ws, "forge.py"),
+      `open(${JSON.stringify(denied)}, "w").write("FORGED")\n`,
+    );
+    await guarded.run_script.execute("t", { runs: [{ path: "forge.py" }] });
+    expect(fs.existsSync(denied)).toBe(false);
   });
   test("an abort signal stops a running batch", async () => {
     fs.writeFileSync(path.join(ws, "slow.py"), "import time\ntime.sleep(120)\nprint('finished')\n");
