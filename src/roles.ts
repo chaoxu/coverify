@@ -240,47 +240,58 @@ const RUN_MEM_MB = Number(process.env.COVERIFY_RUN_MEM_MB ?? 4096);
 function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
   return {
     name: "run_script",
-    label: "Run script",
+    label: "Run scripts",
     description:
-      `Run one script file, supervised. Working directory: ${cwd}. A .py file runs under python3; ` +
-      "anything else must be executable. Write the script with the write tool first. Limits: " +
-      `${Math.round(BASH_TIMEOUT_MS / 60000)} minutes, ${RUN_MEM_MB} MB RSS for the whole process ` +
-      "group; writes are OS-sandboxed to your assigned directories; when the run ends (or hits a " +
-      "limit) the entire process group is killed — nothing survives the call. Route genuinely long " +
-      "or parallel computation through the scheduler front door instead.",
+      `Run 1-8 script files concurrently, supervised, under ONE shared cap. Working directory: ${cwd}. ` +
+      "A .py file runs under python3; anything else must be executable. Write scripts with the " +
+      `write tool first. Limits for the whole batch: ${Math.round(BASH_TIMEOUT_MS / 60000)} minutes, ` +
+      `${RUN_MEM_MB} MB combined RSS; writes are OS-sandboxed to your assigned directories; when the ` +
+      "batch ends (or hits a limit) every process group is killed — nothing survives the call. " +
+      "Route genuinely long computation through the scheduler front door instead.",
     parameters: Type.Object({
-      path: Type.String({ description: "Script file to run" }),
-      args: Type.Optional(Type.Array(Type.String(), { description: "Arguments passed to the script" })),
+      runs: Type.Array(
+        Type.Object({
+          path: Type.String({ description: "Script file to run" }),
+          args: Type.Optional(Type.Array(Type.String(), { description: "Arguments passed to the script" })),
+        }),
+        { minItems: 1, maxItems: 8, description: "Scripts to run concurrently under the shared cap" },
+      ),
     }),
     executionMode: "sequential",
-    execute: async (_id: string, params: unknown) =>
-      new Promise((resolve) => {
-        const { path: rel, args = [] } = params as { path: string; args?: string[] };
-        const script = path.resolve(cwd, rel);
-        if (!fs.existsSync(script)) return resolve(toolText(`[error: no such script: ${script}]`));
-        let argv: string[];
-        if (script.endsWith(".py")) argv = ["python3", script, ...args];
+    execute: async (_id: string, params: unknown) => {
+      const { runs } = params as { runs: { path: string; args?: string[] }[] };
+      const jobs: { label: string; argv: string[] }[] = [];
+      for (const r of runs) {
+        const script = path.resolve(cwd, r.path);
+        const label = [r.path, ...(r.args ?? [])].join(" ");
+        if (!fs.existsSync(script)) return toolText(`[error: no such script: ${script}]`);
+        if (script.endsWith(".py")) jobs.push({ label, argv: ["python3", script, ...(r.args ?? [])] });
         else {
           try {
             fs.accessSync(script, fs.constants.X_OK);
-            argv = [script, ...args];
+            jobs.push({ label, argv: [script, ...(r.args ?? [])] });
           } catch {
-            return resolve(toolText("[error: script must be .py or an executable file]"));
+            return toolText(`[error: ${r.path}: script must be .py or an executable file]`);
           }
         }
-        const { file, args: spawnArgs } = sandboxedArgv(argv, scope);
-        // detached: the child leads its own process group, so everything it
-        // forks can be reaped as a unit when the run ends.
-        const child = spawn(file, spawnArgs, { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] });
-        let stdout = "";
-        let stderr = "";
+      }
+      // Each job leads its own process group (detached) so everything it
+      // forks is reaped with it; the caps apply to the batch as a whole.
+      const children = jobs.map(({ argv }) => {
+        const { file, args } = sandboxedArgv(argv, scope);
+        return spawn(file, args, { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+      });
+      const outs = jobs.map(() => ({ stdout: "", stderr: "" }));
+      children.forEach((child, i) => {
         child.stdout.on("data", (d: Buffer) => {
-          if (stdout.length <= OUTPUT_LIMIT) stdout += d;
+          if (outs[i].stdout.length <= OUTPUT_LIMIT) outs[i].stdout += d;
         });
         child.stderr.on("data", (d: Buffer) => {
-          if (stderr.length <= OUTPUT_LIMIT) stderr += d;
+          if (outs[i].stderr.length <= OUTPUT_LIMIT) outs[i].stderr += d;
         });
-        const killGroup = () => {
+      });
+      const killAll = () => {
+        for (const child of children) {
           if (child.pid !== undefined) {
             try {
               process.kill(-child.pid, "SIGKILL");
@@ -288,51 +299,71 @@ function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
               /* group already gone */
             }
           }
-        };
-        let fate: string | undefined;
-        const timer = setTimeout(() => {
-          fate = `timed out after ${Math.round(BASH_TIMEOUT_MS / 60000)} minutes`;
-          killGroup();
-        }, BASH_TIMEOUT_MS);
-        const memWatch = setInterval(() => {
-          if (child.pid === undefined) return;
-          execFile("ps", ["-axo", "pgid=,rss="], (err: Error | null, out: string) => {
-            if (err || fate) return;
-            let rssKb = 0;
-            for (const line of out.split("\n")) {
-              const [pgid, rss] = line.trim().split(/\s+/);
-              if (Number(pgid) === child.pid) rssKb += Number(rss) || 0;
-            }
-            if (rssKb > RUN_MEM_MB * 1024) {
-              fate = `exceeded the ${RUN_MEM_MB} MB memory cap (rss ${Math.round(rssKb / 1024)} MB)`;
-              killGroup();
-            }
-          });
-        }, 1000);
-        // "exit" (not "close"): a forked child holding the stdio pipes must
-        // not delay the group kill that reaps it.
-        child.once("exit", (code, signal) => {
-          clearTimeout(timer);
-          clearInterval(memWatch);
-          killGroup();
-          let out = [stdout, stderr].filter(Boolean).join("\n--- stderr ---\n");
-          if (out.length > OUTPUT_LIMIT) out = out.slice(0, OUTPUT_LIMIT) + "\n[truncated]";
-          if (fate) out = `${out}\n[error: ${fate}; process group killed]`;
-          else if (code !== 0) out = `${out}\n[error: exit ${code ?? `signal ${signal}`}]`;
-          resolve(toolText(out || "(no output)"));
+        }
+      };
+      let fate: string | undefined;
+      const timer = setTimeout(() => {
+        fate = `batch timed out after ${Math.round(BASH_TIMEOUT_MS / 60000)} minutes`;
+        killAll();
+      }, BASH_TIMEOUT_MS);
+      const pgids = new Set(children.map((c) => c.pid).filter((p) => p !== undefined));
+      const memWatch = setInterval(() => {
+        execFile("ps", ["-axo", "pgid=,rss="], (err: Error | null, out: string) => {
+          if (err || fate) return;
+          let rssKb = 0;
+          for (const line of out.split("\n")) {
+            const [pgid, rss] = line.trim().split(/\s+/);
+            if (pgids.has(Number(pgid))) rssKb += Number(rss) || 0;
+          }
+          if (rssKb > RUN_MEM_MB * 1024) {
+            fate = `batch exceeded the ${RUN_MEM_MB} MB combined memory cap (rss ${Math.round(rssKb / 1024)} MB)`;
+            killAll();
+          }
         });
-        child.once("error", (error: Error) => {
-          clearTimeout(timer);
-          clearInterval(memWatch);
-          killGroup();
-          resolve(toolText(`[error: ${error.message}]`));
-        });
-      }),
+      }, 1000);
+      // "exit" (not "close"): a forked child holding the stdio pipes must
+      // not delay the group kill that reaps it.
+      const codes = await Promise.all(
+        children.map(
+          (child) =>
+            new Promise<string>((res) => {
+              child.once("exit", (code, signal) => {
+                if (child.pid !== undefined) {
+                  try {
+                    process.kill(-child.pid, "SIGKILL");
+                  } catch {
+                    /* group already gone */
+                  }
+                }
+                res(code === 0 ? "" : `exit ${code ?? `signal ${signal}`}`);
+              });
+              child.once("error", (error: Error) => res(error.message));
+            }),
+        ),
+      );
+      clearTimeout(timer);
+      clearInterval(memWatch);
+      killAll();
+      const sections = jobs.map(({ label }, i) => {
+        let out = [outs[i].stdout, outs[i].stderr].filter(Boolean).join("\n--- stderr ---\n");
+        if (out.length > OUTPUT_LIMIT) out = out.slice(0, OUTPUT_LIMIT) + "\n[truncated]";
+        if (codes[i]) out = `${out}\n[error: ${codes[i]}]`;
+        return jobs.length === 1 ? out : `## ${label}\n${out || "(no output)"}`;
+      });
+      let combined = sections.join("\n\n");
+      if (fate) combined = `${combined}\n[error: ${fate}; all process groups killed]`;
+      return toolText(combined || "(no output)");
+    },
   } as AgentTool;
 }
 
 /** Without a code grant, roles write prose artifacts only. */
 const PROSE_EXTS = new Set([".md", ".txt"]);
+
+/** Launcher: FAILED.md and PROVED.md are append-only. PROVED.md is already
+ *  write-denied by scope (record_promotion is its sole writer); FAILED.md
+ *  rewrites must preserve existing entries as an unchanged prefix. */
+const APPEND_ONLY_LEDGERS = new Set(["FAILED.md"]);
 
 /**
  * Librarian command: an external subscription CLI agent that does the web
@@ -449,6 +480,19 @@ export function workspaceTools(
             "this role writes prose artifacts only (.md/.txt); code needs a worker dispatched " +
               "with a computation declaration (launcher preregistration)",
           );
+        }
+        const base = path.basename(absolutePath);
+        if (APPEND_ONLY_LEDGERS.has(base) && fs.existsSync(absolutePath)) {
+          const prior = await fs.promises.readFile(absolutePath, "utf8");
+          if (!content.startsWith(prior) && !content.startsWith(prior.trimEnd())) {
+            throw new Error(
+              `${base} is append-only (launcher): new content must begin with the existing ` +
+                "content unchanged; append below it",
+            );
+          }
+        }
+        if (/^literature-\d+\.md$/.test(base) && fs.existsSync(absolutePath)) {
+          throw new Error("librarian reports are immutable evidence; write a new file instead");
         }
         await fs.promises.writeFile(absolutePath, content);
       },

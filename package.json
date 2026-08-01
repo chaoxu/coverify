@@ -9,7 +9,7 @@
   },
   "scripts": {
     "coverify": "bun run src/cli.ts",
-    "check": "tsc --noEmit && bun run scripts/conformance-check.ts"
+    "check": "tsc --noEmit && bun run scripts/conformance-check.ts && bun test tests"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^0.83.0",

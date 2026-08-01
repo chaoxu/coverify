@@ -74,12 +74,18 @@ that reads the web holds no code tools; the coordinator and all
 verification-cadence roles have neither grant, keeping blind reconstruction
 uncontaminated.
 
-`run_script` runs one script file (`.py` under python3, or an executable) by
-argv — no shell, so detach primitives (setsid/nohup/disown, tmux -d, screen
--dm) are not even expressible. The run is its own process group, killed when
-it exits or hits the command time limit or the RSS cap
-(`COVERIFY_RUN_MEM_MB`, default 4096); a script that forks survivors gets
-them reaped with it. Script writes are OS-sandboxed on macOS (`sandbox-exec`,
+`run_script` runs a batch of 1–8 script files (`.py` under python3, or
+executables) concurrently by argv — no shell, so detach primitives
+(setsid/nohup/disown, tmux -d, screen -dm) are not even expressible. Each
+run is its own process group; the whole batch shares one time limit and one
+combined RSS cap (`COVERIFY_RUN_MEM_MB`, default 4096) and every group is
+killed when the batch ends or a cap trips; a script that forks survivors
+gets them reaped with it. The batch is intra-turn concurrency for one
+worker; harness-level async computation handles remain the roadmap item.
+The scoped write tool additionally enforces ledger integrity: `FAILED.md`
+rewrites must preserve the existing content as an unchanged prefix
+(launcher: append-only), and `literature-<n>.md` librarian reports are
+immutable. Enforcement tests live in `tests/` and run in `bun run check`. Script writes are OS-sandboxed on macOS (`sandbox-exec`,
 deny-default writes; reads unrestricted) to the same scope. On non-darwin
 platforms the script sandbox is currently instructed-only — say so honestly;
 do not claim platform enforcement there. (A campaign placed under the system
