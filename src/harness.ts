@@ -155,6 +155,14 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         description:
           "'no close prior route' or 'closest prior route is X; this differs materially because ...'",
       }),
+      computation: Type.Optional(
+        Type.String({
+          description:
+            "Only if the worker must write and run code: the preregistered finite domain, stopping " +
+            "rule, and expected witness/certificate/table, with concrete bounds. Grants the worker " +
+            "write-code + run_script; omit for a pure-reasoning worker (prose tools only).",
+        }),
+      ),
     }),
     executionMode: "sequential",
     execute: async (_id: string, params: unknown) => {
@@ -178,7 +186,9 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         modelFamily: specLabel(roleModelSpec("worker")),
       });
       const workerSpec = roleModelSpec("worker");
-      const packetPrompt = `# Task\n\n${packet.task}\n\n# Deliverable\n\n${packet.deliverable}\n\n# Context\n\n${packet.context}`;
+      const packetPrompt =
+        `# Task\n\n${packet.task}\n\n# Deliverable\n\n${packet.deliverable}\n\n# Context\n\n${packet.context}` +
+        (packet.computation ? `\n\n# Preregistered computation\n\n${packet.computation}` : "");
       let session: RoleSession | undefined;
       let promise: Promise<string>;
       let oracleUsage: RoleUsage | undefined;
@@ -201,7 +211,11 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         session = createRoleSession({
           contract,
           charge: CHARGES.worker,
-          workspace: { cwd: evidenceDir, scope: { allow: [evidenceDir], deny: [] } },
+          workspace: {
+            cwd: evidenceDir,
+            scope: { allow: [evidenceDir], deny: [] },
+            code: packet.computation !== undefined,
+          },
           spec: workerSpec,
           models,
         });

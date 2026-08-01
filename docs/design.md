@@ -50,12 +50,18 @@ its PASS is no longer verifier-backed, and a statement edit without
 ## Workspace tools and confinement
 
 Roles have no general shell. The workspace surface is pi's `read`, `ls`, and
-`grep` (read-only), pi's `write` wrapped with an in-process scope check, and
-`run_script` — the sole way a role executes code. Workers' scope is their
-assigned `EVIDENCE/<id>/` directory; the coordinator's is the campaign dir
-*except* `.coverify/`, `STATEMENT.md`, and `PROVED.md` (deny wins).
-`PROVED.md` is appendable only through the `record_promotion` tool, which
-re-checks both verification stages and the content hashes before writing.
+`grep` (read-only) plus pi's `write` wrapped with an in-process scope check.
+Code is a gated grant, not a default: only a worker whose dispatch packet
+carries a `computation` declaration (launcher: "Use computation only for a
+preregistered finite domain and stopping rule…") gets `run_script` — the
+sole way any role executes code — and the right to write non-prose files;
+the coordinator and undeclared workers write `.md`/`.txt` only. The dispatch
+gate refuses a `computation` field with no concrete bounds. Workers' scope
+is their assigned `EVIDENCE/<id>/` directory; the coordinator's is the
+campaign dir *except* `.coverify/`, `STATEMENT.md`, and `PROVED.md` (deny
+wins). `PROVED.md` is appendable only through the `record_promotion` tool,
+which re-checks both verification stages and the content hashes before
+writing.
 
 `run_script` runs one script file (`.py` under python3, or an executable) by
 argv — no shell, so detach primitives (setsid/nohup/disown, tmux -d, screen
@@ -115,6 +121,7 @@ harness.ts       handle table, event loop, wakes; the only persistent process
 | Dispatch schema requires the FAILED.md check field (`no close prior route` / `closest is X; differs because…`) | "Before every route, materially changed retry, or variant, check `FAILED.md`…" |
 | Worker packet schema requires a finite mathematical deliverable; the deliverable-or-precise-gap report form is charged in the role prompt, not parsed | "Every exploration agent must return a proved lemma, explicit construction, counterexample/certificate, or a precise failing implication" |
 | No harness timeouts on proof/audit/reconstruction work (a per-shell-command cap is surfaced in the tool description and env-tunable) | "Do not impose a coordinator-created elapsed-time limit…" |
+| Code tools (`run_script` + non-prose writes) exist only on a worker whose packet declares a computation with concrete bounds; dispatch gate refuses thin declarations; coordinator is prose-only | "Use computation only for a preregistered finite domain and stopping rule yielding a small witness, certificate, or table." / "Never run unsupervised detached compute." |
 | Wave gate: a second **concurrent** worker on a mechanism requires `IDEA PASS` on file; sequential retries get an advisory reminder, not a refusal (that judgment is the coordinator's); single first-wave scouts exempt | "Do not allow recursive subagent fan-out or a large route wave before the parent mechanism receives `IDEA PASS`…" |
 | Verification = stage 1 (fresh hostile audit) then stage 2: bundle certification (fresh agent sees candidate + bundle; leaky bundle refused, same-bundle retry hash-blocked) → blind reconstruction (no verdict) → fresh comparison carrying stage 2's verdict with the contract's match semantics; all outputs saved as citable EVIDENCE artifacts, hash-bound | "Verification cadence" 1–2 (2026-07-31 revision): bundle certification, "a fresh comparison agent…", explicit PASS/mismatch semantics |
 | Anti-verdict-shopping: a substantive audit/comparison FAIL on the exact revision contents blocks re-verification unless a recorded rebuttal artifact is supplied; every attempt stays on record | "A substantive FAIL from any stage stands… Do not rerun a failed stage on an unchanged revision in search of a PASS" |

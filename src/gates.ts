@@ -105,6 +105,11 @@ export interface WorkerPacket {
   /** Launcher: "check FAILED.md and record either 'no close prior route' or
    *  'closest prior route is X; this differs materially because ...'" */
   failedCheck: string;
+  /** Launcher: "Use computation only for a preregistered finite domain and
+   *  stopping rule yielding a small witness, certificate, or table." Present
+   *  iff the worker is to write and run code; states that preregistration.
+   *  Without it the worker gets prose tools only. */
+  computation?: string;
 }
 
 export interface GateDecision {
@@ -144,6 +149,15 @@ export function checkWorkerDispatch(
       reason:
         "failedCheck must record either 'no close prior route' or " +
         "'closest prior route is X; this differs materially because ...' (contract: FAILED.md check)",
+    };
+  }
+  if (packet.computation !== undefined && (packet.computation.trim().length < 40 || !/\d/.test(packet.computation))) {
+    return {
+      allowed: false,
+      reason:
+        "computation must state the preregistered finite domain and stopping rule with concrete " +
+        'bounds (contract: "Use computation only for a preregistered finite domain and stopping ' +
+        'rule yielding a small witness, certificate, or table."); omit it for a no-code worker',
     };
   }
   if (userAgentLimit !== undefined && liveAgents >= userAgentLimit) {

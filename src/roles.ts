@@ -331,16 +331,28 @@ function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
   } as AgentTool;
 }
 
+/** Without a code grant, roles write prose artifacts only. */
+const PROSE_EXTS = new Set([".md", ".txt"]);
+
 /**
- * The full role tool surface for a workspace: pi's read-only file tools
- * (read, ls, grep), pi's write tool wrapped with the role's write scope, and
- * run_script as the sole way to execute code. No general shell.
+ * The role tool surface for a workspace: pi's read-only file tools
+ * (read, ls, grep) and pi's write tool wrapped with the role's write scope.
+ * No general shell. Code is gated: only a role whose dispatch packet carried
+ * a computation declaration (launcher: "preregistered finite domain and
+ * stopping rule") gets run_script and the right to write non-prose files.
  */
-export function workspaceTools(cwd: string, scope: WriteScope): AgentTool[] {
+export function workspaceTools(cwd: string, scope: WriteScope, opts?: { code?: boolean }): AgentTool[] {
+  const code = opts?.code === true;
   const scopedWrite = createWriteTool(cwd, {
     operations: {
       writeFile: async (absolutePath: string, content: string) => {
         assertInScope(scope, absolutePath);
+        if (!code && !PROSE_EXTS.has(path.extname(absolutePath).toLowerCase())) {
+          throw new Error(
+            "this role writes prose artifacts only (.md/.txt); code needs a worker dispatched " +
+              "with a computation declaration (launcher preregistration)",
+          );
+        }
         await fs.promises.writeFile(absolutePath, content);
       },
       mkdir: async (dir: string) => {
@@ -349,13 +361,9 @@ export function workspaceTools(cwd: string, scope: WriteScope): AgentTool[] {
       },
     },
   });
-  return [
-    createReadTool(cwd),
-    createLsTool(cwd),
-    createGrepTool(cwd),
-    scopedWrite,
-    runScriptTool(cwd, scope),
-  ] as AgentTool[];
+  const tools = [createReadTool(cwd), createLsTool(cwd), createGrepTool(cwd), scopedWrite] as AgentTool[];
+  if (code) tools.push(runScriptTool(cwd, scope));
+  return tools;
 }
 
 export interface RoleRun {
@@ -364,8 +372,8 @@ export interface RoleRun {
   /** One-paragraph role charge appended after the contract. */
   charge: string;
   prompt: string;
-  /** Give the role the workspace tools (read/ls/grep, scoped write, run_script) at this cwd. */
-  workspace?: { cwd: string; scope: WriteScope };
+  /** Give the role the workspace tools (read/ls/grep, scoped write; run_script iff code). */
+  workspace?: { cwd: string; scope: WriteScope; code?: boolean };
   extraTools?: AgentTool[];
   spec: ModelSpec;
   models: Models;
@@ -524,7 +532,9 @@ export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: stri
   if (isCliProvider(run.spec.provider)) {
     throw new Error("CLI backends support single-shot verdict roles only, not sessions");
   }
-  const tools = run.workspace ? workspaceTools(run.workspace.cwd, run.workspace.scope) : [];
+  const tools = run.workspace
+    ? workspaceTools(run.workspace.cwd, run.workspace.scope, { code: run.workspace.code })
+    : [];
   if (run.extraTools) tools.push(...run.extraTools);
   const agent = new Agent({
     initialState: {
@@ -565,8 +575,10 @@ essentially all route exploration, proof or counterexample construction, computa
 reconstructions, and evidence drafting to minimal-context subagents; you retain exact-statement
 control, prior-route registration, assignments, promotion and ledger decisions, user updates, and
 final synthesis. Doing proof work inline pollutes this long-lived context — dispatch a packet
-instead. You are the sole ledger writer. Tools beyond the workspace tools (read, ls, grep, write,
-run_script): dispatch_worker, dispatch_gate_critic,
+instead. You are the sole ledger writer. Your workspace tools (read, ls, grep, write) handle prose
+artifacts only — you cannot write or run code; a computation belongs in a worker packet whose
+computation field states the preregistered finite domain and stopping rule, which grants that
+worker code tools. Tools beyond the workspace tools: dispatch_worker, dispatch_gate_critic,
 request_verification, record_promotion (the only way to append to PROVED.md), cancel_worker and
 steer_worker (contract triggers only — observable struggle, user pause/stop, safety, explicit
 deadline), and declare_campaign_state (pause/complete). Your workspace tools work in the campaign directory;
@@ -574,8 +586,9 @@ edit the ledgers per the contract. STATEMENT.md, PROVED.md, and the harness jour
 write-protected. End every wake with your decisions recorded in the ledgers and
 CURRENT_FRONTIER.md consistent with them.`,
   worker: `You are one exploration worker. You receive one packet with one finite mathematical
-deliverable. Work only that packet. You have workspace tools (read, ls, grep, write, run_script)
-in your assigned evidence directory; scratch
+deliverable. Work only that packet. You have workspace tools (read, ls, grep, write) in your
+assigned evidence directory; if and only if your packet carries a preregistered computation you
+also have run_script and may write code, strictly for that computation; scratch
 work may be edited freely, but never edit a file you have already cited or reported — semantic
 changes to citable artifacts get a new revision-suffixed filename. Return a conclusion-first
 report: the deliverable — a proved lemma, explicit construction, counterexample/certificate — or
