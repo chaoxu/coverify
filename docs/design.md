@@ -259,9 +259,17 @@ journal as a self-contained HTML timeline: agent lifetimes as ranges,
 verification and gate verdicts as points, coordinator wakes as bands, plus
 summary tiles and a table view. The widget is vis-timeline, vendored and
 inlined at render time, so a trace opens offline and under a strict CSP.
-It is read-only by construction — it consumes harness audit metadata and
-writes one file under `.coverify/`, never campaign state, so it cannot
-change campaign semantics (rule 2). It also works on a live campaign;
+`--format perfetto` emits the same trace as Chrome Trace Event JSON for
+ui.perfetto.dev or chrome://tracing — agent lifetimes as slices on their own
+track, verdicts and wakes as instants, live-agent count as a counter track.
+Perfetto parses locally in the browser, so campaign data stays on the
+machine unless you explicitly share it; verified against Perfetto's own
+`trace_processor`. Neither format is a second state system: both are
+projections of the journal.
+
+Both are read-only by construction — they consume harness audit metadata and
+write one file under `.coverify/`, never campaign state, so they cannot
+change campaign semantics (rule 2). They also work on a live campaign;
 in-flight dispatches simply show as "no completion recorded".
 
 ## Skill feedback

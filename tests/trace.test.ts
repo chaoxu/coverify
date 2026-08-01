@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const { traceData, renderTrace, writeTrace } = await import("../src/trace.ts");
+const { traceData, renderTrace, writeTrace, perfettoTrace } = await import("../src/trace.ts");
 
 function campaign(rows: object[]) {
   const dir = fs.mkdtempSync("/private/tmp/coverify-trace-");
@@ -80,5 +80,37 @@ describe("renderTrace", () => {
     expect(out).toBe(path.join(dir, ".coverify", "trace.html"));
     expect(fs.readdirSync(dir).sort()).toEqual(before);
     expect(fs.readFileSync(path.join(dir, ".coverify", "journal.jsonl"), "utf8")).toContain("r001");
+  });
+});
+
+describe("perfettoTrace", () => {
+  const tr = perfettoTrace(dir) as any;
+  const ev = tr.traceEvents as any[];
+  const byPh = (ph: string) => ev.filter((e) => e.ph === ph);
+  test("emits Chrome Trace Event phases Perfetto understands", () => {
+    expect(byPh("X").length).toBe(2); // one slice per agent
+    expect(byPh("i").length).toBe(5); // 2 wakes + verify + gate + promotion
+    expect(byPh("i").filter((e) => e.cat === "wake").length).toBe(2);
+    expect(byPh("C").length).toBe(2); // live-agent counter, one per wake
+    expect(new Set(byPh("M").map((e) => e.name))).toEqual(
+      new Set(["process_name", "thread_name", "thread_sort_index"]),
+    );
+  });
+  test("timestamps are microseconds and durations are finite", () => {
+    const slice = byPh("X").find((e) => e.name === "r001")!;
+    expect(slice.ts).toBe(60_000_000);
+    expect(slice.dur).toBe(480_000_000);
+    expect(ev.every((e) => e.ts === undefined || Number.isFinite(e.ts))).toBe(true);
+  });
+  test("an uncompleted dispatch is named, not silently zero-length", () => {
+    expect(byPh("X").some((e) => /no completion recorded/.test(e.name))).toBe(true);
+  });
+  test("carries campaign identity for the trace's info panel", () => {
+    expect(tr.otherData.startedAt).toBe(traceData(dir).t0);
+  });
+  test("writes .json for the perfetto format", () => {
+    const out = writeTrace(dir, undefined, "perfetto");
+    expect(out.endsWith("trace.perfetto.json")).toBe(true);
+    expect(JSON.parse(fs.readFileSync(out, "utf8")).traceEvents.length).toBe(ev.length);
   });
 });

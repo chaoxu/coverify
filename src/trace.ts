@@ -134,10 +134,78 @@ ${body}
 `;
 }
 
+/**
+ * The same trace in Chrome Trace Event format, for Perfetto (ui.perfetto.dev)
+ * or chrome://tracing: agent lifetimes as slices on their own track, verdicts
+ * and wakes as instants, live-agent count as a counter. Perfetto parses the
+ * file locally in the browser — nothing is uploaded unless you click Share.
+ */
+export function perfettoTrace(dir: string): object {
+  const data = traceData(dir);
+  const us = (t: number) => Math.round(t * 1e6);
+  const PID = 1;
+  const events: Record<string, unknown>[] = [
+    { ph: "M", name: "process_name", pid: PID, tid: 0, args: { name: path.basename(path.resolve(dir)) } },
+  ];
+  const track = (tid: number, name: string, sort: number) => {
+    events.push({ ph: "M", name: "thread_name", pid: PID, tid, args: { name } });
+    events.push({ ph: "M", name: "thread_sort_index", pid: PID, tid, args: { sort_index: sort } });
+  };
+
+  // One track per agent, ordered by start, so the trace reads as a Gantt.
+  const agents = data.agents.slice().sort((a, b) => a.start - b.start);
+  agents.forEach((a, i) => {
+    const tid = 100 + i;
+    track(tid, `${a.id} · ${a.role}`, i);
+    const open = a.end == null;
+    events.push({
+      ph: "X",
+      pid: PID,
+      tid,
+      name: open ? `${a.id} (no completion recorded)` : a.id,
+      ts: us(a.start),
+      dur: us((a.end ?? a.start + 60) - a.start),
+      cat: open ? "agent,lost" : "agent",
+      args: { role: a.role, mechanism: a.mechanism, task: a.task, model: a.model, cancelled: a.cancelled ?? false },
+    });
+  });
+
+  // Coordinator track: wakes as instants plus a live-agent counter.
+  track(1, "coordinator", -3);
+  for (const w of data.events.filter((e) => e.type === "wake")) {
+    events.push({ ph: "i", s: "p", pid: PID, tid: 1, name: `wake ${w.n}`, ts: us(w.t), cat: "wake", args: { live: w.live, newReports: w.reports } });
+    events.push({ ph: "C", pid: PID, tid: 1, name: "live agents", ts: us(w.t), args: { live: w.live } });
+  }
+
+  // Verdict tracks, named so a Perfetto search for FAIL lands on them.
+  track(2, "verification cadence", -2);
+  for (const v of data.events.filter((e) => e.type === "verify")) {
+    events.push({
+      ph: "i", s: "p", pid: PID, tid: 2, ts: us(v.t), cat: "verify",
+      name: `${v.stage} ${v.verdict ?? ""}`.trim(),
+      args: { revision: v.revision, verdict: v.verdict ?? "(no verdict)", model: v.model },
+    });
+  }
+  track(3, "idea gates & promotions", -1);
+  for (const g of data.events.filter((e) => e.type === "gate")) {
+    events.push({ ph: "i", s: "p", pid: PID, tid: 3, ts: us(g.t), cat: "gate", name: String(g.verdict), args: { mechanism: g.mechanism } });
+  }
+  for (const p of data.events.filter((e) => e.type === "promotion")) {
+    events.push({ ph: "i", s: "p", pid: PID, tid: 3, ts: us(p.t), cat: "promotion", name: `promoted ${p.revision}`, args: { revision: p.revision } });
+  }
+
+  return {
+    traceEvents: events,
+    displayTimeUnit: "ms",
+    otherData: { campaign: path.basename(path.resolve(dir)), startedAt: data.t0, spanSeconds: data.span },
+  };
+}
+
 /** Writes the trace and returns the output path. */
-export function writeTrace(dir: string, out?: string): string {
-  const target = out ?? path.join(dir, ".coverify", "trace.html");
+export function writeTrace(dir: string, out?: string, format: "html" | "perfetto" = "html"): string {
+  const target =
+    out ?? path.join(dir, ".coverify", format === "perfetto" ? "trace.perfetto.json" : "trace.html");
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, renderTrace(dir));
+  fs.writeFileSync(target, format === "perfetto" ? JSON.stringify(perfettoTrace(dir)) : renderTrace(dir));
   return target;
 }

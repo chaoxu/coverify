@@ -11,7 +11,9 @@ function usage(): never {
   coverify prove "<exact statement>" [--dir campaign] [--agent-limit N] [--max-wakes N]
   coverify resume [--dir campaign] [--agent-limit N] [--max-wakes N]
   coverify status [--dir campaign]
-  coverify trace [--dir campaign] [--out file.html]   render the journal as an HTML timeline
+  coverify trace [--dir campaign] [--out file] [--format html|perfetto]
+                                    render the journal as a timeline: a self-contained HTML page,
+                                    or Chrome Trace Event JSON for ui.perfetto.dev
   coverify amend [--dir campaign]   accept an explicit user amendment of STATEMENT.md
   coverify login <provider>         subscription OAuth (anthropic = Claude Pro/Max,
                                     openai-codex = ChatGPT; credential -> ~/.config/coverify/auth.json)
@@ -184,8 +186,13 @@ switch (command) {
       console.error(`no campaign at ${dir}`);
       process.exit(1);
     }
-    const out = writeTrace(dir, flags.get("out"));
-    console.error(`[coverify] trace written: ${out}`);
+    const format = flags.get("format") ?? "html";
+    if (format !== "html" && format !== "perfetto") usage();
+    const out = writeTrace(dir, flags.get("out"), format);
+    console.error(
+      `[coverify] trace written: ${out}` +
+        (format === "perfetto" ? " — open it at https://ui.perfetto.dev (parsed locally in the browser)" : ""),
+    );
     console.log(out);
     break;
   }

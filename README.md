@@ -23,7 +23,8 @@ bun run src/cli.ts prove "Exact statement to resolve." --dir campaign
 bun run src/cli.ts status --dir campaign
 bun run src/cli.ts resume --dir campaign
 bun run src/cli.ts amend --dir campaign    # accept an explicit user amendment of STATEMENT.md
-bun run src/cli.ts trace --dir campaign    # render the journal as a self-contained HTML timeline
+bun run src/cli.ts trace --dir campaign                     # self-contained HTML timeline
+bun run src/cli.ts trace --dir campaign --format perfetto    # Chrome Trace Event JSON
 ```
 
 `trace` writes `campaign/.coverify/trace.html` (override with `--out`): agent
