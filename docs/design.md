@@ -60,6 +60,13 @@ claim platform enforcement there. (A campaign placed under the system temp
 tree is inside the sandbox's blanket temp allowance — keep campaigns in real
 project directories.)
 
+Process confinement matches: nothing launched by role bash outlives the
+command. The tool runs each command as its own process-group leader, kills
+the group when the foreground shell exits or hits the command limit, and
+refuses the detach primitives that escape process groups
+(setsid/nohup/disown, tmux -d, screen -dm). Long computation goes through
+the scheduler front door, per the launcher.
+
 ## Runtime shape
 
 ```
@@ -221,6 +228,12 @@ harnesses directly — `claude -p` / `codex exec` — via a harness-provided
 - [x] Out-of-tree gate store; statement freeze + `coverify amend`; run version stamps
 - [ ] Retraction bookkeeping helper (registry relabel + dependent demotion)
 - [ ] Non-load-bearing delta-audit carry-forward path (currently always full re-verification — stricter than the contract, acceptable)
+- [x] No unsupervised detached compute (launcher: "Never run unsupervised
+      detached compute."): role bash refuses detach primitives
+      (setsid/nohup/disown, tmux -d, screen -dm) and kills the command's
+      whole process group when the foreground shell exits or times out —
+      added 2026-08-01 after detached `setsid nohup python3` search jobs
+      from a live campaign memory-exhausted saturn into a kernel panic
 - [ ] Compute handles via the fleet scheduler front door (Nomad)
 - [ ] `run_coding_agent` worker tool (claude/codex CLI, design above)
 - [ ] Independent different-family audit path (fable-review for the Anthropic
@@ -234,11 +247,11 @@ harnesses directly — `claude -p` / `codex exec` — via a harness-provided
       anthropic, openai, openai-codex (subscription OAuth), google,
       claude-bridge (Agent SDK tool loop, coordinator-only), claude-cli
       (`claude -p`), codex-cli, chatgpt-cli. Defaults all subscription
-      billed: workers `openai-codex/gpt-5.6-sol@max` (tooled Sol agents,
-      ChatGPT-subscription OAuth); coordinator
-      `claude-bridge/claude-opus-5@high`; verdict roles `claude-cli/opus`
-      — user decisions 2026-07-31; worker candidates are verified
-      cross-family out of the box)
+      billed: coordinator and workers `openai-codex/gpt-5.6-sol@max`
+      (tooled Sol agents, ChatGPT-subscription OAuth); verdict roles
+      `codex-cli/gpt-5.6-sol` except the hostile auditor on
+      `claude-cli/opus` — user decision 2026-08-01; the audit stage is
+      still cross-family out of the box)
 - [ ] Per-wake model routing and eval-driven per-role tuning (cheap wakes vs
       promotion wakes; cheap critics) — decided by eval evidence
 - [ ] Linux write-sandbox backend (bubblewrap/sandbox equivalent)

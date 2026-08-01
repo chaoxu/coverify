@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs";
@@ -75,25 +75,24 @@ const ROLE_ENV: Record<RoleName, string> = {
   comparator: "COVERIFY_MODEL_COMPARATOR",
 };
 
-/** Subscription-only defaults (user decisions, 2026-07-31): workers run
- *  GPT-5.6 Sol at max effort as full pi agents through the openai-codex
- *  provider (ChatGPT-subscription OAuth via `coverify login openai-codex`;
- *  @max is the top of Sol's thinking-level map); Opus handles judgment —
- *  the coordinator's tool loop through claude-bridge (Agent SDK; official
- *  `claude` login) and the five single-shot verdict roles through
- *  `claude -p`. Verification is therefore cross-family for worker-produced
- *  candidates. Bridge sessions cross-contaminate when concurrent, so
- *  claude-bridge is coordinator-only (enforced at preflight). Third-party
- *  OAuth against Anthropic draws Extra Credits, hence the official Claude
- *  CLIs. Every role is overridable per-role or globally. */
+/** Subscription-only defaults (user decisions, 2026-08-01): OpenAI for
+ *  almost everything — the coordinator's tool loop and the workers run
+ *  GPT-5.6 Sol as full pi agents through the openai-codex provider
+ *  (ChatGPT-subscription OAuth via `coverify login openai-codex`; @max is
+ *  the top of Sol's thinking-level map), and the single-shot verdict roles
+ *  run through the `codex` CLI. The one exception is the hostile auditor
+ *  (the independent audit): it stays on Opus via `claude -p`, so every
+ *  candidate still gets one cross-family check. Third-party OAuth against
+ *  Anthropic draws Extra Credits, hence the official Claude CLI. Every
+ *  role is overridable per-role or globally. */
 const ROLE_DEFAULTS: Partial<Record<RoleName, string>> = {
-  coordinator: "claude-bridge/claude-opus-5@high",
+  coordinator: "openai-codex/gpt-5.6-sol@max",
   worker: "openai-codex/gpt-5.6-sol@max",
-  gateCritic: "claude-cli/opus",
+  gateCritic: "codex-cli/gpt-5.6-sol",
   hostileAuditor: "claude-cli/opus",
-  bundleCertifier: "claude-cli/opus",
-  reconstructor: "claude-cli/opus",
-  comparator: "claude-cli/opus",
+  bundleCertifier: "codex-cli/gpt-5.6-sol",
+  reconstructor: "codex-cli/gpt-5.6-sol",
+  comparator: "codex-cli/gpt-5.6-sol",
 };
 
 const BASE_DEFAULT = "anthropic/claude-opus-5@high";
@@ -198,6 +197,26 @@ function sandboxedCommand(command: string, scope: WriteScope): { file: string; a
   return { file: "sandbox-exec", args: ["-p", profile, "bash", "-c", command] };
 }
 
+/**
+ * Enforces the launcher's "Never run unsupervised detached compute." clause.
+ * setsid escapes any process-group cleanup by design, so it (and the other
+ * detach primitives) are refused outright rather than reaped.
+ */
+function detachedComputeVeto(command: string): string | undefined {
+  const detach =
+    /(^|[\s;|&(`{])(setsid|nohup|disown)([\s;)`}]|$)/.test(command) ||
+    /\btmux\s+new\S*\s[^;|&]*-d/.test(command) ||
+    /\bscreen\s+-\S*d\S*m/.test(command);
+  if (!detach) return undefined;
+  return (
+    "[blocked: setsid/nohup/disown/tmux -d/screen -dm detach a process from supervision — " +
+    'the launcher forbids unsupervised detached compute ("Never run unsupervised detached ' +
+    'compute."). Run it foreground within the command limit (plain `&` background jobs are ' +
+    "allowed but are killed when the command exits — use `wait`), or route it through the " +
+    "scheduler front door.]"
+  );
+}
+
 function bashTool(cwd: string, scope: WriteScope): AgentTool {
   return {
     name: "bash",
@@ -205,25 +224,60 @@ function bashTool(cwd: string, scope: WriteScope): AgentTool {
     description:
       `Run a bash command. Working directory: ${cwd}. Writes are OS-sandboxed to your assigned ` +
       `directories. Each command has a ${Math.round(BASH_TIMEOUT_MS / 60000)}-minute limit — this bounds one ` +
-      "shell command, not your turn; route genuinely long computations through the scheduler front door.",
+      "shell command, not your turn; route genuinely long computations through the scheduler front door. " +
+      "Nothing outlives the command: when it returns (or times out), its whole process group is killed, " +
+      "and detach primitives (setsid/nohup/disown, tmux -d, screen -dm) are refused.",
     parameters: Type.Object({
       command: Type.String({ description: "Command to run" }),
     }),
     executionMode: "sequential",
     execute: async (_id: string, params: unknown) =>
       new Promise((resolve) => {
-        const { file, args } = sandboxedCommand((params as { command: string }).command, scope);
-        execFile(
-          file,
-          args,
-          { cwd, timeout: BASH_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
-          (error: Error | null, stdout: string, stderr: string) => {
-            let out = [stdout, stderr].filter(Boolean).join("\n--- stderr ---\n");
-            if (out.length > OUTPUT_LIMIT) out = out.slice(0, OUTPUT_LIMIT) + "\n[truncated]";
-            if (error) out = `${out}\n[error: ${error.message}]`;
-            resolve(toolText(out || "(no output)"));
-          },
-        );
+        const command = (params as { command: string }).command;
+        const veto = detachedComputeVeto(command);
+        if (veto) return resolve(toolText(veto));
+        const { file, args } = sandboxedCommand(command, scope);
+        // detached: the child leads its own process group, so background jobs
+        // it spawns can be reaped as a unit when the foreground shell exits.
+        const child = spawn(file, args, { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+        let stdout = "";
+        let stderr = "";
+        child.stdout.on("data", (d: Buffer) => {
+          if (stdout.length <= OUTPUT_LIMIT) stdout += d;
+        });
+        child.stderr.on("data", (d: Buffer) => {
+          if (stderr.length <= OUTPUT_LIMIT) stderr += d;
+        });
+        const killGroup = () => {
+          if (child.pid !== undefined) {
+            try {
+              process.kill(-child.pid, "SIGKILL");
+            } catch {
+              /* group already gone */
+            }
+          }
+        };
+        let timedOut = false;
+        const timer = setTimeout(() => {
+          timedOut = true;
+          killGroup();
+        }, BASH_TIMEOUT_MS);
+        // "exit" (not "close"): a background child holding the stdio pipes
+        // must not delay the group kill that reaps it.
+        child.once("exit", (code, signal) => {
+          clearTimeout(timer);
+          killGroup();
+          let out = [stdout, stderr].filter(Boolean).join("\n--- stderr ---\n");
+          if (out.length > OUTPUT_LIMIT) out = out.slice(0, OUTPUT_LIMIT) + "\n[truncated]";
+          if (timedOut) out = `${out}\n[error: timed out after ${BASH_TIMEOUT_MS}ms; process group killed]`;
+          else if (code !== 0) out = `${out}\n[error: exit ${code ?? `signal ${signal}`}]`;
+          resolve(toolText(out || "(no output)"));
+        });
+        child.once("error", (error: Error) => {
+          clearTimeout(timer);
+          killGroup();
+          resolve(toolText(`[error: ${error.message}]`));
+        });
       }),
   } as AgentTool;
 }
