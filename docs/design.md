@@ -63,6 +63,17 @@ wins). `PROVED.md` is appendable only through the `record_promotion` tool,
 which re-checks both verification stages and the content hashes before
 writing.
 
+Web access is likewise a gated grant, and it is delegated: a worker whose
+packet carries a `literature` question gets `literature_search`, which
+spawns an external librarian CLI agent (`COVERIFY_LITERATURE_CMD`, default
+`agy` print-mode with live web search) as a supervised child and archives
+the full compiled report as `literature-<n>.md` evidence (self-attested
+provenance, like `fable-review`). No campaign role ever touches the network
+itself; `literature` and `computation` are mutually exclusive so the role
+that reads the web holds no code tools; the coordinator and all
+verification-cadence roles have neither grant, keeping blind reconstruction
+uncontaminated.
+
 `run_script` runs one script file (`.py` under python3, or an executable) by
 argv — no shell, so detach primitives (setsid/nohup/disown, tmux -d, screen
 -dm) are not even expressible. The run is its own process group, killed when

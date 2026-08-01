@@ -335,13 +335,110 @@ function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
 const PROSE_EXTS = new Set([".md", ".txt"]);
 
 /**
+ * Librarian command: an external subscription CLI agent that does the web
+ * search and returns a compiled report, so no campaign role ever touches the
+ * network itself. Space-split argv; the librarian prompt is appended as the
+ * final argument.
+ */
+const LITERATURE_CMD = (
+  process.env.COVERIFY_LITERATURE_CMD ??
+  "agy --dangerously-skip-permissions --print-timeout 10m -p"
+).split(/\s+/);
+
+const LIBRARIAN_CHARGE =
+  "You are a mathematical literature librarian. Web-search the question below and compile a " +
+  "report: for every claim give the exact bibliographic citation (authors, title, venue, year) " +
+  "and source URL; quote load-bearing statements verbatim and mark them as quotes, keeping " +
+  "paraphrase clearly separate; state plainly what you could not find or verify. Never invent a " +
+  "reference. The requester cannot browse; your report is their only window.\n\nQuestion:\n";
+
+/**
+ * Delegated literature search: spawns the librarian CLI supervised (own
+ * process group, killed on exit/timeout) and archives the full report as an
+ * evidence artifact so citations remain auditable.
+ */
+function literatureSearchTool(cwd: string): AgentTool {
+  return {
+    name: "literature_search",
+    label: "Literature search",
+    description:
+      "Ask an external librarian agent (with live web search) one literature question. Returns a " +
+      "compiled report with citations and URLs, archived verbatim under your evidence directory " +
+      "as literature-<n>.md. The librarian's claims are secondhand: treat them as leads, cite the " +
+      "archived report, and label dependencies per the contract. One question per call; " +
+      `${Math.round(BASH_TIMEOUT_MS / 60000)}-minute limit.`,
+    parameters: Type.Object({
+      question: Type.String({ description: "The literature question, self-contained" }),
+    }),
+    executionMode: "sequential",
+    execute: async (_id: string, params: unknown) =>
+      new Promise((resolve) => {
+        const { question } = params as { question: string };
+        const child = spawn(LITERATURE_CMD[0], [...LITERATURE_CMD.slice(1), LIBRARIAN_CHARGE + question], {
+          cwd,
+          detached: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let stdout = "";
+        let stderr = "";
+        child.stdout.on("data", (d: Buffer) => {
+          if (stdout.length <= OUTPUT_LIMIT * 4) stdout += d;
+        });
+        child.stderr.on("data", (d: Buffer) => {
+          if (stderr.length <= OUTPUT_LIMIT) stderr += d;
+        });
+        const killGroup = () => {
+          if (child.pid !== undefined) {
+            try {
+              process.kill(-child.pid, "SIGKILL");
+            } catch {
+              /* group already gone */
+            }
+          }
+        };
+        let timedOut = false;
+        const timer = setTimeout(() => {
+          timedOut = true;
+          killGroup();
+        }, BASH_TIMEOUT_MS);
+        child.once("exit", (code) => {
+          clearTimeout(timer);
+          killGroup();
+          if (timedOut || code !== 0 || !stdout.trim()) {
+            const detail = timedOut ? "timed out" : `exit ${code}`;
+            return resolve(toolText(`[error: librarian ${detail}]${stderr ? `\n${stderr.slice(0, 2000)}` : ""}`));
+          }
+          const n = fs.readdirSync(cwd).filter((f) => /^literature-\d+\.md$/.test(f)).length + 1;
+          const artifact = path.join(cwd, `literature-${n}.md`);
+          fs.writeFileSync(
+            artifact,
+            `# Literature search ${n}\n\nLibrarian: \`${LITERATURE_CMD.join(" ")}\` (self-attested provenance)\n\n## Question\n\n${question}\n\n## Report\n\n${stdout}\n`,
+          );
+          let out = stdout;
+          if (out.length > OUTPUT_LIMIT) out = out.slice(0, OUTPUT_LIMIT) + "\n[truncated; full report in artifact]";
+          resolve(toolText(`[archived: ${artifact}]\n\n${out}`));
+        });
+        child.once("error", (error: Error) => {
+          clearTimeout(timer);
+          killGroup();
+          resolve(toolText(`[error: ${error.message}]`));
+        });
+      }),
+  } as AgentTool;
+}
+
+/**
  * The role tool surface for a workspace: pi's read-only file tools
  * (read, ls, grep) and pi's write tool wrapped with the role's write scope.
  * No general shell. Code is gated: only a role whose dispatch packet carried
  * a computation declaration (launcher: "preregistered finite domain and
  * stopping rule") gets run_script and the right to write non-prose files.
  */
-export function workspaceTools(cwd: string, scope: WriteScope, opts?: { code?: boolean }): AgentTool[] {
+export function workspaceTools(
+  cwd: string,
+  scope: WriteScope,
+  opts?: { code?: boolean; literature?: boolean },
+): AgentTool[] {
   const code = opts?.code === true;
   const scopedWrite = createWriteTool(cwd, {
     operations: {
@@ -363,6 +460,7 @@ export function workspaceTools(cwd: string, scope: WriteScope, opts?: { code?: b
   });
   const tools = [createReadTool(cwd), createLsTool(cwd), createGrepTool(cwd), scopedWrite] as AgentTool[];
   if (code) tools.push(runScriptTool(cwd, scope));
+  if (opts?.literature === true) tools.push(literatureSearchTool(cwd));
   return tools;
 }
 
@@ -372,8 +470,9 @@ export interface RoleRun {
   /** One-paragraph role charge appended after the contract. */
   charge: string;
   prompt: string;
-  /** Give the role the workspace tools (read/ls/grep, scoped write; run_script iff code). */
-  workspace?: { cwd: string; scope: WriteScope; code?: boolean };
+  /** Give the role the workspace tools (read/ls/grep, scoped write; run_script iff code;
+   *  librarian search iff literature). */
+  workspace?: { cwd: string; scope: WriteScope; code?: boolean; literature?: boolean };
   extraTools?: AgentTool[];
   spec: ModelSpec;
   models: Models;
@@ -533,7 +632,10 @@ export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: stri
     throw new Error("CLI backends support single-shot verdict roles only, not sessions");
   }
   const tools = run.workspace
-    ? workspaceTools(run.workspace.cwd, run.workspace.scope, { code: run.workspace.code })
+    ? workspaceTools(run.workspace.cwd, run.workspace.scope, {
+        code: run.workspace.code,
+        literature: run.workspace.literature,
+      })
     : [];
   if (run.extraTools) tools.push(...run.extraTools);
   const agent = new Agent({
@@ -576,9 +678,11 @@ reconstructions, and evidence drafting to minimal-context subagents; you retain 
 control, prior-route registration, assignments, promotion and ledger decisions, user updates, and
 final synthesis. Doing proof work inline pollutes this long-lived context — dispatch a packet
 instead. You are the sole ledger writer. Your workspace tools (read, ls, grep, write) handle prose
-artifacts only — you cannot write or run code; a computation belongs in a worker packet whose
+artifacts only — you cannot write or run code and cannot search the web; a computation belongs in
+a worker packet whose
 computation field states the preregistered finite domain and stopping rule, which grants that
-worker code tools. Tools beyond the workspace tools: dispatch_worker, dispatch_gate_critic,
+worker code tools, and a literature question belongs in a worker packet whose literature field
+states it, which grants that worker a delegated librarian search tool (never combined with code). Tools beyond the workspace tools: dispatch_worker, dispatch_gate_critic,
 request_verification, record_promotion (the only way to append to PROVED.md), cancel_worker and
 steer_worker (contract triggers only — observable struggle, user pause/stop, safety, explicit
 deadline), and declare_campaign_state (pause/complete). Your workspace tools work in the campaign directory;
@@ -588,7 +692,9 @@ CURRENT_FRONTIER.md consistent with them.`,
   worker: `You are one exploration worker. You receive one packet with one finite mathematical
 deliverable. Work only that packet. You have workspace tools (read, ls, grep, write) in your
 assigned evidence directory; if and only if your packet carries a preregistered computation you
-also have run_script and may write code, strictly for that computation; scratch
+also have run_script and may write code, strictly for that computation; if it carries a literature
+question you instead have literature_search (a delegated librarian with web access — archive and
+cite its reports, and treat its claims as leads, not established results); scratch
 work may be edited freely, but never edit a file you have already cited or reported — semantic
 changes to citable artifacts get a new revision-suffixed filename. Return a conclusion-first
 report: the deliverable — a proved lemma, explicit construction, counterexample/certificate — or

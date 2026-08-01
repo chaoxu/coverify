@@ -163,6 +163,14 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
             "write-code + run_script; omit for a pure-reasoning worker (prose tools only).",
         }),
       ),
+      literature: Type.Optional(
+        Type.String({
+          description:
+            "Only for a literature scout: the literature question. Grants a delegated librarian " +
+            "search tool (external web-searching agent; reports archived as evidence). Mutually " +
+            "exclusive with computation.",
+        }),
+      ),
     }),
     executionMode: "sequential",
     execute: async (_id: string, params: unknown) => {
@@ -188,7 +196,8 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       const workerSpec = roleModelSpec("worker");
       const packetPrompt =
         `# Task\n\n${packet.task}\n\n# Deliverable\n\n${packet.deliverable}\n\n# Context\n\n${packet.context}` +
-        (packet.computation ? `\n\n# Preregistered computation\n\n${packet.computation}` : "");
+        (packet.computation ? `\n\n# Preregistered computation\n\n${packet.computation}` : "") +
+        (packet.literature ? `\n\n# Literature question (granted)\n\n${packet.literature}` : "");
       let session: RoleSession | undefined;
       let promise: Promise<string>;
       let oracleUsage: RoleUsage | undefined;
@@ -215,6 +224,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
             cwd: evidenceDir,
             scope: { allow: [evidenceDir], deny: [] },
             code: packet.computation !== undefined,
+            literature: packet.literature !== undefined,
           },
           spec: workerSpec,
           models,

@@ -110,6 +110,11 @@ export interface WorkerPacket {
    *  iff the worker is to write and run code; states that preregistration.
    *  Without it the worker gets prose tools only. */
   computation?: string;
+  /** Present iff the worker is a literature scout: states the literature
+   *  question. Grants the delegated librarian search tool (an external
+   *  web-searching agent); never combinable with computation — the role that
+   *  reads the web must hold no code tools. */
+  literature?: string;
 }
 
 export interface GateDecision {
@@ -158,6 +163,20 @@ export function checkWorkerDispatch(
         "computation must state the preregistered finite domain and stopping rule with concrete " +
         'bounds (contract: "Use computation only for a preregistered finite domain and stopping ' +
         'rule yielding a small witness, certificate, or table."); omit it for a no-code worker',
+    };
+  }
+  if (packet.literature !== undefined && packet.computation !== undefined) {
+    return {
+      allowed: false,
+      reason:
+        "computation and literature are mutually exclusive grants: the role that reads the web " +
+        "must hold no code tools; dispatch two workers",
+    };
+  }
+  if (packet.literature !== undefined && packet.literature.trim().length < 30) {
+    return {
+      allowed: false,
+      reason: "literature must state a substantive, self-contained question; omit it for a non-scout worker",
     };
   }
   if (userAgentLimit !== undefined && liveAgents >= userAgentLimit) {
