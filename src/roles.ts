@@ -396,7 +396,7 @@ function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
     executionMode: "sequential",
     execute: async (_id: string, params: unknown, signal?: AbortSignal) => {
       const { runs } = params as { runs: { path: string; args?: string[] }[] };
-      const jobs: { label: string; argv: string[] }[] = [];
+      const jobs: { label: string; script: string; argv: string[] }[] = [];
       for (const r of runs) {
         const script = path.resolve(cwd, r.path);
         const label = [r.path, ...(r.args ?? [])].join(" ");
@@ -410,19 +410,21 @@ function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
           );
         }
         if (!fs.existsSync(script)) return toolText(`[error: no such script: ${script}]`);
-        if (script.endsWith(".py")) jobs.push({ label, argv: ["python3", script, ...(r.args ?? [])] });
+        if (script.endsWith(".py")) jobs.push({ label, script, argv: ["python3", script, ...(r.args ?? [])] });
         else {
           try {
             fs.accessSync(script, fs.constants.X_OK);
-            jobs.push({ label, argv: [script, ...(r.args ?? [])] });
+            jobs.push({ label, script, argv: [script, ...(r.args ?? [])] });
           } catch {
             return toolText(`[error: ${r.path}: script must be .py or an executable file]`);
           }
         }
       }
+      // Sweep marks: the working directory plus each script path, so a
+      // survivor that left the process group is still found by command line.
       const { outs, fate } = await supervise(
         jobs.map(({ argv }) => sandboxedArgv(argv, scope)),
-        { cwd, marks: [cwd, ...jobs.map((j) => j.argv.find((a) => a.startsWith(cwd)) ?? j.argv[0])], signal },
+        { cwd, marks: [cwd, ...jobs.map((j) => j.script)], signal },
       );
       const sections = jobs.map(({ label }, i) => {
         let out = [outs[i].stdout, outs[i].stderr].filter(Boolean).join("\n--- stderr ---\n");
@@ -436,7 +438,6 @@ function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
     },
   } as AgentTool;
 }
-
 
 interface SupervisedOut {
   stdout: string;
@@ -681,16 +682,17 @@ export function workspaceTools(
     operations: {
       writeFile: async (absolutePath: string, content: string) => {
         assertInScope(scope, absolutePath);
-        if (!code && !PROSE_EXTS.has(path.extname(absolutePath).toLowerCase())) {
+        // Every rule below judges the resolved path, never the typed one: a
+        // symlink named `notes.md` must not smuggle a write into a script or
+        // through to a ledger under another name.
+        const real = realResolve(absolutePath);
+        const base = path.basename(real).toLowerCase();
+        if (!code && !PROSE_EXTS.has(path.extname(base))) {
           throw new Error(
             "this role writes prose artifacts only (.md/.txt); code runs only in a technician " +
               "dispatch (launcher preregistration)",
           );
         }
-        // Resolved, not typed: a symlink named anything else would otherwise
-        // skip these checks while writing through to the real ledger.
-        const real = realResolve(absolutePath);
-        const base = path.basename(real).toLowerCase();
         if (APPEND_ONLY_LEDGERS.has(base) && fs.existsSync(real)) {
           const prior = await fs.promises.readFile(real, "utf8");
           if (!content.startsWith(prior) && !content.startsWith(prior.trimEnd())) {

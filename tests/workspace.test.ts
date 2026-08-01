@@ -207,6 +207,17 @@ describe("enforcement bypasses (regression)", () => {
     ).rejects.toThrow(/outside assigned scope/);
     expect(fs.readFileSync(path.join(ws, "PROVED.md"), "utf8")).toContain("real promotions");
   });
+  test("a prose-named symlink cannot smuggle a code write", async () => {
+    const prose = tools(ws);
+    const script = path.join(ws, "target.py");
+    fs.writeFileSync(script, "print(0)\n");
+    const link = path.join(ws, "innocuous.md");
+    if (!fs.existsSync(link)) fs.symlinkSync(script, link);
+    await expect(prose.write.execute("t", { path: link, content: "import os" })).rejects.toThrow(
+      /prose artifacts only/,
+    );
+    expect(fs.readFileSync(script, "utf8")).toContain("print(0)");
+  });
   test("write refuses a symlink pointing outside the scope", async () => {
     const outside = tmp("symlink-target");
     const victim = path.join(outside, "victim.md");

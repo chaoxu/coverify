@@ -156,14 +156,13 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   /** Registers a settled-queue handle: the one async pattern every dispatch shares. */
   const registerHandle = (h: Omit<Handle, "settled">) => {
     const handle = h as Handle;
-    handle.settled = handle.promise.then(
-      (report) => {
-        if (handles.has(handle.id)) settledQueue.push({ h: handle, report });
-      },
-      (err: unknown) => {
-        if (handles.has(handle.id))
-          settledQueue.push({ h: handle, report: `[${handle.id} failed: ${String(err)}]` });
-      },
+    // A cancelled handle is removed from the table; its late report (or
+    // failure) must not resurface at a later wake.
+    const queue = (report: string) => {
+      if (handles.has(handle.id)) settledQueue.push({ h: handle, report });
+    };
+    handle.settled = handle.promise.then(queue, (err: unknown) =>
+      queue(`[${handle.id} failed: ${String(err)}]`),
     );
     handles.set(handle.id, handle);
     activityThisWake++;
@@ -213,14 +212,16 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       task: packet.task,
       modelFamily: specLabel(spec),
     });
+    // Role-authoritative, read once: tool schemas allow unknown extras, so a
+    // `literature` field smuggled onto a technician packet must neither reach
+    // the prompt nor grant the librarian alongside run_script.
+    const literature = role === "reasoner" ? (packet as ReasonerPacket).literature : undefined;
     const packetPrompt =
       `# Task\n\n${packet.task}\n\n# Deliverable\n\n${packet.deliverable}\n\n# Context\n\n${packet.context}` +
       (isTechnician
         ? `\n\n# Preregistered computation\n\n${(packet as TechnicianPacket).computation}`
         : "") +
-      (role === "reasoner" && (packet as ReasonerPacket).literature
-        ? `\n\n# Literature question (granted)\n\n${(packet as ReasonerPacket).literature}`
-        : "");
+      (literature ? `\n\n# Literature question (granted)\n\n${literature}` : "");
     let session: RoleSession | undefined;
     let promise: Promise<string>;
     let oracleUsage: RoleUsage | undefined;
@@ -247,10 +248,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           cwd: evidenceDir,
           scope: { allow: [evidenceDir], deny: [] },
           code: isTechnician,
-          // Role-authoritative: tool schemas allow unknown extras, so a
-          // `literature` field smuggled onto a technician packet must not
-          // grant the librarian alongside run_script.
-          literature: role === "reasoner" && (packet as ReasonerPacket).literature !== undefined,
+          literature: literature !== undefined,
         },
         spec,
         models,
@@ -463,70 +461,81 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       const abortIfCancelled = () => {
         if (cancelled()) throw new Error(`verification cancelled; no verdict recorded for ${rel}`);
       };
-      const cadence = async (): Promise<string> => {
-        // Stage 1 — hostile audit (bundle includes PROVED.md so promoted claims are checkable).
-        const { text: auditText, usage: auditTextUsage } = await runRole({
+      /**
+       * One verdict stage of the cadence: a fresh role call, a first-line
+       * PASS/FAIL parse, the output saved as a citable artifact, and a gate
+       * record bound to the candidate + statement hashes. Audit, bundle
+       * certification, and comparison differ only in inputs and disclosure —
+       * the stage sequence itself stays spelled out in `cadence` below.
+       */
+      const verdictStage = async (stage: {
+        kind: "audit" | "bundle-cert" | "comparison";
+        role: "hostileAuditor" | "bundleCertifier" | "comparator";
+        prompt: string;
+        suppliedInputs: string[];
+        blindness: string;
+        extra?: Record<string, unknown>;
+      }): Promise<{ text: string; pass: boolean; artifact: string }> => {
+        const spec = roleModelSpec(stage.role);
+        const { text, usage } = await runRole({
           contract,
-          charge: CHARGES.hostileAuditor,
-          prompt: `# Statement\n\n${statement}\n\n# Currently promoted (PROVED.md)\n\n${proved}\n\n# Declared dependencies (coordinator-authored)\n\n${p.declaredDependencies}\n\n# Candidate revision ${rel}\n\n${candidate}`,
-          spec: roleModelSpec("hostileAuditor"),
+          charge: CHARGES[stage.role],
+          prompt: stage.prompt,
+          spec,
           models,
         });
-        addUsage(auditTextUsage);
+        addUsage(usage);
         abortIfCancelled();
-        const auditPass = passOf(auditText);
-        const auditEvidence = newEvidencePath(dir, `audits/${slug}.audit`);
-        fs.writeFileSync(auditEvidence, auditText);
+        const evidence = newEvidencePath(dir, `audits/${slug}.${stage.kind}`);
+        fs.writeFileSync(evidence, text);
+        const artifact = path.relative(dir, evidence);
+        const pass = passOf(text);
         store.append({
-          kind: "audit",
+          kind: stage.kind,
           revision: rel,
-          verdict: auditPass ? "PASS" : "FAIL",
+          verdict: pass ? "PASS" : "FAIL",
           candidateHash,
           statementHash: stmtHash,
-          artifact: path.relative(dir, auditEvidence),
+          ...stage.extra,
+          artifact,
+          suppliedInputs: stage.suppliedInputs,
+          blindness: stage.blindness,
+          modelFamily: specLabel(spec),
+          usage,
+        });
+        return { text, pass, artifact };
+      };
+
+      const cadence = async (): Promise<string> => {
+        // Stage 1 — hostile audit (bundle includes PROVED.md so promoted claims are checkable).
+        const audit = await verdictStage({
+          kind: "audit",
+          role: "hostileAuditor",
+          prompt: `# Statement\n\n${statement}\n\n# Currently promoted (PROVED.md)\n\n${proved}\n\n# Declared dependencies (coordinator-authored)\n\n${p.declaredDependencies}\n\n# Candidate revision ${rel}\n\n${candidate}`,
           suppliedInputs: ["candidate revision", "statement", "PROVED.md", "declared dependencies"],
           blindness:
             "fresh instance (enforced); bundle built by harness (enforced); declaredDependencies coordinator-authored (instructed only)",
-          modelFamily: specLabel(roleModelSpec("hostileAuditor")),
-          usage: auditTextUsage,
         });
-        if (!auditPass) {
-          return `STAGE 1 FAIL — not verifier-backed. Audit saved: ${path.relative(dir, auditEvidence)}\n\n${auditText}`;
+        if (!audit.pass) {
+          return `STAGE 1 FAIL — not verifier-backed. Audit saved: ${audit.artifact}\n\n${audit.text}`;
         }
 
         // Bundle certification (contract): a fresh agent shown both the
         // candidate and the bundle certifies no element is a stepwise
         // paraphrase of — or contains — the candidate argument. Always rerun:
         // the certifier sees the candidate, so a new revision needs its own cert.
-        const { text: certText, usage: certTextUsage } = await runRole({
-          contract,
-          charge: CHARGES.bundleCertifier,
-          prompt: `# Candidate revision ${rel}\n\n${candidate}\n\n# Proposed reconstruction bundle\n\n${bundle}`,
-          spec: roleModelSpec("bundleCertifier"),
-          models,
-        });
-        addUsage(certTextUsage);
-        abortIfCancelled();
-        const certPass = passOf(certText);
-        const certEvidence = newEvidencePath(dir, `audits/${slug}.bundle-cert`);
-        fs.writeFileSync(certEvidence, certText);
-        store.append({
+        const cert = await verdictStage({
           kind: "bundle-cert",
-          revision: rel,
-          verdict: certPass ? "PASS" : "FAIL",
-          candidateHash,
-          statementHash: stmtHash,
-          bundleHash,
-          artifact: path.relative(dir, certEvidence),
+          role: "bundleCertifier",
+          prompt: `# Candidate revision ${rel}\n\n${candidate}\n\n# Proposed reconstruction bundle\n\n${bundle}`,
           suppliedInputs: ["candidate revision", "proposed bundle"],
           blindness: "fresh instance (enforced); sees candidate by design (certification step)",
-          modelFamily: specLabel(roleModelSpec("bundleCertifier")),
-          usage: certTextUsage,
+          extra: { bundleHash },
         });
-        if (!certPass) {
+        if (!cert.pass) {
           return (
             `BUNDLE CERTIFICATION FAIL — the bundle leaks the candidate argument; stage 2 refused. ` +
-            `Revise keyIdeas/allowedSources and retry. Cert saved: ${path.relative(dir, certEvidence)}\n\n${certText}`
+            `Revise keyIdeas/allowedSources and retry. Cert saved: ${cert.artifact}\n\n${cert.text}`
           );
         }
 
@@ -607,39 +616,22 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
 
         // Stage 2b — comparison: maps the reconstruction to the candidate's
         // conclusions and declared dependencies. This verdict is stage 2's PASS.
-        const { text: compareText, usage: compareTextUsage } = await runRole({
-          contract,
-          charge: CHARGES.comparator,
-          prompt: `# Statement\n\n${statement}\n\n# Independent reconstruction\n\n${reconText}\n\n# Candidate revision ${rel}\n\n${candidate}\n\n# Declared dependencies\n\n${p.declaredDependencies}`,
-          spec: roleModelSpec("comparator"),
-          models,
-        });
-        addUsage(compareTextUsage);
-        abortIfCancelled();
-        const comparePass = passOf(compareText);
-        const compareEvidence = newEvidencePath(dir, `audits/${slug}.comparison`);
-        fs.writeFileSync(compareEvidence, compareText);
-        store.append({
+        const compare = await verdictStage({
           kind: "comparison",
-          revision: rel,
-          verdict: comparePass ? "PASS" : "FAIL",
-          candidateHash,
-          statementHash: stmtHash,
-          artifact: path.relative(dir, compareEvidence),
+          role: "comparator",
+          prompt: `# Statement\n\n${statement}\n\n# Independent reconstruction\n\n${reconText}\n\n# Candidate revision ${rel}\n\n${candidate}\n\n# Declared dependencies\n\n${p.declaredDependencies}`,
           suppliedInputs: ["statement", "reconstruction", "candidate", "declared dependencies"],
           blindness: "fresh instance (enforced); sees both sides by design (comparison step)",
-          modelFamily: specLabel(roleModelSpec("comparator")),
-          usage: compareTextUsage,
         });
         const promotion = checkPromotion(store, dir, rel);
         return (
-          `STAGE 1 PASS; STAGE 2 ${comparePass ? "PASS" : "FAIL"} (comparison verdict). ` +
+          `STAGE 1 PASS; STAGE 2 ${compare.pass ? "PASS" : "FAIL"} (comparison verdict). ` +
           (promotion.allowed
             ? `Revision ${rel} is verifier-backed; record_promotion is now legal for it.`
             : `Not promotable: ${promotion.reason}`) +
           (priorRecon ? `\nReconstruction carried forward from revision ${priorRecon.revision}.` : "") +
-          `\nArtifacts: ${path.relative(dir, auditEvidence)}, ${reconArtifact}, ${path.relative(dir, compareEvidence)}` +
-          `\n\n## Stage 1 (hostile audit)\n\n${auditText}\n\n## Stage 2b (comparison)\n\n${compareText}`
+          `\nArtifacts: ${audit.artifact}, ${reconArtifact}, ${compare.artifact}` +
+          `\n\n## Stage 1 (hostile audit)\n\n${audit.text}\n\n## Stage 2b (comparison)\n\n${compare.text}`
         );
       };
 
@@ -652,15 +644,19 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         id,
         mechanism: `verification:${rel}`,
         promise: cadence(),
-        usage: () =>
-          usages.length === 0
-            ? undefined
-            : usages.reduce((t, u) => ({
-                input: (t.input ?? 0) + (u.input ?? 0),
-                output: (t.output ?? 0) + (u.output ?? 0),
-                cacheRead: (t.cacheRead ?? 0) + (u.cacheRead ?? 0),
-                cacheWrite: (t.cacheWrite ?? 0) + (u.cacheWrite ?? 0),
-              })),
+        // Summed over the cadence's role calls; undefined when every backend
+        // was a CLI (no usage reporting).
+        usage: () => {
+          if (usages.length === 0) return undefined;
+          const total: RoleUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+          for (const u of usages) {
+            total.input += u.input;
+            total.output += u.output;
+            total.cacheRead += u.cacheRead;
+            total.cacheWrite += u.cacheWrite;
+          }
+          return total;
+        },
       });
       return toolText(
         `verification ${id} dispatched on ${rel} (${handles.size} live). The verdict arrives at a ` +

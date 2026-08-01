@@ -147,8 +147,12 @@ const FAILED_CHECK_RE = /^(no close prior route|closest prior route is .+; this 
 /** Latest verdict wins: a mechanism re-gated to IDEA FAIL/REPAIR loses wave
  *  permission it earned earlier, or the gate could never be re-armed. */
 function ideaGatePassed(store: GateStore, mechanism: string): boolean {
-  const verdicts = store.all().filter((e) => e.kind === "gate-verdict" && e.mechanism === mechanism);
-  return verdicts.length > 0 && verdicts[verdicts.length - 1].verdict === "IDEA PASS";
+  return (
+    store
+      .all()
+      .filter((e) => e.kind === "gate-verdict" && e.mechanism === mechanism)
+      .at(-1)?.verdict === "IDEA PASS"
+  );
 }
 
 /**
@@ -264,15 +268,10 @@ export function verificationState(store: GateStore, dir: string, revision: strin
   const candidatePath = path.join(dir, "EVIDENCE", revision);
   const candidateHash = fs.existsSync(candidatePath) ? sha256File(candidatePath) : undefined;
   const stmtHash = statementHash(dir);
-  const match = (e: GateRecord) =>
-    sameRevision(e.revision, revision) &&
-    e.verdict === "PASS" &&
-    e.candidateHash === candidateHash &&
-    e.statementHash === stmtHash;
   // Latest verdict wins per stage: a PASS followed by a FAIL on the same
   // candidate and statement is not verifier-backed, however the FAIL arose.
-  const latest = (kind: string) => {
-    const onThis = store
+  const latest = (kind: string) =>
+    store
       .all()
       .filter(
         (e) =>
@@ -280,9 +279,8 @@ export function verificationState(store: GateStore, dir: string, revision: strin
           sameRevision(e.revision, revision) &&
           e.candidateHash === candidateHash &&
           e.statementHash === stmtHash,
-      );
-    return onThis.length > 0 ? onThis[onThis.length - 1].verdict === "PASS" : false;
-  };
+      )
+      .at(-1)?.verdict === "PASS";
   const stage1 = latest("audit");
   const stage2 = latest("comparison");
   return { stage1Passed: stage1, stage2Passed: stage2, verifierBacked: stage1 && stage2 };
