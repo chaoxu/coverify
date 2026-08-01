@@ -19,6 +19,36 @@ import { claudeBridgeProvider } from "./claude-bridge.js";
 import { Type } from "typebox";
 
 const OUTPUT_LIMIT = 50_000;
+/**
+ * Live batch reapers. Every supervised batch registers one so that a harness
+ * that dies — operator Ctrl-C on a machine being eaten, a crash, an OOM kill —
+ * takes its compute with it. Without this the scripts are detached process
+ * groups with no watchdog left: exactly the uncapped runaway this layer
+ * exists to prevent.
+ */
+const liveReapers = new Set<() => void>();
+let reaperHooksInstalled = false;
+function installReaperHooks(): void {
+  if (reaperHooksInstalled) return;
+  reaperHooksInstalled = true;
+  const reapAll = () => {
+    for (const reap of [...liveReapers]) {
+      try {
+        reap();
+      } catch {
+        /* best effort on the way out */
+      }
+    }
+  };
+  process.on("exit", reapAll);
+  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+    process.on(sig, () => {
+      reapAll();
+      process.exit(sig === "SIGINT" ? 130 : 143);
+    });
+  }
+}
+
 /** A malformed limit must not silently become NaN: setTimeout(fn, NaN) fires
  *  immediately, which would time out every batch instantly. */
 function positiveEnvNumber(raw: string | undefined, fallback: number): number {
@@ -355,7 +385,7 @@ function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
       ),
     }),
     executionMode: "sequential",
-    execute: async (_id: string, params: unknown) => {
+    execute: async (_id: string, params: unknown, signal?: AbortSignal) => {
       const { runs } = params as { runs: { path: string; args?: string[] }[] };
       const jobs: { label: string; argv: string[] }[] = [];
       for (const r of runs) {
@@ -426,10 +456,32 @@ function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
           }
         }
       };
+      // Synchronous best-effort reaper for process exit paths (no awaiting
+      // there): group kill only, which covers everything that stayed put.
+      const reapNow = () => {
+        for (const child of children) {
+          if (child.pid !== undefined) {
+            try {
+              process.kill(-child.pid, "SIGKILL");
+            } catch {
+              /* group already gone */
+            }
+          }
+        }
+      };
+      installReaperHooks();
+      liveReapers.add(reapNow);
       const timer = setTimeout(() => {
         fate = `batch timed out after ${Math.round(RUN_TIMEOUT_MS / 60000)} minutes`;
         void killAll();
       }, RUN_TIMEOUT_MS);
+      // cancel_agent aborts the role's session; stop the compute too, rather
+      // than letting it run to the batch limit unattended.
+      const onAbort = () => {
+        fate = "cancelled";
+        void killAll();
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
       const memWatch = setInterval(() => {
         if (fate) return;
         processSweep(roots, marks).then(
@@ -463,9 +515,11 @@ function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
       );
       clearTimeout(timer);
       clearInterval(memWatch);
+      signal?.removeEventListener("abort", onAbort);
       // Awaited: survivors that left the process group are reaped here, so
       // nothing outlives the call even when the direct children exited fine.
       await killAll();
+      liveReapers.delete(reapNow);
       const sections = jobs.map(({ label }, i) => {
         let out = [outs[i].stdout, outs[i].stderr].filter(Boolean).join("\n--- stderr ---\n");
         if (out.length > OUTPUT_LIMIT) out = out.slice(0, OUTPUT_LIMIT) + "\n[truncated]";
@@ -498,11 +552,18 @@ const LITERATURE_CMD = (
   "agy --dangerously-skip-permissions --print-timeout 10m -p"
 ).split(/\s+/);
 
-/** The librarian CLI's own state (credentials, cache, logs) — writable so the
- *  tool can refresh tokens; campaign state stays governed by the role scope. */
-const LIBRARIAN_STATE_DIRS = [".gemini", ".antigravity", ".claude", ".codex", ".config", ".cache"].map(
-  (d) => path.join(os.homedir(), d),
-);
+/**
+ * State directories the librarian CLI may write (token refresh, cache).
+ * Deliberately narrow: `~/.claude`, `~/.codex`, and `~/.config` hold settings
+ * and hook files that execute on a later run — and coverify's own OAuth store
+ * lives in `~/.config/coverify` — so a role-authored prompt must not reach
+ * them. Override for a different librarian binary with
+ * COVERIFY_LITERATURE_STATE_DIRS (colon-separated absolute paths).
+ */
+const LIBRARIAN_STATE_DIRS = (
+  process.env.COVERIFY_LITERATURE_STATE_DIRS?.split(":").filter(Boolean) ??
+  [".gemini", ".antigravity"].map((d) => path.join(os.homedir(), d))
+).filter((d) => path.isAbsolute(d) && d !== os.homedir());
 
 const LIBRARIAN_CHARGE =
   "You are a mathematical literature librarian. Web-search the question below and compile a " +
@@ -620,17 +681,20 @@ export function workspaceTools(
               "dispatch (launcher preregistration)",
           );
         }
-        const base = path.basename(absolutePath).toLowerCase();
-        if (APPEND_ONLY_LEDGERS.has(base) && fs.existsSync(absolutePath)) {
-          const prior = await fs.promises.readFile(absolutePath, "utf8");
+        // Resolved, not typed: a symlink named anything else would otherwise
+        // skip these checks while writing through to the real ledger.
+        const real = realResolve(absolutePath);
+        const base = path.basename(real).toLowerCase();
+        if (APPEND_ONLY_LEDGERS.has(base) && fs.existsSync(real)) {
+          const prior = await fs.promises.readFile(real, "utf8");
           if (!content.startsWith(prior) && !content.startsWith(prior.trimEnd())) {
             throw new Error(
-              `${path.basename(absolutePath)} is append-only (launcher): new content must begin with the existing ` +
+              `${path.basename(real)} is append-only (launcher): new content must begin with the existing ` +
                 "content unchanged; append below it",
             );
           }
         }
-        if (/^literature-\d+\.md$/i.test(base) && fs.existsSync(absolutePath)) {
+        if (/^literature-\d+\.md$/i.test(base) && fs.existsSync(real)) {
           throw new Error("librarian reports are immutable evidence; write a new file instead");
         }
         await fs.promises.writeFile(absolutePath, content);

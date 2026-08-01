@@ -76,8 +76,12 @@ packet carries a `literature` question gets `literature_search`, which
 spawns an external librarian CLI agent (`COVERIFY_LITERATURE_CMD`, default
 `agy` print-mode with live web search) as a supervised child and archives
 the full compiled report as `literature-<n>.md` evidence (self-attested
-provenance, like `fable-review`). No campaign role ever touches the network
-itself; `literature` exists only on reasoner packets and `computation` only on
+provenance, like `fable-review`). The librarian runs under the role's write
+sandbox plus a narrow allowance for its own state directories
+(`COVERIFY_LITERATURE_STATE_DIRS`, default the `agy`/Gemini dirs) — never
+`~/.claude`, `~/.codex`, or `~/.config`, which hold settings and hook files
+that execute later and coverify's own OAuth store. No campaign role ever
+touches the network itself; `literature` exists only on reasoner packets and `computation` only on
 technician packets, so the role that reads the web structurally holds no
 code tools; the coordinator and all
 verification-cadence roles have neither grant, keeping blind reconstruction
@@ -100,7 +104,10 @@ a different file in the same directory — is still found. A survivor that
 leaves its session *and* `exec`s a binary naming nothing in the workspace
 would evade it; the technician is a supervised role, not an adversary, so
 that residual is stated rather than claimed away. If `ps` itself fails, the batch is killed and the failure
-reported — the cap never silently disappears. The batch is intra-turn concurrency for one
+reported — the cap never silently disappears. The harness also reaps live
+batches on `exit`/SIGINT/SIGTERM/SIGHUP and on `cancel_agent`'s abort
+signal, so operator Ctrl-C or a crash takes the compute with it instead of
+leaving detached groups with no watchdog. The batch is intra-turn concurrency for one
 technician; harness-level async computation handles remain the roadmap item.
 The scoped write tool additionally enforces ledger integrity: `FAILED.md`
 rewrites must preserve the existing content as an unchanged prefix

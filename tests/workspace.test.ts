@@ -242,6 +242,28 @@ describe("enforcement bypasses (regression)", () => {
     if (alive) process.kill(bgPid, 9);
     expect(alive).toBe(false);
   }, 20000);
+  test("append-only holds through a differently-named symlink", async () => {
+    const ledger = path.join(ws, "FAILED.md");
+    fs.writeFileSync(ledger, "# Failed\n\n- route A\n");
+    const link = path.join(ws, "notes-link.md");
+    if (!fs.existsSync(link)) fs.symlinkSync(ledger, link);
+    const prose = tools(ws);
+    await expect(
+      prose.write.execute("t", { path: link, content: "# history erased\n" }),
+    ).rejects.toThrow(/append-only/);
+    expect(fs.readFileSync(ledger, "utf8")).toContain("route A");
+  });
+  test("an abort signal stops a running batch", async () => {
+    fs.writeFileSync(path.join(ws, "slow.py"), "import time\ntime.sleep(120)\nprint('finished')\n");
+    const ac = new AbortController();
+    const started = Date.now();
+    const run = t.run_script.execute("t", { runs: [{ path: "slow.py" }] }, ac.signal);
+    await new Promise((r) => setTimeout(r, 300));
+    ac.abort();
+    const out = text((await run) as any);
+    expect(Date.now() - started).toBeLessThan(10000);
+    expect(out).not.toContain("finished");
+  }, 20000);
   test("append-only holds against a case-variant ledger name", async () => {
     const prose = tools(ws);
     const ledger = path.join(ws, "FAILED.md");

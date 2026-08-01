@@ -212,7 +212,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       (isTechnician
         ? `\n\n# Preregistered computation\n\n${(packet as TechnicianPacket).computation}`
         : "") +
-      ((packet as ReasonerPacket).literature
+      (role === "reasoner" && (packet as ReasonerPacket).literature
         ? `\n\n# Literature question (granted)\n\n${(packet as ReasonerPacket).literature}`
         : "");
     let session: RoleSession | undefined;
@@ -241,7 +241,10 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           cwd: evidenceDir,
           scope: { allow: [evidenceDir], deny: [] },
           code: isTechnician,
-          literature: (packet as ReasonerPacket).literature !== undefined,
+          // Role-authoritative: tool schemas allow unknown extras, so a
+          // `literature` field smuggled onto a technician packet must not
+          // grant the librarian alongside run_script.
+          literature: role === "reasoner" && (packet as ReasonerPacket).literature !== undefined,
         },
         spec,
         models,
@@ -399,6 +402,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           (e) =>
             e.kind === "bundle-cert" &&
             sameRevision(e.revision, rel) &&
+            e.candidateHash === candidateHash &&
             e.bundleHash === sha256Text(bundle) &&
             e.verdict === "FAIL",
         );
@@ -667,7 +671,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       if (!decision.allowed) return toolText(`PROMOTION REFUSED: ${decision.reason}`);
       const artifacts = store
         .all()
-        .filter((e) => e.revision === rel && typeof e.artifact === "string")
+        .filter((e) => sameRevision(e.revision, rel) && typeof e.artifact === "string")
         .map((e) => `${e.kind}: ${e.artifact}`)
         .join("; ");
       const entry =
