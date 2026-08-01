@@ -40,7 +40,8 @@ export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhi
 
 export type RoleName =
   | "coordinator"
-  | "worker"
+  | "reasoner"
+  | "technician"
   | "gateCritic"
   | "hostileAuditor"
   | "bundleCertifier"
@@ -63,7 +64,8 @@ export interface ModelSpec {
 
 export const ROLE_NAMES: RoleName[] = [
   "coordinator",
-  "worker",
+  "reasoner",
+  "technician",
   "gateCritic",
   "hostileAuditor",
   "bundleCertifier",
@@ -73,7 +75,8 @@ export const ROLE_NAMES: RoleName[] = [
 
 const ROLE_ENV: Record<RoleName, string> = {
   coordinator: "COVERIFY_MODEL_COORDINATOR",
-  worker: "COVERIFY_MODEL_WORKER",
+  reasoner: "COVERIFY_MODEL_REASONER",
+  technician: "COVERIFY_MODEL_TECHNICIAN",
   gateCritic: "COVERIFY_MODEL_CRITIC",
   hostileAuditor: "COVERIFY_MODEL_AUDITOR",
   bundleCertifier: "COVERIFY_MODEL_CERTIFIER",
@@ -82,7 +85,7 @@ const ROLE_ENV: Record<RoleName, string> = {
 };
 
 /** Subscription-only defaults (user decisions, 2026-08-01): OpenAI for
- *  almost everything — the coordinator's tool loop and the workers run
+ *  almost everything — the coordinator's tool loop and the dispatched agents run
  *  GPT-5.6 Sol as full pi agents through the openai-codex provider
  *  (ChatGPT-subscription OAuth via `coverify login openai-codex`; @max is
  *  the top of Sol's thinking-level map), and the single-shot verdict roles
@@ -93,7 +96,8 @@ const ROLE_ENV: Record<RoleName, string> = {
  *  role is overridable per-role or globally. */
 const ROLE_DEFAULTS: Partial<Record<RoleName, string>> = {
   coordinator: "openai-codex/gpt-5.6-sol@max",
-  worker: "openai-codex/gpt-5.6-sol@max",
+  reasoner: "openai-codex/gpt-5.6-sol@max",
+  technician: "openai-codex/gpt-5.6-sol@max",
   gateCritic: "codex-cli/gpt-5.6-sol",
   hostileAuditor: "claude-cli/opus",
   bundleCertifier: "codex-cli/gpt-5.6-sol",
@@ -477,8 +481,8 @@ export function workspaceTools(
         assertInScope(scope, absolutePath);
         if (!code && !PROSE_EXTS.has(path.extname(absolutePath).toLowerCase())) {
           throw new Error(
-            "this role writes prose artifacts only (.md/.txt); code needs a worker dispatched " +
-              "with a computation declaration (launcher preregistration)",
+            "this role writes prose artifacts only (.md/.txt); code runs only in a technician " +
+              "dispatch (launcher preregistration)",
           );
         }
         const base = path.basename(absolutePath);
@@ -525,7 +529,7 @@ export interface RoleRun {
 /**
  * Run one fresh, ephemeral role instance (single-shot roles: idea-gate
  * critic, hostile auditor, bundle certifier, reconstructor, comparator).
- * The coordinator and workers use createRoleSession directly. What each
+ * The coordinator and dispatched agents use createRoleSession directly. What each
  * instance sees is decided by the bundle its caller builds; the journal
  * records supplied inputs and which restrictions are platform-enforced
  * versus instructed.
@@ -669,7 +673,7 @@ export interface RoleResult {
  * accumulating context like a live harness session does. Used for the
  * coordinator, which stays resident until its context cap — the analog of
  * running the skill in Codex/Claude Code until compaction. Single-shot roles
- * (workers, critics, verifiers) go through runRole and never reuse a session.
+ * (reasoners, technicians, critics, verifiers) go through runRole and never reuse a session.
  */
 export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: string }): RoleSession {
   if (isCliProvider(run.spec.provider)) {
@@ -723,17 +727,17 @@ control, prior-route registration, assignments, promotion and ledger decisions, 
 final synthesis. Doing proof work inline pollutes this long-lived context — dispatch a packet
 instead. You are the sole ledger writer. Your workspace tools (read, ls, grep, write) handle prose
 artifacts only — you cannot write or run code and cannot search the web; a computation belongs in
-a worker packet whose
-computation field states the preregistered finite domain and stopping rule, which grants that
-worker code tools, and a literature question belongs in a worker packet whose literature field
-states it, which grants that worker a delegated librarian search tool (never combined with code). Tools beyond the workspace tools: dispatch_worker, dispatch_gate_critic,
-request_verification, record_promotion (the only way to append to PROVED.md), cancel_worker and
-steer_worker (contract triggers only — observable struggle, user pause/stop, safety, explicit
+a dispatch_technician packet (its computation field states the preregistered finite domain and
+stopping rule), and a literature question belongs in a dispatch_reasoner packet whose literature
+field states it, which grants that reasoner a delegated librarian search tool (reasoners never
+hold code tools). Tools beyond the workspace tools: dispatch_reasoner, dispatch_technician, dispatch_gate_critic,
+request_verification, record_promotion (the only way to append to PROVED.md), cancel_agent and
+steer_agent (contract triggers only — observable struggle, user pause/stop, safety, explicit
 deadline), and declare_campaign_state (pause/complete). Your workspace tools work in the campaign directory;
 edit the ledgers per the contract. STATEMENT.md, PROVED.md, and the harness journal are
 write-protected. End every wake with your decisions recorded in the ledgers and
 CURRENT_FRONTIER.md consistent with them.`,
-  worker: `You are one exploration worker. You receive one packet with one finite mathematical
+  reasoner: `You are one exploration reasoner. You receive one packet with one finite mathematical
 deliverable. Work only that packet. You have workspace tools (read, ls, grep, write) in your
 assigned evidence directory; you cannot write or run code — computation happens in a separate
 technician dispatch. If your packet carries a literature
@@ -746,7 +750,7 @@ the precise failing implication with evidence. Status reports and vague optimism
 deliverables. Your packet may cite evidence paths and ledger locations; read them with your
 read/grep tools when
 your task needs depth — the packet is curated context, not the limit of what you may consult.`,
-  computeWorker: `You are one computation technician. You receive one packet with one preregistered
+  technician: `You are one computation technician. You receive one packet with one preregistered
 computation: a finite domain, stopping rule, and expected witness, certificate, or table. Your
 mathematics is confined to faithfully encoding the stated definitions and domain into code — you
 advance no proofs, choose no routes, and do not interpret results beyond what was computed. Write

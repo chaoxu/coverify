@@ -61,11 +61,11 @@ export class GateStore {
     return this.records;
   }
 
-  maxWorkerId(): number {
+  maxHandleId(): number {
     let max = 0;
     for (const r of this.records) {
       if (r.kind === "dispatch" && typeof r.id === "string") {
-        const n = Number((r.id as string).replace(/^w/, ""));
+        const n = Number((r.id as string).replace(/^[a-z]+/, ""));
         if (Number.isFinite(n) && n > max) max = n;
       }
     }
@@ -97,7 +97,7 @@ export function parseFirstLineVerdict(
   return tokens.find((t) => first.toUpperCase() === t.toUpperCase());
 }
 
-export interface WorkerPacket {
+export interface DispatchPacket {
   mechanism: string;
   task: string;
   context: string;
@@ -105,16 +105,21 @@ export interface WorkerPacket {
   /** Launcher: "check FAILED.md and record either 'no close prior route' or
    *  'closest prior route is X; this differs materially because ...'" */
   failedCheck: string;
-  /** Launcher: "Use computation only for a preregistered finite domain and
-   *  stopping rule yielding a small witness, certificate, or table." Present
-   *  iff the worker is to write and run code; states that preregistration.
-   *  Without it the worker gets prose tools only. */
-  computation?: string;
-  /** Present iff the worker is a literature scout: states the literature
+}
+
+/** A reasoning agent: proves, constructs, refutes. Prose tools only. */
+export interface ReasonerPacket extends DispatchPacket {
+  /** Present iff the reasoner is a literature scout: states the literature
    *  question. Grants the delegated librarian search tool (an external
-   *  web-searching agent); never combinable with computation — the role that
-   *  reads the web must hold no code tools. */
+   *  web-searching agent). Reasoners never hold code tools. */
   literature?: string;
+}
+
+/** A computation technician: encodes and runs one preregistered computation. */
+export interface TechnicianPacket extends DispatchPacket {
+  /** Launcher: "Use computation only for a preregistered finite domain and
+   *  stopping rule yielding a small witness, certificate, or table." */
+  computation: string;
 }
 
 export interface GateDecision {
@@ -138,9 +143,10 @@ function ideaGatePassed(store: GateStore, mechanism: string): boolean {
  * mechanism. History-based cases (sequential retries) are the coordinator's
  * judgment; the harness attaches an advisory reminder instead of refusing.
  */
-export function checkWorkerDispatch(
+export function checkDispatch(
   store: GateStore,
-  packet: WorkerPacket,
+  role: "reasoner" | "technician",
+  packet: ReasonerPacket | TechnicianPacket,
   userAgentLimit: number | undefined,
   liveAgents: number,
   liveOnMechanism: number,
@@ -156,27 +162,23 @@ export function checkWorkerDispatch(
         "'closest prior route is X; this differs materially because ...' (contract: FAILED.md check)",
     };
   }
-  if (packet.computation !== undefined && (packet.computation.trim().length < 40 || !/\d/.test(packet.computation))) {
-    return {
-      allowed: false,
-      reason:
-        "computation must state the preregistered finite domain and stopping rule with concrete " +
-        'bounds (contract: "Use computation only for a preregistered finite domain and stopping ' +
-        'rule yielding a small witness, certificate, or table."); omit it for a no-code worker',
-    };
+  if (role === "technician") {
+    const computation = (packet as TechnicianPacket).computation ?? "";
+    if (computation.trim().length < 40 || !/\d/.test(computation)) {
+      return {
+        allowed: false,
+        reason:
+          "computation must state the preregistered finite domain and stopping rule with concrete " +
+          'bounds (contract: "Use computation only for a preregistered finite domain and stopping ' +
+          'rule yielding a small witness, certificate, or table.")',
+      };
+    }
   }
-  if (packet.literature !== undefined && packet.computation !== undefined) {
+  const literature = (packet as ReasonerPacket).literature;
+  if (role === "reasoner" && literature !== undefined && literature.trim().length < 30) {
     return {
       allowed: false,
-      reason:
-        "computation and literature are mutually exclusive grants: the role that reads the web " +
-        "must hold no code tools; dispatch two workers",
-    };
-  }
-  if (packet.literature !== undefined && packet.literature.trim().length < 30) {
-    return {
-      allowed: false,
-      reason: "literature must state a substantive, self-contained question; omit it for a non-scout worker",
+      reason: "literature must state a substantive, self-contained question; omit it for a non-scout reasoner",
     };
   }
   if (userAgentLimit !== undefined && liveAgents >= userAgentLimit) {

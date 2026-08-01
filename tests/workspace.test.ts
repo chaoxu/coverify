@@ -8,11 +8,12 @@ import * as path from "node:path";
 process.env.COVERIFY_RUN_MEM_MB = "200";
 process.env.COVERIFY_LITERATURE_CMD = "/bin/echo";
 const { workspaceTools } = await import("../src/roles.ts");
-const { checkWorkerDispatch } = await import("../src/gates.ts");
+const { checkDispatch } = await import("../src/gates.ts");
 
 const store = { all: () => [] } as any;
 const base = { mechanism: "m1", task: "t", context: "c", deliverable: "d", failedCheck: "no close prior route" };
-const dispatch = (extra: object) => checkWorkerDispatch(store, { ...base, ...extra } as any, undefined, 0, 0);
+const dispatch = (role: "reasoner" | "technician", extra: object = {}) =>
+  checkDispatch(store, role, { ...base, ...extra } as any, undefined, 0, 0);
 
 const text = (r: any) => r.content[0].text as string;
 function tools(ws: string, opts?: { code?: boolean; literature?: boolean }) {
@@ -21,24 +22,22 @@ function tools(ws: string, opts?: { code?: boolean; literature?: boolean }) {
 }
 const tmp = (label: string) => fs.mkdtempSync(`/private/tmp/coverify-test-${label}-`);
 
-describe("dispatch gate grants", () => {
-  test("plain worker allowed", () => expect(dispatch({}).allowed).toBe(true));
-  test("thin computation refused", () => expect(dispatch({ computation: "run stuff" }).allowed).toBe(false));
-  test("computation with concrete bounds allowed", () =>
+describe("dispatch gate", () => {
+  test("plain reasoner allowed", () => expect(dispatch("reasoner").allowed).toBe(true));
+  test("technician with thin computation refused", () =>
+    expect(dispatch("technician", { computation: "run stuff" }).allowed).toBe(false));
+  test("technician with concrete bounds allowed", () =>
     expect(
-      dispatch({ computation: "exhaustive search over digraphs with n<=9 vertices, stop after 4000 samples" })
-        .allowed,
-    ).toBe(true));
-  test("thin literature refused", () => expect(dispatch({ literature: "check the web" }).allowed).toBe(false));
-  test("substantive literature allowed", () =>
-    expect(dispatch({ literature: "Is s-t linear 3-cut on directed graphs known NP-hard?" }).allowed).toBe(true));
-  test("computation+literature refused", () =>
-    expect(
-      dispatch({
+      dispatch("technician", {
         computation: "exhaustive search over digraphs with n<=9 vertices, stop after 4000 samples",
-        literature: "Is s-t linear 3-cut on directed graphs known NP-hard?",
       }).allowed,
-    ).toBe(false));
+    ).toBe(true));
+  test("reasoner with thin literature refused", () =>
+    expect(dispatch("reasoner", { literature: "check the web" }).allowed).toBe(false));
+  test("reasoner with substantive literature allowed", () =>
+    expect(
+      dispatch("reasoner", { literature: "Is s-t linear 3-cut on directed graphs known NP-hard?" }).allowed,
+    ).toBe(true));
 });
 
 describe("tool surface per grant", () => {

@@ -51,33 +51,32 @@ its PASS is no longer verifier-backed, and a statement edit without
 
 Roles have no general shell. The workspace surface is pi's `read`, `ls`, and
 `grep` (read-only) plus pi's `write` wrapped with an in-process scope check.
-Code is a gated role, not a default: a dispatch packet carrying a
-`computation` declaration (launcher: "Use computation only for a
-preregistered finite domain and stopping rule…") dispatches a *computation
-technician* — a distinct worker charge whose mathematics is confined to
+Code is a gated role, not a default: a `dispatch_technician` packet's `computation` declaration (launcher: "Use computation only for a
+preregistered finite domain and stopping rule…") dispatches a *computation technician* — a distinct role whose mathematics is confined to
 faithfully encoding the preregistered statement into code; it advances no
 proofs and iterates only within the declared domain. Only the technician
 gets `run_script` — the sole way any role executes code — and the right to
-write non-prose files; reasoning workers and the coordinator write
-`.md`/`.txt` only and never execute anything. Because workers are already
+write non-prose files; reasoners and the coordinator write
+`.md`/`.txt` only and never execute anything. Because dispatches are already
 async handles, a technician dispatch IS the async computation: no separate
 computation-handle machinery is needed for local runs. The dispatch gate
 refuses a `computation` field with no concrete bounds and refuses a
-computation packet on a tool-less CLI oracle backend. Workers' scope
+technician dispatch on a tool-less CLI oracle backend. Dispatched agents' scope
 is their assigned `EVIDENCE/<id>/` directory; the coordinator's is the
 campaign dir *except* `.coverify/`, `STATEMENT.md`, and `PROVED.md` (deny
 wins). `PROVED.md` is appendable only through the `record_promotion` tool,
 which re-checks both verification stages and the content hashes before
 writing.
 
-Web access is likewise a gated grant, and it is delegated: a worker whose
+Web access is likewise a gated grant, and it is delegated: a reasoner whose
 packet carries a `literature` question gets `literature_search`, which
 spawns an external librarian CLI agent (`COVERIFY_LITERATURE_CMD`, default
 `agy` print-mode with live web search) as a supervised child and archives
 the full compiled report as `literature-<n>.md` evidence (self-attested
 provenance, like `fable-review`). No campaign role ever touches the network
-itself; `literature` and `computation` are mutually exclusive so the role
-that reads the web holds no code tools; the coordinator and all
+itself; `literature` exists only on reasoner packets and `computation` only on
+technician packets, so the role that reads the web structurally holds no
+code tools; the coordinator and all
 verification-cadence roles have neither grant, keeping blind reconstruction
 uncontaminated.
 
@@ -88,7 +87,7 @@ run is its own process group; the whole batch shares one time limit and one
 combined RSS cap (`COVERIFY_RUN_MEM_MB`, default 4096) and every group is
 killed when the batch ends or a cap trips; a script that forks survivors
 gets them reaped with it. The batch is intra-turn concurrency for one
-worker; harness-level async computation handles remain the roadmap item.
+technician; harness-level async computation handles remain the roadmap item.
 The scoped write tool additionally enforces ledger integrity: `FAILED.md`
 rewrites must preserve the existing content as an unchanged prefix
 (launcher: append-only), and `literature-<n>.md` librarian reports are
@@ -120,7 +119,7 @@ harness.ts       handle table, event loop, wakes; the only persistent process
   bundle is sent on (re)build. Sole ledger writer. Decisions must still be
   externalized to the ledgers every wake — residency is continuity of soft
   context, never a substitute for durable state.
-- **Workers**: fresh `Agent` instances; packet in, finite deliverable out;
+- **Reasoners and technicians**: fresh `Agent` instances; packet in, finite deliverable out;
   write access only to assigned `EVIDENCE/` paths.
 - **Verifiers**: the stage-1 hostile auditor, bundle certifier, stage-2
   blind reconstructor, and comparator are fresh instances; the harness
@@ -139,7 +138,7 @@ harness.ts       handle table, event loop, wakes; the only persistent process
 | --- | --- |
 | `STATEMENT.md` written once; new revision only via explicit user amendment; completion evidence invalidated | "Fix its revision before search; only an explicit user amendment may replace it…" |
 | Campaign file set + `EVIDENCE/` append-only, revision-suffixed, no in-place edits | "Durable campaign state" bullets |
-| Workers get no ledger-write capability; only assigned evidence paths | "The coordinator is the sole ledger writer; workers… write only assigned evidence artifacts" |
+| Dispatched agents get no ledger-write capability; only assigned evidence paths | "The coordinator is the sole ledger writer; workers… write only assigned evidence artifacts" |
 | Resume bundle = STATEMENT + FRONTIER + full REGISTRY.md + full PROCESS_LESSONS.md, launcher embedded verbatim in the system prompt (never FAILED.md, PROVED.md, or EVIDENCE/ wholesale) | "After restart or context compaction, reread…" |
 | Claim-label vocabulary quoted verbatim into the ledger templates at init; label discipline and weakest-premise inheritance are contract-instructed model judgment | "Claim labels — literal, never inflated" |
 | Dispatch schema requires the FAILED.md check field (`no close prior route` / `closest is X; differs because…`) | "Before every route, materially changed retry, or variant, check `FAILED.md`…" |
@@ -151,7 +150,7 @@ harness.ts       handle table, event loop, wakes; the only persistent process
 | Anti-verdict-shopping: a substantive audit/comparison FAIL on the exact revision contents blocks re-verification unless a recorded rebuttal artifact is supplied; every attempt stays on record | "A substantive FAIL from any stage stands… Do not rerun a failed stage on an unchanged revision in search of a PASS" |
 | Any content change ⇒ both stages invalidated (verdicts hash-bound to candidate + STATEMENT.md; every verifier call is a fresh instance). The non-load-bearing delta-audit carry-forward is not implemented — every change gets full re-verification, stricter than the contract (see roadmap) | Revision-impact rules |
 | `record_promotion` is the sole writer of `PROVED.md` (direct writes OS-denied); legal only when both stage records exist for the exact revision with matching content hashes; entry carries dependency identities and audit-artifact citations | "Promotion records the revision and dependency identities plus every audit…" |
-| Campaign ends only by explicit `declare_campaign_state`; "complete" refused with zero promotions on record; an idle wake gets a nudge, and 3 consecutive no-op wakes trigger an operational *pause* (never a completion) as spend protection | "Do not mark it complete until the final result passes the full cadence…"; "Failed attempts… are not permission to return"; "Pause is operational state" (pause stops further wakes; running workers are not force-aborted — use cancel_worker) |
+| Campaign ends only by explicit `declare_campaign_state`; "complete" refused with zero promotions on record; an idle wake gets a nudge, and 3 consecutive no-op wakes trigger an operational *pause* (never a completion) as spend protection | "Do not mark it complete until the final result passes the full cadence…"; "Failed attempts… are not permission to return"; "Pause is operational state" (pause stops further wakes; live agents are not force-aborted — use cancel_agent) |
 | Harvest before judgment: worker reports are saved to EVIDENCE/ and completion-recorded before any model sees them; checkpoint ordering itself is contract-instructed, not enforced (struck as over-constraint — see review record) | "Checkpoint and learning loop" |
 | Campaign loop persists across restarts until user stop or completion; pause = cease dispatch, interrupt agents, checkpoint | "The initial resolution request remains authorization…" |
 | Journal records each audit's supplied inputs, visibility, model family, and instructed-vs-platform-enforced restrictions | "Every audit records the supplied inputs, workspace/tool visibility, model-family provenance…" |

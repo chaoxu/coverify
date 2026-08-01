@@ -15,12 +15,13 @@ import {
   acceptedStatementHash,
   recordStatement,
   checkPromotion,
-  checkWorkerDispatch,
+  checkDispatch,
   GateStore,
   parseFirstLineVerdict,
   recordGateVerdict,
   statementHash,
-  type WorkerPacket,
+  type ReasonerPacket,
+  type TechnicianPacket,
 } from "./gates.js";
 import { loadLauncherContract } from "./launcher.js";
 import {
@@ -115,7 +116,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
 
   const handles = new Map<string, Handle>();
   const settledQueue: { h: Handle; report: string }[] = [];
-  let nextId = store.maxWorkerId() + 1;
+  let nextId = store.maxHandleId() + 1;
   let activityThisWake = 0;
   let declaration: { state: "pause" | "complete"; reason: string } | undefined;
   let lastWakeText = "";
@@ -139,126 +140,158 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   const liveOnMechanism = (mechanism: string): number =>
     [...handles.values()].filter((h) => h.mechanism === mechanism).length;
 
-  const dispatchWorker: AgentTool = {
-    name: "dispatch_worker",
-    label: "Dispatch worker",
+  /** Registers a settled-queue handle: the one async pattern every dispatch shares. */
+  const registerHandle = (handle: Handle) => {
+    handles.set(handle.id, handle);
+    handle.promise
+      .then((report) => {
+        if (handles.has(handle.id)) settledQueue.push({ h: handle, report });
+      })
+      .catch((err: unknown) => {
+        if (handles.has(handle.id))
+          settledQueue.push({ h: handle, report: `[${handle.id} failed: ${String(err)}]` });
+      });
+    activityThisWake++;
+  };
+
+  const PACKET_PARAMS = {
+    mechanism: Type.String({ description: "Mechanism identifier for the registry" }),
+    task: Type.String({ description: "Exact task" }),
+    context: Type.String({ description: "Constraints, promoted premises, nearest failed boundary" }),
+    deliverable: Type.String({ description: "The finite mathematical deliverable" }),
+    failedCheck: Type.String({
+      description:
+        "'no close prior route' or 'closest prior route is X; this differs materially because ...'",
+    }),
+  };
+
+  /** Shared dispatch path for the two agent roles the coordinator authors. */
+  const dispatchAgent = (
+    role: "reasoner" | "technician",
+    packet: ReasonerPacket | TechnicianPacket,
+  ) => {
+    const decision = checkDispatch(
+      store,
+      role,
+      packet,
+      opts.userAgentLimit,
+      handles.size,
+      liveOnMechanism(packet.mechanism),
+    );
+    if (!decision.allowed) return toolText(`DISPATCH REFUSED: ${decision.reason}`);
+    const spec = roleModelSpec(role);
+    const isTechnician = role === "technician";
+    if (isTechnician && isCliProvider(spec.provider)) {
+      return toolText(
+        "DISPATCH REFUSED: the configured technician backend is a tool-less CLI oracle; a " +
+          "computation packet needs a tool-running backend",
+      );
+    }
+    const id = `${isTechnician ? "t" : "r"}${String(nextId++).padStart(3, "0")}`;
+    const evidenceDir = path.join(dir, "EVIDENCE", id);
+    fs.mkdirSync(evidenceDir, { recursive: true });
+    store.append({
+      kind: "dispatch",
+      id,
+      role,
+      mechanism: packet.mechanism,
+      task: packet.task,
+      modelFamily: specLabel(spec),
+    });
+    const packetPrompt =
+      `# Task\n\n${packet.task}\n\n# Deliverable\n\n${packet.deliverable}\n\n# Context\n\n${packet.context}` +
+      (isTechnician
+        ? `\n\n# Preregistered computation\n\n${(packet as TechnicianPacket).computation}`
+        : "") +
+      ((packet as ReasonerPacket).literature
+        ? `\n\n# Literature question (granted)\n\n${(packet as ReasonerPacket).literature}`
+        : "");
+    let session: RoleSession | undefined;
+    let promise: Promise<string>;
+    let oracleUsage: RoleUsage | undefined;
+    if (isCliProvider(spec.provider)) {
+      // Single-shot oracle reasoner (e.g. chatgpt-cli → gpt-5.6-pro): one
+      // deep attempt, no tools; the reply IS the deliverable.
+      promise = runRole({
+        contract,
+        charge:
+          CHARGES.reasoner +
+          "\nYou have no tools in this run: produce the deliverable directly and completely in your reply.",
+        prompt: packetPrompt,
+        spec,
+        models,
+      }).then((r) => {
+        oracleUsage = r.usage;
+        return r.text;
+      });
+    } else {
+      session = createRoleSession({
+        contract,
+        charge: isTechnician ? CHARGES.technician : CHARGES.reasoner,
+        workspace: {
+          cwd: evidenceDir,
+          scope: { allow: [evidenceDir], deny: [] },
+          code: isTechnician,
+          literature: (packet as ReasonerPacket).literature !== undefined,
+        },
+        spec,
+        models,
+      });
+      promise = session.ask(`Assigned evidence directory: ${evidenceDir}\n\n${packetPrompt}`);
+    }
+    registerHandle({
+      id,
+      mechanism: packet.mechanism,
+      promise,
+      session,
+      usage: () => session?.usage() ?? oracleUsage,
+    });
+    return toolText(
+      `dispatched ${id} (${handles.size} live). The report will arrive at a later wake.` +
+        (decision.warning ? `\n${decision.warning}` : ""),
+    );
+  };
+
+  const dispatchReasoner: AgentTool = {
+    name: "dispatch_reasoner",
+    label: "Dispatch reasoner",
     description:
-      "Dispatch a fresh minimal-context worker on one packet with one finite mathematical " +
-      "deliverable. Returns a handle id immediately; the report arrives at a later wake. " +
-      "The packet must include the FAILED.md check record.",
+      "Dispatch a fresh minimal-context reasoning agent on one packet with one finite mathematical " +
+      "deliverable: prove, construct, refute — prose tools only, no code, no execution. Returns a " +
+      "handle id immediately; the report arrives at a later wake. The packet must include the " +
+      "FAILED.md check record.",
     parameters: Type.Object({
-      mechanism: Type.String({ description: "Mechanism identifier for the registry" }),
-      task: Type.String({ description: "Exact task" }),
-      context: Type.String({ description: "Constraints, promoted premises, nearest failed boundary" }),
-      deliverable: Type.String({ description: "The finite mathematical deliverable" }),
-      failedCheck: Type.String({
-        description:
-          "'no close prior route' or 'closest prior route is X; this differs materially because ...'",
-      }),
-      computation: Type.Optional(
-        Type.String({
-          description:
-            "Dispatches a computation technician instead of a reasoning worker: state the " +
-            "preregistered finite domain, stopping rule, and expected witness/certificate/table " +
-            "with concrete bounds. The technician writes and runs code strictly for that " +
-            "computation and does no proof work; omit for a reasoning worker (prose tools only).",
-        }),
-      ),
+      ...PACKET_PARAMS,
       literature: Type.Optional(
         Type.String({
           description:
             "Only for a literature scout: the literature question. Grants a delegated librarian " +
-            "search tool (external web-searching agent; reports archived as evidence). Mutually " +
-            "exclusive with computation.",
+            "search tool (external web-searching agent; reports archived as evidence).",
         }),
       ),
     }),
     executionMode: "sequential",
-    execute: async (_id: string, params: unknown) => {
-      const packet = params as WorkerPacket;
-      const decision = checkWorkerDispatch(
-        store,
-        packet,
-        opts.userAgentLimit,
-        handles.size,
-        liveOnMechanism(packet.mechanism),
-      );
-      if (!decision.allowed) return toolText(`DISPATCH REFUSED: ${decision.reason}`);
-      const id = `w${String(nextId++).padStart(3, "0")}`;
-      const evidenceDir = path.join(dir, "EVIDENCE", id);
-      fs.mkdirSync(evidenceDir, { recursive: true });
-      store.append({
-        kind: "dispatch",
-        id,
-        mechanism: packet.mechanism,
-        task: packet.task,
-        modelFamily: specLabel(roleModelSpec("worker")),
-      });
-      const workerSpec = roleModelSpec("worker");
-      const packetPrompt =
-        `# Task\n\n${packet.task}\n\n# Deliverable\n\n${packet.deliverable}\n\n# Context\n\n${packet.context}` +
-        (packet.computation ? `\n\n# Preregistered computation\n\n${packet.computation}` : "") +
-        (packet.literature ? `\n\n# Literature question (granted)\n\n${packet.literature}` : "");
-      let session: RoleSession | undefined;
-      let promise: Promise<string>;
-      let oracleUsage: RoleUsage | undefined;
-      if (isCliProvider(workerSpec.provider) && packet.computation !== undefined) {
-        return toolText(
-          "DISPATCH REFUSED: the configured worker backend is a tool-less CLI oracle; a computation " +
-            "packet needs a tool-running technician backend",
-        );
-      }
-      if (isCliProvider(workerSpec.provider)) {
-        // Single-shot oracle worker (e.g. chatgpt-cli → gpt-5.6-pro): one
-        // deep attempt, no tools; the reply IS the deliverable.
-        promise = runRole({
-          contract,
-          charge:
-            CHARGES.worker +
-            "\nYou have no tools in this run: produce the deliverable directly and completely in your reply.",
-          prompt: packetPrompt,
-          spec: workerSpec,
-          models,
-        }).then((r) => {
-          oracleUsage = r.usage;
-          return r.text;
-        });
-      } else {
-        session = createRoleSession({
-          contract,
-          charge: packet.computation !== undefined ? CHARGES.computeWorker : CHARGES.worker,
-          workspace: {
-            cwd: evidenceDir,
-            scope: { allow: [evidenceDir], deny: [] },
-            code: packet.computation !== undefined,
-            literature: packet.literature !== undefined,
-          },
-          spec: workerSpec,
-          models,
-        });
-        promise = session.ask(`Assigned evidence directory: ${evidenceDir}\n\n${packetPrompt}`);
-      }
-      const handle: Handle = {
-        id,
-        mechanism: packet.mechanism,
-        promise,
-        session,
-        usage: () => session?.usage() ?? oracleUsage,
-      };
-      handles.set(id, handle);
-      promise
-        .then((report) => {
-          if (handles.has(id)) settledQueue.push({ h: handle, report });
-        })
-        .catch((err: unknown) => {
-          if (handles.has(id)) settledQueue.push({ h: handle, report: `[worker ${id} failed: ${String(err)}]` });
-        });
-      activityThisWake++;
-      return toolText(
-        `dispatched ${id} (${handles.size} live). The report will arrive at a later wake.` +
-          (decision.warning ? `\n${decision.warning}` : ""),
-      );
-    },
+    execute: async (_id: string, params: unknown) => dispatchAgent("reasoner", params as ReasonerPacket),
+  } as AgentTool;
+
+  const dispatchTechnician: AgentTool = {
+    name: "dispatch_technician",
+    label: "Dispatch technician",
+    description:
+      "Dispatch a computation technician on one preregistered computation: it writes and runs code " +
+      "strictly to execute the declared finite search and reports raw outputs; it does no proof " +
+      "work. Returns a handle id immediately; the report arrives at a later wake.",
+    parameters: Type.Object({
+      ...PACKET_PARAMS,
+      computation: Type.String({
+        description:
+          "The preregistered finite domain, stopping rule, and expected witness/certificate/table, " +
+          "with concrete bounds.",
+      }),
+    }),
+    executionMode: "sequential",
+    execute: async (_id: string, params: unknown) =>
+      dispatchAgent("technician", params as TechnicianPacket),
   } as AgentTool;
 
   const dispatchGateCritic: AgentTool = {
@@ -568,12 +601,10 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       };
 
       const id = `v${String(nextId++).padStart(3, "0")}`;
-      const promise = cadence();
-      const handle: Handle = {
+      registerHandle({
         id,
         mechanism: `verification:${rel}`,
-        promise,
-        session: undefined,
+        promise: cadence(),
         usage: () =>
           usages.length === 0
             ? undefined
@@ -583,17 +614,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
                 cacheRead: (t.cacheRead ?? 0) + (u.cacheRead ?? 0),
                 cacheWrite: (t.cacheWrite ?? 0) + (u.cacheWrite ?? 0),
               })),
-      };
-      handles.set(id, handle);
-      promise
-        .then((report) => {
-          if (handles.has(id)) settledQueue.push({ h: handle, report });
-        })
-        .catch((err: unknown) => {
-          if (handles.has(id))
-            settledQueue.push({ h: handle, report: `[verification ${id} failed: ${String(err)}]` });
-        });
-      activityThisWake++;
+      });
       return toolText(
         `verification ${id} dispatched on ${rel} (${handles.size} live). The verdict arrives at a ` +
           "later wake; keep gating, dispatching, and ledger work going meanwhile.",
@@ -636,10 +657,10 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   } as AgentTool;
 
   const cancelWorker: AgentTool = {
-    name: "cancel_worker",
-    label: "Cancel worker",
+    name: "cancel_agent",
+    label: "Cancel agent",
     description:
-      "Interrupt a running worker. Per the contract, only on observable struggle evidence, a user " +
+      "Interrupt a live agent (reasoner, technician, or verification). Per the contract, only on observable struggle evidence, a user " +
       "pause/stop, a safety issue, or an explicit user-specified deadline — never merely because " +
       "it is slow or quiet.",
     parameters: Type.Object({
@@ -650,7 +671,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     execute: async (_id: string, params: unknown) => {
       const p = params as { id: string; reason: string };
       const handle = handles.get(p.id);
-      if (!handle) return toolText(`no running worker ${p.id}`);
+      if (!handle) return toolText(`no live agent ${p.id}`);
       handles.delete(p.id);
       const queued = settledQueue.findIndex((s) => s.h.id === p.id);
       if (queued >= 0) settledQueue.splice(queued, 1);
@@ -662,10 +683,10 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   } as AgentTool;
 
   const steerWorker: AgentTool = {
-    name: "steer_worker",
-    label: "Steer worker",
+    name: "steer_agent",
+    label: "Steer agent",
     description:
-      "Inject a redirecting message into a running worker without interrupting it. Same contract " +
+      "Inject a redirecting message into a live agent without interrupting it. Same contract " +
       "triggers as cancellation: observable struggle evidence, not slowness.",
     parameters: Type.Object({
       id: Type.String(),
@@ -675,8 +696,8 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     execute: async (_id: string, params: unknown) => {
       const p = params as { id: string; message: string };
       const handle = handles.get(p.id);
-      if (!handle) return toolText(`no running worker ${p.id}`);
-      if (!handle.session) return toolText(`${p.id} is a single-shot CLI worker — not steerable; cancel or wait`);
+      if (!handle) return toolText(`no live agent ${p.id}`);
+      if (!handle.session) return toolText(`${p.id} has no steerable session (CLI oracle or verification cadence); cancel or wait`);
       handle.session.steer(p.message);
       appendJournal(dir, { kind: "note", note: `steered ${p.id}`, message: p.message });
       return toolText(`steering message delivered to ${p.id}.`);
@@ -767,7 +788,8 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         charge: CHARGES.coordinator,
         workspace: { cwd: dir, scope: coordinatorScope },
         extraTools: [
-          dispatchWorker,
+          dispatchReasoner,
+          dispatchTechnician,
           dispatchGateCritic,
           requestVerification,
           recordPromotion,
