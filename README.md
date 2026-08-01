@@ -42,15 +42,17 @@ sandbox), and `chatgpt-cli` (the chatgpt.com daemon CLI from gitea
 provenance label). A single-shot-CLI-backed **worker** runs as an oracle:
 one deep attempt, no tools, the reply is the deliverable — e.g.
 `COVERIFY_MODEL_WORKER=chatgpt-cli/gpt-5.6-pro` turns workers into GPT-5.6
-Pro deep provers. Defaults (all Claude-subscription billed): coordinator
-`claude-bridge/claude-opus-5@high`; workers and the five single-shot
-verdict roles (critic, auditor, certifier, reconstructor, comparator)
-`claude-cli/opus`. The all-Anthropic default trades away cross-family
-verification — restoring it is one env var when other providers have quota,
-e.g. `COVERIFY_MODEL_WORKER=openai/gpt-5.6-sol@xhigh` or
-`COVERIFY_MODEL_RECONSTRUCTOR=google/gemini-3.6-flash`; the journal records
-the model family per call, so same-family verification is at least always
-disclosed. Override globally with `COVERIFY_MODEL` or per role with
+Pro deep provers. Defaults (all subscription billed): workers
+`codex-cli/gpt-5.6-sol` — Sol Ultra single-shot oracles on the ChatGPT
+subscription; coordinator `claude-bridge/claude-opus-5@high`; the five
+single-shot verdict roles (critic, auditor, certifier, reconstructor,
+comparator) `claude-cli/opus`. Worker-produced candidates are therefore
+verified cross-family (GPT produces, Claude audits); the journal records
+the model family per call. When ChatGPT quota is exhausted,
+`COVERIFY_MODEL_WORKER=claude-cli/opus` falls back to all-Anthropic (at
+the cost of cross-family verification), and
+`COVERIFY_MODEL_RECONSTRUCTOR=google/gemini-3.6-flash` remains the cheap
+third-family trial candidate. Override globally with `COVERIFY_MODEL` or per role with
 `COVERIFY_MODEL_{COORDINATOR,WORKER,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}`.
 Auth per provider: the logged-in `claude` binary for `claude-bridge`/
 `claude-cli`, env API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`), or

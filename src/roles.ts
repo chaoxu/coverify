@@ -75,18 +75,20 @@ const ROLE_ENV: Record<RoleName, string> = {
   comparator: "COVERIFY_MODEL_COMPARATOR",
 };
 
-/** All-Anthropic-on-subscription decision (user, 2026-07-31): every default
- *  role bills the Claude subscription. The coordinator's tool loop runs
- *  through claude-bridge (Agent SDK; official `claude` login) — bridge
- *  sessions cross-contaminate when concurrent, so claude-bridge is
- *  coordinator-only (enforced at preflight). Workers and the five
- *  single-shot verdict roles run through the official `claude -p` CLI:
- *  independent processes, safe in parallel, subscription-billed
- *  (third-party OAuth draws Extra Credits per current Anthropic billing).
- *  Every role is overridable per-role or globally. */
+/** Subscription-only defaults (user decisions, 2026-07-31): workers run
+ *  GPT-5.6 Sol as single-shot deep-prover oracles through the official
+ *  `codex` CLI (ChatGPT subscription; Sol "Ultra" effort comes from the
+ *  user's codex config); Opus handles judgment — the coordinator's tool
+ *  loop through claude-bridge (Agent SDK; official `claude` login) and the
+ *  five single-shot verdict roles through `claude -p`. Verification is
+ *  therefore cross-family for worker-produced candidates. Bridge sessions
+ *  cross-contaminate when concurrent, so claude-bridge is coordinator-only
+ *  (enforced at preflight). Third-party OAuth against Anthropic draws
+ *  Extra Credits, hence the official CLIs. Every role is overridable
+ *  per-role or globally. */
 const ROLE_DEFAULTS: Partial<Record<RoleName, string>> = {
   coordinator: "claude-bridge/claude-opus-5@high",
-  worker: "claude-cli/opus",
+  worker: "codex-cli/gpt-5.6-sol",
   gateCritic: "claude-cli/opus",
   hostileAuditor: "claude-cli/opus",
   bundleCertifier: "claude-cli/opus",
