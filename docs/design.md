@@ -232,10 +232,11 @@ harnesses directly — `claude -p` / `codex exec` — via a harness-provided
       anthropic, openai, openai-codex (subscription OAuth), google,
       claude-bridge (Agent SDK tool loop, coordinator-only), claude-cli
       (`claude -p`), codex-cli, chatgpt-cli. Defaults all subscription
-      billed: workers `codex-cli/gpt-5.6-sol` (Sol Ultra oracles);
-      coordinator `claude-bridge/claude-opus-5@high`; verdict roles
-      `claude-cli/opus` — user decisions 2026-07-31; worker candidates
-      are verified cross-family out of the box)
+      billed: workers `openai-codex/gpt-5.6-sol@max` (tooled Sol agents,
+      ChatGPT-subscription OAuth); coordinator
+      `claude-bridge/claude-opus-5@high`; verdict roles `claude-cli/opus`
+      — user decisions 2026-07-31; worker candidates are verified
+      cross-family out of the box)
 - [ ] Per-wake model routing and eval-driven per-role tuning (cheap wakes vs
       promotion wakes; cheap critics) — decided by eval evidence
 - [ ] Linux write-sandbox backend (bubblewrap/sandbox equivalent)

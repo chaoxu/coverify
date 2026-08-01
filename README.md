@@ -43,10 +43,11 @@ provenance label). A single-shot-CLI-backed **worker** runs as an oracle:
 one deep attempt, no tools, the reply is the deliverable — e.g.
 `COVERIFY_MODEL_WORKER=chatgpt-cli/gpt-5.6-pro` turns workers into GPT-5.6
 Pro deep provers. Defaults (all subscription billed): workers
-`codex-cli/gpt-5.6-sol` — Sol Ultra single-shot oracles on the ChatGPT
-subscription; coordinator `claude-bridge/claude-opus-5@high`; the five
-single-shot verdict roles (critic, auditor, certifier, reconstructor,
-comparator) `claude-cli/opus`. Worker-produced candidates are therefore
+`openai-codex/gpt-5.6-sol@max` — Sol at maximum effort as full pi agents
+on the ChatGPT-subscription OAuth (`coverify login openai-codex`;
+`codex-cli/gpt-5.6-sol` is the no-login single-shot fallback); coordinator
+`claude-bridge/claude-opus-5@high`; the five single-shot verdict roles
+(critic, auditor, certifier, reconstructor, comparator) `claude-cli/opus`. Worker-produced candidates are therefore
 verified cross-family (GPT produces, Claude audits); the journal records
 the model family per call. When ChatGPT quota is exhausted,
 `COVERIFY_MODEL_WORKER=claude-cli/opus` falls back to all-Anthropic (at
