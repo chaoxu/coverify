@@ -1,0 +1,84 @@
+// The trace renderer is observability: it must read the journal faithfully and
+// must never write campaign state or depend on the network.
+import { describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as path from "node:path";
+
+const { traceData, renderTrace, writeTrace } = await import("../src/trace.ts");
+
+function campaign(rows: object[]) {
+  const dir = fs.mkdtempSync("/private/tmp/coverify-trace-");
+  fs.mkdirSync(path.join(dir, ".coverify"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, ".coverify", "journal.jsonl"),
+    rows.map((r) => JSON.stringify(r)).join("\n") + "\n",
+  );
+  return dir;
+}
+
+const T = (min: number) => new Date(Date.UTC(2026, 7, 1, 3, min)).toISOString();
+const gate = (ts: string, g: object) => ({ ts, kind: "note", gate: { ts, ...g } });
+
+const dir = campaign([
+  { ts: T(0), kind: "wake", wake: 1, live: 0, newReports: 0 },
+  gate(T(1), { kind: "dispatch", id: "r001", role: "reasoner", mechanism: "route-A", task: "prove X", modelFamily: "m/x" }),
+  gate(T(2), { kind: "dispatch", id: "t002", role: "technician", mechanism: "search", task: "enumerate", modelFamily: "m/x" }),
+  gate(T(9), { kind: "completion", id: "r001", report: "EVIDENCE/r001/report.r1.md" }),
+  gate(T(11), { kind: "audit", revision: "cand.r1.md", verdict: "FAIL", modelFamily: "m/a" }),
+  gate(T(12), { kind: "gate-verdict", mechanism: "route-A", verdict: "IDEA PASS" }),
+  gate(T(20), { kind: "promotion", revision: "cand.r2.md" }),
+  { ts: T(21), kind: "wake", wake: 2, live: 1, newReports: 1 },
+]);
+
+describe("traceData", () => {
+  const d = traceData(dir);
+  test("pairs dispatches with completions", () => {
+    const r = d.agents.find((a) => a.id === "r001")!;
+    expect(r.role).toBe("reasoner");
+    expect(r.start).toBe(60);
+    expect(r.end).toBe(540);
+  });
+  test("leaves an uncompleted dispatch open", () => {
+    expect(d.agents.find((a) => a.id === "t002")!.end).toBeUndefined();
+  });
+  test("carries verification, gate, promotion and wake events", () => {
+    const kinds = d.events.map((e) => e.type);
+    expect(kinds.filter((k) => k === "verify").length).toBe(1);
+    expect(kinds.filter((k) => k === "gate").length).toBe(1);
+    expect(kinds.filter((k) => k === "promotion").length).toBe(1);
+    expect(kinds.filter((k) => k === "wake").length).toBe(2);
+    expect(d.events.find((e) => e.type === "verify")!.verdict).toBe("FAIL");
+  });
+  test("span covers the whole journal", () => expect(d.span).toBe(21 * 60));
+  test("refuses a campaign with no journal", () => {
+    expect(() => traceData(fs.mkdtempSync("/private/tmp/coverify-empty-"))).toThrow(/no journal entries/);
+  });
+});
+
+describe("renderTrace", () => {
+  const html = renderTrace(dir);
+  test("is self-contained: no external requests", () => {
+    expect(html).not.toMatch(/<(script|link|img)[^>]+(src|href)=["']?https?:/i);
+    expect(html).not.toMatch(/@import\s+url\(/i);
+  });
+  test("inlines the timeline library and the data", () => {
+    expect(html).toContain("vis-timeline");
+    expect(html).toContain("const DATA =");
+    expect(html).toContain("r001");
+  });
+  test("leaks no escape sequences into visible markup", () => {
+    // Only our own markup: the vendored bundle legitimately contains \uXXXX.
+    // A formatter that escapes non-ASCII in source would otherwise surface as
+    // literal "·" on the page, since String.raw keeps escapes raw.
+    const markup = html.slice(html.indexOf("<body>"), html.indexOf("<script>"));
+    expect(markup).not.toMatch(/\\u[0-9a-fA-F]{4}/);
+    expect(markup).toContain("&middot;");
+  });
+  test("writes only inside .coverify and leaves the campaign alone", () => {
+    const before = fs.readdirSync(dir).sort();
+    const out = writeTrace(dir);
+    expect(out).toBe(path.join(dir, ".coverify", "trace.html"));
+    expect(fs.readdirSync(dir).sort()).toEqual(before);
+    expect(fs.readFileSync(path.join(dir, ".coverify", "journal.jsonl"), "utf8")).toContain("r001");
+  });
+});

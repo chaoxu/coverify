@@ -150,13 +150,15 @@ scheduler front door, per the launcher.
 ## Runtime shape
 
 ```
-cli.ts           prove / resume / status / amend
+cli.ts           prove / resume / status / amend / trace
 campaign.ts      state layer: init, revisions, append-only evidence, resume bundle
 launcher.ts      load + extract the fenced launcher contract (no fallback)
 roles.ts         prompt assembly (launcher verbatim + role charge); pi Agent runner
 claude-bridge.ts pi-claude-bridge as a pi-ai provider (subscription tool loop)
 gates.ts         dispatch gate, idea-gate ledger, two-stage verification, promotion
 harness.ts       handle table, event loop, wakes; the only persistent process
+trace.ts         journal -> self-contained HTML timeline (read-only observability)
+trace-page.ts    that page's markup, styles, and view code
 ```
 
 - **Coordinator**: resident across wakes — matching how the skill runs in a
@@ -249,6 +251,18 @@ micro-fact; gate before the wave; finite deliverables, never clocks; the
 FAILED/REGISTRY indexes stop re-funding dead routes; budgets enforced at
 dispatch; every role instance is fresh — workers get one packet each, and
 fresh instances are mandatory where they buy trust (critics, verifiers).
+
+## Observability
+
+`coverify trace [--dir campaign] [--out file.html]` renders the campaign
+journal as a self-contained HTML timeline: agent lifetimes as ranges,
+verification and gate verdicts as points, coordinator wakes as bands, plus
+summary tiles and a table view. The widget is vis-timeline, vendored and
+inlined at render time, so a trace opens offline and under a strict CSP.
+It is read-only by construction — it consumes harness audit metadata and
+writes one file under `.coverify/`, never campaign state, so it cannot
+change campaign semantics (rule 2). It also works on a live campaign;
+in-flight dispatches simply show as "no completion recorded".
 
 ## Skill feedback
 

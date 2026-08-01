@@ -4,12 +4,14 @@ import { campaignExists, initCampaign, readJournal, readLedger } from "./campaig
 import { GateStore, recordStatement } from "./gates.js";
 import { buildModels, ROLE_NAMES, roleModelSpec, specLabel } from "./roles.js";
 import { runCampaign } from "./harness.js";
+import { writeTrace } from "./trace.js";
 
 function usage(): never {
   console.error(`usage:
   coverify prove "<exact statement>" [--dir campaign] [--agent-limit N] [--max-wakes N]
   coverify resume [--dir campaign] [--agent-limit N] [--max-wakes N]
   coverify status [--dir campaign]
+  coverify trace [--dir campaign] [--out file.html]   render the journal as an HTML timeline
   coverify amend [--dir campaign]   accept an explicit user amendment of STATEMENT.md
   coverify login <provider>         subscription OAuth (anthropic = Claude Pro/Max,
                                     openai-codex = ChatGPT; credential -> ~/.config/coverify/auth.json)
@@ -17,7 +19,7 @@ function usage(): never {
 
 env: ANTHROPIC_API_KEY (+ OPENAI_API_KEY for openai/* roles — defaults are OpenAI GPT-5.6 Sol
        everywhere except the hostile auditor, which stays on claude-cli/opus),
-     COVERIFY_MODEL and per-role COVERIFY_MODEL_{COORDINATOR,WORKER,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}
+     COVERIFY_MODEL and per-role COVERIFY_MODEL_{COORDINATOR,REASONER,TECHNICIAN,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}
        as "provider/model[@thinking]" specs (base default anthropic/claude-opus-5@high),
      COVERIFY_LAUNCHER_PATH (default ~/kb/notes/agents/prompts/prompt-math-proof-search-launcher.md)`);
   process.exit(2);
@@ -175,6 +177,16 @@ switch (command) {
       console.log("## Recent harness journal entries\n");
       for (const e of tail) console.log(JSON.stringify(e));
     }
+    break;
+  }
+  case "trace": {
+    if (!campaignExists(dir)) {
+      console.error(`no campaign at ${dir}`);
+      process.exit(1);
+    }
+    const out = writeTrace(dir, flags.get("out"));
+    console.error(`[coverify] trace written: ${out}`);
+    console.log(out);
     break;
   }
   default:
