@@ -35,6 +35,7 @@ run scripts inside their own evidence directory via `run_script`.
 
 ## Style
 
-TypeScript on Bun; keep the tool small. Checks: `bunx tsc --noEmit`. Prefer
+TypeScript on Bun; keep the tool small. Checks: `bun run check` (tsc, launcher conformance, and the
+enforcement tests in `tests/`). Prefer
 enforcing a rule in `gates.ts` over restating it in a prompt, and prefer
 prompt text quoted from the launcher over new prose.

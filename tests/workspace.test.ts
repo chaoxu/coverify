@@ -199,6 +199,49 @@ describe("enforcement bypasses (regression)", () => {
     ).rejects.toThrow(/outside assigned scope/);
     expect(fs.readFileSync(path.join(ws, "PROVED.md"), "utf8")).toContain("real promotions");
   });
+  test("write refuses a symlink pointing outside the scope", async () => {
+    const outside = tmp("symlink-target");
+    const victim = path.join(outside, "victim.md");
+    fs.writeFileSync(victim, "# untouched\n");
+    const link = path.join(ws, "innocent.md");
+    fs.symlinkSync(victim, link);
+    const prose = tools(ws);
+    await expect(prose.write.execute("t", { path: link, content: "# OWNED" })).rejects.toThrow(
+      /outside assigned scope/,
+    );
+    expect(fs.readFileSync(victim, "utf8")).toContain("untouched");
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+  test("run_script refuses a symlink to a host interpreter", async () => {
+    const link = path.join(ws, "sh");
+    if (!fs.existsSync(link)) fs.symlinkSync("/bin/sh", link);
+    const out = text(
+      await t.run_script.execute("t", { runs: [{ path: "sh", args: ["-c", "echo SHELL_REACHED"] }] }),
+    );
+    expect(out).not.toContain("SHELL_REACHED");
+    expect(out).toContain("inside your assigned directory");
+  });
+  test("a helper launched in a new session is still reaped", async () => {
+    fs.writeFileSync(path.join(ws, "helper.py"), "import time\ntime.sleep(300)\n");
+    fs.writeFileSync(
+      path.join(ws, "launcher.py"),
+      "import subprocess,sys,os\n" +
+        "p=subprocess.Popen([sys.executable, os.path.join(os.path.dirname(__file__),'helper.py')], start_new_session=True)\n" +
+        "print('BG',p.pid)\nsys.stdout.flush()\n",
+    );
+    const out = text(await t.run_script.execute("t", { runs: [{ path: "launcher.py" }] }));
+    const bgPid = Number(out.match(/BG (\d+)/)?.[1]);
+    expect(Number.isFinite(bgPid)).toBe(true);
+    await new Promise((r) => setTimeout(r, 800));
+    let alive = true;
+    try {
+      process.kill(bgPid, 0);
+    } catch {
+      alive = false;
+    }
+    if (alive) process.kill(bgPid, 9);
+    expect(alive).toBe(false);
+  }, 20000);
   test("append-only holds against a case-variant ledger name", async () => {
     const prose = tools(ws);
     const ledger = path.join(ws, "FAILED.md");

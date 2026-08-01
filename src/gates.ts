@@ -122,6 +122,16 @@ export interface TechnicianPacket extends DispatchPacket {
   computation: string;
 }
 
+/**
+ * Revision identity for gate lookups. Records written before revisions were
+ * canonicalized to their on-disk case hold the coordinator's spelling, and on
+ * a case-insensitive volume both name the same file — comparing case-folded
+ * as well keeps prior FAIL/PASS records matching after the change.
+ */
+export function sameRevision(a: unknown, b: string): boolean {
+  return typeof a === "string" && (a === b || a.toLowerCase() === b.toLowerCase());
+}
+
 export interface GateDecision {
   allowed: boolean;
   reason?: string;
@@ -243,7 +253,7 @@ export function verificationState(store: GateStore, dir: string, revision: strin
   const candidateHash = fs.existsSync(candidatePath) ? sha256File(candidatePath) : undefined;
   const stmtHash = statementHash(dir);
   const match = (e: GateRecord) =>
-    e.revision === revision &&
+    sameRevision(e.revision, revision) &&
     e.verdict === "PASS" &&
     e.candidateHash === candidateHash &&
     e.statementHash === stmtHash;

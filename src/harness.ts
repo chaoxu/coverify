@@ -16,6 +16,7 @@ import {
   recordStatement,
   checkPromotion,
   checkDispatch,
+  sameRevision,
   GateStore,
   parseFirstLineVerdict,
   recordGateVerdict,
@@ -131,7 +132,9 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   };
 
   const evidenceRelative = (p: string): string | undefined => {
-    const root = path.join(dir, "EVIDENCE");
+    const root = fs.existsSync(path.join(dir, "EVIDENCE"))
+      ? fs.realpathSync.native(path.join(dir, "EVIDENCE"))
+      : path.join(dir, "EVIDENCE");
     let resolved = path.resolve(root, p);
     if (!resolved.startsWith(root + path.sep)) return undefined;
     // Canonical on-disk case: gate records (prior FAIL, bundle-cert FAIL,
@@ -139,7 +142,8 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     // as one file — without this, retyping the case would look like a new
     // revision and slip past anti-verdict-shopping.
     if (fs.existsSync(resolved)) resolved = fs.realpathSync.native(resolved);
-    return path.relative(fs.existsSync(root) ? fs.realpathSync.native(root) : root, resolved);
+    if (!resolved.startsWith(root + path.sep)) return undefined;
+    return path.relative(root, resolved);
   };
 
   const liveOnMechanism = (mechanism: string): number =>
@@ -394,7 +398,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         .some(
           (e) =>
             e.kind === "bundle-cert" &&
-            e.revision === rel &&
+            sameRevision(e.revision, rel) &&
             e.bundleHash === sha256Text(bundle) &&
             e.verdict === "FAIL",
         );
@@ -409,7 +413,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         .some(
           (e) =>
             (e.kind === "audit" || e.kind === "comparison") &&
-            e.revision === rel &&
+            sameRevision(e.revision, rel) &&
             e.candidateHash === candidateHash &&
             e.verdict === "FAIL",
         );
@@ -558,6 +562,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
             models,
           });
           addUsage(reconTextUsage);
+          abortIfCancelled();
           reconText = text;
           const reconEvidence = newEvidencePath(dir, `audits/${slug}.reconstruction`);
           fs.writeFileSync(reconEvidence, reconText);

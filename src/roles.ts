@@ -19,10 +19,18 @@ import { claudeBridgeProvider } from "./claude-bridge.js";
 import { Type } from "typebox";
 
 const OUTPUT_LIMIT = 50_000;
+/** A malformed limit must not silently become NaN: setTimeout(fn, NaN) fires
+ *  immediately, which would time out every batch instantly. */
+function positiveEnvNumber(raw: string | undefined, fallback: number): number {
+  const n = Number(raw);
+  return raw !== undefined && Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 /** Wall limit for one run_script batch / one librarian call. Never a
  *  proof-work timebox (the launcher forbids those) — supervision only. */
-const RUN_TIMEOUT_MS = Number(
-  process.env.COVERIFY_RUN_TIMEOUT_MS ?? process.env.COVERIFY_BASH_TIMEOUT_MS ?? 600_000,
+const RUN_TIMEOUT_MS = positiveEnvNumber(
+  process.env.COVERIFY_RUN_TIMEOUT_MS ?? process.env.COVERIFY_BASH_TIMEOUT_MS,
+  600_000,
 );
 
 export type Models = ReturnType<typeof createModels>;
@@ -211,38 +219,54 @@ function sandboxedArgv(argv: string[], scope: WriteScope): { file: string; args:
   return { file: "sandbox-exec", args: ["-p", profile, ...argv] };
 }
 
-/** Resolve to a real path even for not-yet-existing files (symlinked ancestors
- *  count). On darwin the default filesystem is case-insensitive, so `PROVED.md`
- *  and `proved.md` are one file: fold case there, or a deny-list entry is
- *  bypassable by retyping the name. Folding is conservative (it can only deny
- *  more) which is the safe direction even on a case-sensitive volume. */
+/** Fully resolve a path, including the final component when it exists — a
+ *  symlink the role created inside its own directory must be judged by its
+ *  target, or scope checks are decorative. Components that do not exist yet
+ *  are appended to the deepest resolved ancestor. */
 function realResolve(p: string): string {
   const abs = path.resolve(p);
+  if (fs.existsSync(abs)) {
+    try {
+      return fs.realpathSync.native(abs);
+    } catch {
+      /* raced away; fall through to the ancestor walk */
+    }
+  }
   let dir = path.dirname(abs);
   const tail: string[] = [path.basename(abs)];
   while (!fs.existsSync(dir) && dir !== path.dirname(dir)) {
     tail.unshift(path.basename(dir));
     dir = path.dirname(dir);
   }
-  const resolved = path.join(fs.existsSync(dir) ? fs.realpathSync.native(dir) : dir, ...tail);
-  return process.platform === "darwin" ? resolved.toLowerCase() : resolved;
+  return path.join(fs.existsSync(dir) ? fs.realpathSync.native(dir) : dir, ...tail);
 }
 
-/** In-process mirror of the OS write sandbox. Deny wins. */
+/**
+ * In-process mirror of the OS write sandbox. Deny wins.
+ *
+ * Allow is compared exactly: on a case-insensitive volume `realResolve`
+ * already returns the canonical on-disk case for anything that exists, and on
+ * a case-sensitive volume `t001` and `T001` are genuinely different
+ * directories that must not be conflated. Deny is compared case-folded as
+ * well, because a *not-yet-existing* `proved.md` resolves to that spelling
+ * while naming the same file as `PROVED.md` on a case-insensitive volume.
+ */
 function inScope(scope: WriteScope, target: string): boolean {
   const real = realResolve(target);
-  const inside = (root: string) => {
+  const under = (child: string, root: string) => child === root || child.startsWith(root + path.sep);
+  const allowed = scope.allow.some((root) => under(real, realResolve(root)));
+  const denied = scope.deny.some((root) => {
     const r = realResolve(root);
-    return real === r || real.startsWith(r + path.sep);
-  };
-  return scope.allow.some(inside) && !scope.deny.some(inside);
+    return under(real, r) || under(real.toLowerCase(), r.toLowerCase());
+  });
+  return allowed && !denied;
 }
 
 function assertInScope(scope: WriteScope, target: string): void {
   if (!inScope(scope, target)) throw new Error(`write outside assigned scope: ${target}`);
 }
 
-const RUN_MEM_MB = Number(process.env.COVERIFY_RUN_MEM_MB ?? 4096);
+const RUN_MEM_MB = positiveEnvNumber(process.env.COVERIFY_RUN_MEM_MB, 4096);
 
 /**
  * One `ps` sweep: every process that belongs to this batch — descended from
@@ -263,7 +287,7 @@ function processSweep(
   marks: readonly string[],
 ): Promise<{ members: Map<number, Proc>; rssKb: number }> {
   return new Promise((resolve, reject) => {
-    execFile("ps", ["-axo", "pid=,ppid=,pgid=,rss=,args="], (err: Error | null, out: string) => {
+    execFile("ps", ["-axo", "pid=,ppid=,pgid=,rss=,args="], { maxBuffer: 64 * 1024 * 1024 }, (err: Error | null, out: string) => {
       if (err) return reject(err);
       const rows = new Map<number, Proc>();
       for (const line of out.split("\n")) {
@@ -373,8 +397,11 @@ function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
         });
       });
       const roots = new Set(children.map((c) => c.pid).filter((p): p is number => p !== undefined));
-      // Script paths, used to recognize our processes by command line.
-      const marks = [...new Set(jobs.map((j) => j.argv.find((a) => a.startsWith(cwd)) ?? j.argv[0]))];
+      // Command-line marks used to recognize this batch's processes. The
+      // working directory covers a helper the script launched in a new
+      // session running a *different* file in the same directory — that
+      // survivor matches no pid, group, or parent of ours once reparented.
+      const marks = [...new Set([cwd, ...jobs.map((j) => j.argv.find((a) => a.startsWith(cwd)) ?? j.argv[0])])];
       let fate: string | undefined;
       const killAll = async () => {
         // Two passes: killing the parents first stops them forking more, and
@@ -471,6 +498,12 @@ const LITERATURE_CMD = (
   "agy --dangerously-skip-permissions --print-timeout 10m -p"
 ).split(/\s+/);
 
+/** The librarian CLI's own state (credentials, cache, logs) — writable so the
+ *  tool can refresh tokens; campaign state stays governed by the role scope. */
+const LIBRARIAN_STATE_DIRS = [".gemini", ".antigravity", ".claude", ".codex", ".config", ".cache"].map(
+  (d) => path.join(os.homedir(), d),
+);
+
 const LIBRARIAN_CHARGE =
   "You are a mathematical literature librarian. Web-search the question below and compile a " +
   "report: for every claim give the exact bibliographic citation (authors, title, venue, year) " +
@@ -502,11 +535,13 @@ function literatureSearchTool(cwd: string, scope: WriteScope): AgentTool {
         const { question } = params as { question: string };
         // Sandboxed like run_script: the librarian is a full coding agent
         // (default argv skips its own permission prompts) driven by a
-        // role-authored question, so confine its writes to the same scope.
-        const { file, args } = sandboxedArgv(
-          [...LITERATURE_CMD, LIBRARIAN_CHARGE + question],
-          scope,
-        );
+        // role-authored question, so confine its writes to the campaign
+        // scope. Its own state directories stay writable — a CLI that cannot
+        // refresh its OAuth token fails as an opaque non-zero exit.
+        const { file, args } = sandboxedArgv([...LITERATURE_CMD, LIBRARIAN_CHARGE + question], {
+          allow: [...scope.allow, ...LIBRARIAN_STATE_DIRS],
+          deny: scope.deny,
+        });
         const child = spawn(file, args, {
           cwd,
           detached: true,

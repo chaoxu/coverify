@@ -66,7 +66,10 @@ is their assigned `EVIDENCE/<id>/` directory; the coordinator's is the
 campaign dir *except* `.coverify/`, `STATEMENT.md`, and `PROVED.md` (deny
 wins). `PROVED.md` is appendable only through the `record_promotion` tool,
 which re-checks both verification stages and the content hashes before
-writing.
+writing. Scope checks resolve the *final* path component, so a symlink a
+role plants inside its own directory is judged by its target — without that,
+a deny-list entry (or the script-path confinement below) is only a naming
+convention.
 
 Web access is likewise a gated grant, and it is delegated: a reasoner whose
 packet carries a `literature` question gets `literature_search`, which
@@ -91,10 +94,12 @@ default 4096). At batch end (or when a cap trips) the harness kills the
 groups and then sweeps `ps` for survivors — processes still descended from
 the batch, sharing its groups, or still running one of its script paths —
 because a child that calls `setpgrp()` and is reparented to pid 1 is
-invisible to a group kill alone. A survivor that both leaves its group and
-`exec`s an unrelated binary would evade the sweep; the technician is a
-supervised role, not an adversary, so that residual is stated rather than
-claimed away. If `ps` itself fails, the batch is killed and the failure
+invisible to a group kill alone. The sweep matches the batch's script paths and its
+working directory, so a helper launched in a new session — even one running
+a different file in the same directory — is still found. A survivor that
+leaves its session *and* `exec`s a binary naming nothing in the workspace
+would evade it; the technician is a supervised role, not an adversary, so
+that residual is stated rather than claimed away. If `ps` itself fails, the batch is killed and the failure
 reported — the cap never silently disappears. The batch is intra-turn concurrency for one
 technician; harness-level async computation handles remain the roadmap item.
 The scoped write tool additionally enforces ledger integrity: `FAILED.md`
