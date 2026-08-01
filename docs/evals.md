@@ -2,8 +2,8 @@
 
 How we evaluate the `math-proof-search` skill and this harness, adapted from
 the 2026 skill-eval methodology (blind A/B against baseline; grade the
-contracts, not the final answer; fresh-context judges). Retired from 1.0 and
-still retired: one-shot capability matrices as decision input.
+contracts, not the final answer; fresh-context judges). One-shot capability
+matrices are not decision input.
 
 ## Three layers, cheapest first
 

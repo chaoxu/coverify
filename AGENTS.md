@@ -2,7 +2,7 @@
 
 ## The skill is the spec
 
-Coverify 2.0 enforces the `math-proof-search` launcher contract
+Coverify enforces the `math-proof-search` launcher contract
 (`~/kb/notes/agents/prompts/prompt-math-proof-search-launcher.md`). Before
 changing harness behavior, read that contract. Three rules govern all code
 here:
