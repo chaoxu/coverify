@@ -45,6 +45,40 @@ per-call token accounting lands (design.md roadmap). Idea generation — no
 evidence; one mechanism family sufficed at this statement size. Both stay
 deferred.
 
+## Evidence from campaign 2 (2026-08-01, lin-3-cut complexity, in progress)
+
+Second live campaign (`~/research/linear-3-cut/campaigns/2026-07-31-complexity-s-star-t-lin3cut`,
+7 promotions in 7 wakes at time of writing; survived a host reboot mid-rebuild
+losslessly; coordinator/worker models switched Opus→Sol at wake 8 with no
+observed state discontinuity).
+
+1. **Restart-rule re-orientation cost is the binding constraint, not ledger
+   size.** The resume bundle (statement + frontier + registry + lessons) was
+   only ~11k tokens, but the freshly rebuilt coordinator burned to ~143k
+   context (journal `usage` entries) on evidence re-reads and gate transcripts
+   before its first dispatch — against a 150k cap, i.e. near-thrash. Feeds
+   deferred item 3 (compaction-boundary context discipline): the candidate
+   skill lesson is a **frontier-sufficiency clause** — CURRENT_FRONTIER should
+   be written so a session rebuilt from the ledgers alone can choose its next
+   dispatch without broad EVIDENCE re-reading. Harness mitigation applied
+   meanwhile: cap raised via `COVERIFY_COORDINATOR_CONTEXT_TOKENS`.
+2. **Stage-2 blind reconstruction + comparison demonstrably earns its keep.**
+   Four comparison FAILs (obstructions.r2, escapes.r1, escapes.r2,
+   middle-structure.r3), each a legitimate precision catch after stage-1 audit
+   PASS: a witness established only with parallel arcs where the candidate
+   claimed a simple digraph; a witness-fixed algorithmic claim established
+   only at OPT level; a whole tightness proposition absent from the
+   reconstruction. All four forced revisions that then passed. Relevant to
+   tiered verification's activation test: this argues for keeping the full
+   cadence *at promotion* exactly as drafted there (the tier proposal already
+   preserves it); it is evidence against ever weakening the promotion gate
+   itself.
+3. **Gate critic filters hard post-model-switch: 1 of 8 mechanisms passed in
+   the first Sol-coordinator wakes** (two IDEA REPAIR, five IDEA FAIL, one
+   PASS that dispatched two workers), vs. routine passes under Opus.
+   Confounded (model change vs. genuine lane exhaustion at wake 8+); watch
+   before drawing a lesson.
+
 ## Deferred: tiered verification (drafted, ready to land on evidence)
 
 Two launcher edits:

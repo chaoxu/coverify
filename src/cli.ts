@@ -15,7 +15,8 @@ function usage(): never {
                                     openai-codex = ChatGPT; credential -> ~/.config/coverify/auth.json)
   coverify logout <provider>
 
-env: ANTHROPIC_API_KEY (+ OPENAI_API_KEY for openai/* roles — workers default to openai/gpt-5.6-sol@xhigh),
+env: ANTHROPIC_API_KEY (+ OPENAI_API_KEY for openai/* roles — defaults are OpenAI GPT-5.6 Sol
+       everywhere except the hostile auditor, which stays on claude-cli/opus),
      COVERIFY_MODEL and per-role COVERIFY_MODEL_{COORDINATOR,WORKER,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}
        as "provider/model[@thinking]" specs (base default anthropic/claude-opus-5@high),
      COVERIFY_LAUNCHER_PATH (default ~/kb/notes/agents/prompts/prompt-math-proof-search-launcher.md)`);

@@ -40,32 +40,35 @@ EVIDENCE/             append-only, revision-suffixed artifacts; identity = filen
 ```
 
 Gate-authoritative state lives OUTSIDE the campaign directory
-(`~/.local/state/coverify/<campaign-id>/gates.jsonl`), so no role's bash can
+(`~/.local/state/coverify/<campaign-id>/gates.jsonl`), so no role's workspace tools can
 forge or erase gate records; the in-tree journal is an audit mirror. Audit,
 reconstruction, and comparison records are content-hash-bound (sha256 of the
 candidate and of `STATEMENT.md` at verification time) — a file edited after
 its PASS is no longer verifier-backed, and a statement edit without
 `coverify amend` hard-stops the next run.
 
-## Write confinement
+## Workspace tools and confinement
 
-Role bash is OS-sandboxed on macOS (`sandbox-exec`, deny-default writes;
-reads unrestricted): workers may write only their assigned `EVIDENCE/<id>/`
-directory (+ system temp), the coordinator may write the campaign dir
-*except* `.coverify/`, `STATEMENT.md`, and `PROVED.md`. `PROVED.md` is
-appendable only through the `record_promotion` tool, which re-checks both
-verification stages and the content hashes before writing. On non-darwin
-platforms confinement is currently instructed-only — say so honestly; do not
-claim platform enforcement there. (A campaign placed under the system temp
-tree is inside the sandbox's blanket temp allowance — keep campaigns in real
-project directories.)
+Roles have no general shell. The workspace surface is pi's `read`, `ls`, and
+`grep` (read-only), pi's `write` wrapped with an in-process scope check, and
+`run_script` — the sole way a role executes code. Workers' scope is their
+assigned `EVIDENCE/<id>/` directory; the coordinator's is the campaign dir
+*except* `.coverify/`, `STATEMENT.md`, and `PROVED.md` (deny wins).
+`PROVED.md` is appendable only through the `record_promotion` tool, which
+re-checks both verification stages and the content hashes before writing.
 
-Process confinement matches: nothing launched by role bash outlives the
-command. The tool runs each command as its own process-group leader, kills
-the group when the foreground shell exits or hits the command limit, and
-refuses the detach primitives that escape process groups
-(setsid/nohup/disown, tmux -d, screen -dm). Long computation goes through
-the scheduler front door, per the launcher.
+`run_script` runs one script file (`.py` under python3, or an executable) by
+argv — no shell, so detach primitives (setsid/nohup/disown, tmux -d, screen
+-dm) are not even expressible. The run is its own process group, killed when
+it exits or hits the command time limit or the RSS cap
+(`COVERIFY_RUN_MEM_MB`, default 4096); a script that forks survivors gets
+them reaped with it. Script writes are OS-sandboxed on macOS (`sandbox-exec`,
+deny-default writes; reads unrestricted) to the same scope. On non-darwin
+platforms the script sandbox is currently instructed-only — say so honestly;
+do not claim platform enforcement there. (A campaign placed under the system
+temp tree is inside the sandbox's blanket temp allowance — keep campaigns in
+real project directories.) Long or parallel computation goes through the
+scheduler front door, per the launcher.
 
 ## Runtime shape
 
@@ -146,7 +149,7 @@ modelFamily field discloses the backend per call. A `claude-bridge`
 coordinator runs its tool loop through the Claude Agent SDK
 (pi-claude-bridge): the bridge starts Claude Code with built-in tools
 disabled and strict MCP config, so the model's whole tool surface is
-coverify's own (sandboxed bash + gate tools) — confinement is unchanged,
+coverify's own (workspace + gate tools) — confinement is unchanged,
 though tool-disablement there is SDK-flag-enforced rather than
 OS-enforced. Concurrent bridge sessions cross-contaminate (observed in
 testing), so claude-bridge is coordinator-only, refused at preflight for
@@ -188,7 +191,7 @@ two independent strong agents (2026-07-31): an over-constraint audit (found:
 invented wave-gate threshold, invented exit condition, invented "no inline
 proof work" rule, stage-2 verdict predicate error, reconstructor starved of
 allowed sources — all fixed) and an under-hardening audit (found: gate state
-forgeable via role bash, promotion advisory-only, evidence/statement TOCTOU,
+forgeable via role workspace tools, promotion advisory-only, evidence/statement TOCTOU,
 spoofable verdict regex, missing comparison step, resume id collisions — all
 fixed except items noted "acceptable for now" in the audits: key-idea
 paraphrase risk and idea-gate mechanism-string keying remain model judgment,
@@ -204,7 +207,7 @@ harnesses directly — `claude -p` / `codex exec` — via a harness-provided
 `run_coding_agent` tool. Shape decided in advance so nothing has to move:
 
 - The harness spawns the CLI as a supervised child process (never through the
-  worker's sandboxed bash, which would block the CLI's own state writes),
+  worker's sandboxed tools, which would block the CLI's own state writes),
   cwd'd to an experiment directory inside the worker's `EVIDENCE/<id>/`;
   output is saved as an evidence artifact; the journal records the model
   family and that provenance is self-attested — the exact pattern
@@ -229,10 +232,10 @@ harnesses directly — `claude -p` / `codex exec` — via a harness-provided
 - [ ] Retraction bookkeeping helper (registry relabel + dependent demotion)
 - [ ] Non-load-bearing delta-audit carry-forward path (currently always full re-verification — stricter than the contract, acceptable)
 - [x] No unsupervised detached compute (launcher: "Never run unsupervised
-      detached compute."): role bash refuses detach primitives
-      (setsid/nohup/disown, tmux -d, screen -dm) and kills the command's
-      whole process group when the foreground shell exits or times out —
-      added 2026-08-01 after detached `setsid nohup python3` search jobs
+      detached compute."): roles have no shell at all — file work goes
+      through read/ls/grep/scoped-write, execution only through
+      `run_script` (argv-only, process-group kill on exit/timeout, RSS cap)
+      — added 2026-08-01 after detached `setsid nohup python3` search jobs
       from a live campaign memory-exhausted saturn into a kernel panic
 - [ ] Compute handles via the fleet scheduler front door (Nomad)
 - [ ] `run_coding_agent` worker tool (claude/codex CLI, design above)

@@ -1,8 +1,14 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
+import {
+  createGrepTool,
+  createLsTool,
+  createReadTool,
+  createWriteTool,
+} from "@earendil-works/pi-coding-agent";
 import { createModels } from "@earendil-works/pi-ai";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
@@ -160,7 +166,7 @@ export function toolText(text: string) {
 }
 
 export interface WriteScope {
-  /** Subtrees this role's bash may write. Reads are unrestricted. */
+  /** Subtrees this role's write/run tools may write. Reads are unrestricted. */
   allow: string[];
   /** Subtrees/files denied even inside an allowed subtree (deny wins). */
   deny: string[];
@@ -171,15 +177,15 @@ function sbplLiteral(p: string): string {
 }
 
 /**
- * Wrap a bash command in an OS write-sandbox (macOS sandbox-exec; SBPL rules
- * are last-match-wins, so denies are declared after allows). Reads stay
+ * Wrap an argv in an OS write-sandbox (macOS sandbox-exec; SBPL rules are
+ * last-match-wins, so denies are declared after allows). Reads stay
  * unrestricted — this narrows the tool surface, it adds no policy. On
- * non-darwin platforms the command runs unsandboxed and callers must treat
+ * non-darwin platforms the argv runs unsandboxed and callers must treat
  * write confinement as instructed-only.
  */
-function sandboxedCommand(command: string, scope: WriteScope): { file: string; args: string[] } {
+function sandboxedArgv(argv: string[], scope: WriteScope): { file: string; args: string[] } {
   if (process.platform !== "darwin") {
-    return { file: "bash", args: ["-c", command] };
+    return { file: argv[0], args: argv.slice(1) };
   }
   const allows = [
     '(subpath "/private/tmp")',
@@ -194,52 +200,78 @@ function sandboxedCommand(command: string, scope: WriteScope): { file: string; a
   const profile =
     `(version 1) (allow default) (deny file-write* (subpath "/")) (allow file-write* ${allows})` +
     (denyEntries ? ` (deny file-write* ${denyEntries})` : "");
-  return { file: "sandbox-exec", args: ["-p", profile, "bash", "-c", command] };
+  return { file: "sandbox-exec", args: ["-p", profile, ...argv] };
 }
+
+/** Resolve to a real path even for not-yet-existing files (symlinked ancestors count). */
+function realResolve(p: string): string {
+  const abs = path.resolve(p);
+  let dir = path.dirname(abs);
+  const tail: string[] = [path.basename(abs)];
+  while (!fs.existsSync(dir) && dir !== path.dirname(dir)) {
+    tail.unshift(path.basename(dir));
+    dir = path.dirname(dir);
+  }
+  return path.join(fs.existsSync(dir) ? fs.realpathSync.native(dir) : dir, ...tail);
+}
+
+/** In-process mirror of the OS write sandbox, for the write tool. Deny wins. */
+function assertInScope(scope: WriteScope, target: string): void {
+  const real = realResolve(target);
+  const inside = (root: string) => {
+    const r = realResolve(root);
+    return real === r || real.startsWith(r + path.sep);
+  };
+  if (!scope.allow.some(inside) || scope.deny.some(inside)) {
+    throw new Error(`write outside assigned scope: ${target}`);
+  }
+}
+
+const RUN_MEM_MB = Number(process.env.COVERIFY_RUN_MEM_MB ?? 4096);
 
 /**
- * Enforces the launcher's "Never run unsupervised detached compute." clause.
- * setsid escapes any process-group cleanup by design, so it (and the other
- * detach primitives) are refused outright rather than reaped.
+ * The only way a role executes code. Enforces the launcher's "Never run
+ * unsupervised detached compute.": argv only (no shell, so detach primitives
+ * are not expressible), process-group kill on exit/timeout, and an RSS
+ * watchdog so a runaway search is killed before it exhausts the host —
+ * detached setsid-nohup search jobs memory-exhausted saturn into a kernel
+ * panic on 2026-08-01.
  */
-function detachedComputeVeto(command: string): string | undefined {
-  const detach =
-    /(^|[\s;|&(`{])(setsid|nohup|disown)([\s;)`}]|$)/.test(command) ||
-    /\btmux\s+new\S*\s[^;|&]*-d/.test(command) ||
-    /\bscreen\s+-\S*d\S*m/.test(command);
-  if (!detach) return undefined;
-  return (
-    "[blocked: setsid/nohup/disown/tmux -d/screen -dm detach a process from supervision — " +
-    'the launcher forbids unsupervised detached compute ("Never run unsupervised detached ' +
-    'compute."). Run it foreground within the command limit (plain `&` background jobs are ' +
-    "allowed but are killed when the command exits — use `wait`), or route it through the " +
-    "scheduler front door.]"
-  );
-}
-
-function bashTool(cwd: string, scope: WriteScope): AgentTool {
+function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
   return {
-    name: "bash",
-    label: "Bash",
+    name: "run_script",
+    label: "Run script",
     description:
-      `Run a bash command. Working directory: ${cwd}. Writes are OS-sandboxed to your assigned ` +
-      `directories. Each command has a ${Math.round(BASH_TIMEOUT_MS / 60000)}-minute limit — this bounds one ` +
-      "shell command, not your turn; route genuinely long computations through the scheduler front door. " +
-      "Nothing outlives the command: when it returns (or times out), its whole process group is killed, " +
-      "and detach primitives (setsid/nohup/disown, tmux -d, screen -dm) are refused.",
+      `Run one script file, supervised. Working directory: ${cwd}. A .py file runs under python3; ` +
+      "anything else must be executable. Write the script with the write tool first. Limits: " +
+      `${Math.round(BASH_TIMEOUT_MS / 60000)} minutes, ${RUN_MEM_MB} MB RSS for the whole process ` +
+      "group; writes are OS-sandboxed to your assigned directories; when the run ends (or hits a " +
+      "limit) the entire process group is killed — nothing survives the call. Route genuinely long " +
+      "or parallel computation through the scheduler front door instead.",
     parameters: Type.Object({
-      command: Type.String({ description: "Command to run" }),
+      path: Type.String({ description: "Script file to run" }),
+      args: Type.Optional(Type.Array(Type.String(), { description: "Arguments passed to the script" })),
     }),
     executionMode: "sequential",
     execute: async (_id: string, params: unknown) =>
       new Promise((resolve) => {
-        const command = (params as { command: string }).command;
-        const veto = detachedComputeVeto(command);
-        if (veto) return resolve(toolText(veto));
-        const { file, args } = sandboxedCommand(command, scope);
-        // detached: the child leads its own process group, so background jobs
-        // it spawns can be reaped as a unit when the foreground shell exits.
-        const child = spawn(file, args, { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+        const { path: rel, args = [] } = params as { path: string; args?: string[] };
+        const script = path.resolve(cwd, rel);
+        if (!fs.existsSync(script)) return resolve(toolText(`[error: no such script: ${script}]`));
+        let argv: string[];
+        if (script.endsWith(".py")) argv = ["python3", script, ...args];
+        else {
+          try {
+            fs.accessSync(script, fs.constants.X_OK);
+            argv = [script, ...args];
+          } catch {
+            return resolve(toolText("[error: script must be .py or an executable file]"));
+          }
+        }
+        const { file, args: spawnArgs } = sandboxedArgv(argv, scope);
+        // detached: the child leads its own process group, so everything it
+        // forks can be reaped as a unit when the run ends.
+        const child = spawn(file, spawnArgs, { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] });
         let stdout = "";
         let stderr = "";
         child.stdout.on("data", (d: Buffer) => {
@@ -257,29 +289,73 @@ function bashTool(cwd: string, scope: WriteScope): AgentTool {
             }
           }
         };
-        let timedOut = false;
+        let fate: string | undefined;
         const timer = setTimeout(() => {
-          timedOut = true;
+          fate = `timed out after ${Math.round(BASH_TIMEOUT_MS / 60000)} minutes`;
           killGroup();
         }, BASH_TIMEOUT_MS);
-        // "exit" (not "close"): a background child holding the stdio pipes
-        // must not delay the group kill that reaps it.
+        const memWatch = setInterval(() => {
+          if (child.pid === undefined) return;
+          execFile("ps", ["-axo", "pgid=,rss="], (err: Error | null, out: string) => {
+            if (err || fate) return;
+            let rssKb = 0;
+            for (const line of out.split("\n")) {
+              const [pgid, rss] = line.trim().split(/\s+/);
+              if (Number(pgid) === child.pid) rssKb += Number(rss) || 0;
+            }
+            if (rssKb > RUN_MEM_MB * 1024) {
+              fate = `exceeded the ${RUN_MEM_MB} MB memory cap (rss ${Math.round(rssKb / 1024)} MB)`;
+              killGroup();
+            }
+          });
+        }, 1000);
+        // "exit" (not "close"): a forked child holding the stdio pipes must
+        // not delay the group kill that reaps it.
         child.once("exit", (code, signal) => {
           clearTimeout(timer);
+          clearInterval(memWatch);
           killGroup();
           let out = [stdout, stderr].filter(Boolean).join("\n--- stderr ---\n");
           if (out.length > OUTPUT_LIMIT) out = out.slice(0, OUTPUT_LIMIT) + "\n[truncated]";
-          if (timedOut) out = `${out}\n[error: timed out after ${BASH_TIMEOUT_MS}ms; process group killed]`;
+          if (fate) out = `${out}\n[error: ${fate}; process group killed]`;
           else if (code !== 0) out = `${out}\n[error: exit ${code ?? `signal ${signal}`}]`;
           resolve(toolText(out || "(no output)"));
         });
         child.once("error", (error: Error) => {
           clearTimeout(timer);
+          clearInterval(memWatch);
           killGroup();
           resolve(toolText(`[error: ${error.message}]`));
         });
       }),
   } as AgentTool;
+}
+
+/**
+ * The full role tool surface for a workspace: pi's read-only file tools
+ * (read, ls, grep), pi's write tool wrapped with the role's write scope, and
+ * run_script as the sole way to execute code. No general shell.
+ */
+export function workspaceTools(cwd: string, scope: WriteScope): AgentTool[] {
+  const scopedWrite = createWriteTool(cwd, {
+    operations: {
+      writeFile: async (absolutePath: string, content: string) => {
+        assertInScope(scope, absolutePath);
+        await fs.promises.writeFile(absolutePath, content);
+      },
+      mkdir: async (dir: string) => {
+        assertInScope(scope, dir);
+        await fs.promises.mkdir(dir, { recursive: true });
+      },
+    },
+  });
+  return [
+    createReadTool(cwd),
+    createLsTool(cwd),
+    createGrepTool(cwd),
+    scopedWrite,
+    runScriptTool(cwd, scope),
+  ] as AgentTool[];
 }
 
 export interface RoleRun {
@@ -288,8 +364,8 @@ export interface RoleRun {
   /** One-paragraph role charge appended after the contract. */
   charge: string;
   prompt: string;
-  /** Give the role bash at this cwd with this write scope. */
-  bash?: { cwd: string; scope: WriteScope };
+  /** Give the role the workspace tools (read/ls/grep, scoped write, run_script) at this cwd. */
+  workspace?: { cwd: string; scope: WriteScope };
   extraTools?: AgentTool[];
   spec: ModelSpec;
   models: Models;
@@ -305,7 +381,7 @@ export interface RoleRun {
  */
 export async function runRole(run: RoleRun): Promise<RoleResult> {
   if (isCliProvider(run.spec.provider)) {
-    if (run.bash || run.extraTools) {
+    if (run.workspace || run.extraTools) {
       throw new Error("CLI backends support single-shot verdict roles only (no tools)");
     }
     const text = await runCliRole(run.spec.provider, run.spec.modelId, `${systemText(run)}\n\n---\n\n${run.prompt}`);
@@ -448,7 +524,7 @@ export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: stri
   if (isCliProvider(run.spec.provider)) {
     throw new Error("CLI backends support single-shot verdict roles only, not sessions");
   }
-  const tools = run.bash ? [bashTool(run.bash.cwd, run.bash.scope)] : [];
+  const tools = run.workspace ? workspaceTools(run.workspace.cwd, run.workspace.scope) : [];
   if (run.extraTools) tools.push(...run.extraTools);
   const agent = new Agent({
     initialState: {
@@ -489,20 +565,23 @@ essentially all route exploration, proof or counterexample construction, computa
 reconstructions, and evidence drafting to minimal-context subagents; you retain exact-statement
 control, prior-route registration, assignments, promotion and ledger decisions, user updates, and
 final synthesis. Doing proof work inline pollutes this long-lived context — dispatch a packet
-instead. You are the sole ledger writer. Tools beyond bash: dispatch_worker, dispatch_gate_critic,
+instead. You are the sole ledger writer. Tools beyond the workspace tools (read, ls, grep, write,
+run_script): dispatch_worker, dispatch_gate_critic,
 request_verification, record_promotion (the only way to append to PROVED.md), cancel_worker and
 steer_worker (contract triggers only — observable struggle, user pause/stop, safety, explicit
-deadline), and declare_campaign_state (pause/complete). Your bash working directory is the campaign directory;
+deadline), and declare_campaign_state (pause/complete). Your workspace tools work in the campaign directory;
 edit the ledgers per the contract. STATEMENT.md, PROVED.md, and the harness journal are
 write-protected. End every wake with your decisions recorded in the ledgers and
 CURRENT_FRONTIER.md consistent with them.`,
   worker: `You are one exploration worker. You receive one packet with one finite mathematical
-deliverable. Work only that packet. You may use bash in your assigned evidence directory; scratch
+deliverable. Work only that packet. You have workspace tools (read, ls, grep, write, run_script)
+in your assigned evidence directory; scratch
 work may be edited freely, but never edit a file you have already cited or reported — semantic
 changes to citable artifacts get a new revision-suffixed filename. Return a conclusion-first
 report: the deliverable — a proved lemma, explicit construction, counterexample/certificate — or
 the precise failing implication with evidence. Status reports and vague optimism are not
-deliverables. Your packet may cite evidence paths and ledger locations; read them via bash when
+deliverables. Your packet may cite evidence paths and ledger locations; read them with your
+read/grep tools when
 your task needs depth — the packet is curated context, not the limit of what you may consult.`,
   gateCritic: `You are a fresh idea-gate critic. You receive only the frozen target, promoted
 premises, one proposed mechanism, and its claimed first nontrivial implication. Your VERY FIRST

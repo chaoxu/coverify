@@ -201,7 +201,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         session = createRoleSession({
           contract,
           charge: CHARGES.worker,
-          bash: { cwd: evidenceDir, scope: { allow: [evidenceDir], deny: [] } },
+          workspace: { cwd: evidenceDir, scope: { allow: [evidenceDir], deny: [] } },
           spec: workerSpec,
           models,
         });
@@ -641,7 +641,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       coordinator = createRoleSession({
         contract,
         charge: CHARGES.coordinator,
-        bash: { cwd: dir, scope: coordinatorScope },
+        workspace: { cwd: dir, scope: coordinatorScope },
         extraTools: [
           dispatchWorker,
           dispatchGateCritic,
