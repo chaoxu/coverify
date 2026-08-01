@@ -18,8 +18,19 @@ export interface TraceAgent {
   end?: number;
   cancelled?: boolean;
   mechanism: string;
+  /** The packet, as journaled. Fields beyond `task` exist only for campaigns
+   *  run by a harness revision that recorded them; older runs leave them
+   *  undefined and the inspector says so rather than implying emptiness. */
   task: string;
+  deliverable?: string;
+  context?: string;
+  failedCheck?: string;
+  computation?: string;
+  literature?: string;
   model: string;
+  evidenceDir?: string;
+  report?: string;
+  reportText?: string;
 }
 
 export type TraceEvent = Record<string, unknown> & { type: string; t: number };
@@ -67,8 +78,14 @@ export function traceData(dir: string): TraceData {
         id: g.id,
         role: g.role ?? "worker",
         start: t,
-        mechanism: String(g.mechanism ?? "").slice(0, 90),
-        task: String(g.task ?? "").slice(0, 170),
+        mechanism: String(g.mechanism ?? ""),
+        task: String(g.task ?? ""),
+        deliverable: g.deliverable,
+        context: g.context,
+        failedCheck: g.failedCheck,
+        computation: g.computation,
+        literature: g.literature,
+        evidenceDir: g.evidenceDir,
         model: g.modelFamily ?? "",
       });
     } else if (g?.kind === "completion") {
@@ -76,6 +93,7 @@ export function traceData(dir: string): TraceData {
       if (a) {
         a.end = t;
         a.cancelled = Boolean(g.cancelled);
+        a.report = g.report;
       }
     } else if (
       g?.kind === "audit" ||
@@ -96,6 +114,16 @@ export function traceData(dir: string): TraceData {
     } else if (g?.kind === "promotion") {
       events.push({ type: "promotion", t, revision: g.revision });
     }
+  }
+  // Inline each report so the page is inspectable on its own; capped, with the
+  // path kept so the full artifact is one click away in the campaign folder.
+  const CAP = 12_000;
+  for (const a of agents.values()) {
+    if (!a.report) continue;
+    const p = path.join(dir, a.report);
+    if (!fs.existsSync(p)) continue;
+    const text = fs.readFileSync(p, "utf-8");
+    a.reportText = text.length > CAP ? text.slice(0, CAP) + "\n\n[truncated - open the artifact for the rest]" : text;
   }
   const last = at(rows[rows.length - 1].ts as string) - base;
   return { t0, span: Math.max(last, 60), agents: [...agents.values()], events };

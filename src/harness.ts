@@ -204,18 +204,24 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     const id = `${isTechnician ? "t" : "r"}${String(nextId++).padStart(3, "0")}`;
     const evidenceDir = path.join(dir, "EVIDENCE", id);
     fs.mkdirSync(evidenceDir, { recursive: true });
+    // Role-authoritative, read once: tool schemas allow unknown extras, so a
+    // `literature` field smuggled onto a technician packet must neither reach
+    // the prompt nor grant the librarian.
+    const literature = role === "reasoner" ? (packet as ReasonerPacket).literature : undefined;
     store.append({
       kind: "dispatch",
       id,
       role,
       mechanism: packet.mechanism,
       task: packet.task,
+      deliverable: packet.deliverable,
+      context: packet.context,
+      failedCheck: packet.failedCheck,
+      computation: isTechnician ? (packet as TechnicianPacket).computation : undefined,
+      literature: literature ? (packet as ReasonerPacket).literature : undefined,
+      evidenceDir: path.relative(dir, evidenceDir),
       modelFamily: specLabel(spec),
     });
-    // Role-authoritative, read once: tool schemas allow unknown extras, so a
-    // `literature` field smuggled onto a technician packet must neither reach
-    // the prompt nor grant the librarian alongside run_script.
-    const literature = role === "reasoner" ? (packet as ReasonerPacket).literature : undefined;
     const packetPrompt =
       `# Task\n\n${packet.task}\n\n# Deliverable\n\n${packet.deliverable}\n\n# Context\n\n${packet.context}` +
       (isTechnician

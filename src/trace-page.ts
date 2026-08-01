@@ -100,6 +100,14 @@ export const STYLES = String.raw`
   .vis-tooltip .t-task { color: var(--ink-2); margin-top: 4px; }
   .vis-current-time { background-color: transparent; }
 
+  .inspect { display: grid; grid-template-columns: 190px 1fr; gap: 0 18px; padding: 16px 18px 20px; border-top: 1px solid var(--rule); font-size: 13.5px; }
+  .inspect .k { font-family: var(--mono); font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); padding: 7px 0 0; }
+  .inspect .v { padding: 5px 0; color: var(--ink); min-width: 0; }
+  .inspect .v.mono { font-family: var(--mono); font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
+  .inspect .v pre { margin: 4px 0 0; padding: 10px 12px; background: var(--surface); border: 1px solid var(--rule); border-radius: 3px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow-y: auto; font-family: var(--mono); font-size: 12px; line-height: 1.5; color: var(--ink-2); }
+  .inspect .absent { color: var(--ink-3); font-style: italic; }
+  .inspect .pill { display: inline-block; font-family: var(--mono); font-size: 10.5px; padding: 2px 7px; border-radius: 10px; border: 1px solid var(--rule-strong); color: var(--ink-2); }
+  .empty-inspect { padding: 16px 18px; color: var(--ink-3); font-size: 13px; border-top: 1px solid var(--rule); }
   .embed { position: relative; height: 720px; background: var(--surface); }
   .embed iframe { width: 100%; height: 100%; border: 0; display: block; }
   .embed .fallback { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; padding: 24px; color: var(--ink-3); font-size: 13px; }
@@ -151,6 +159,8 @@ export const BODY = String.raw`
     </div>
     <div id="tl"></div>
     <div class="legend" id="legend"></div>
+    <div id="inspect" class="empty-inspect">Click any bar or mark to inspect it — the packet it was given, its
+      model, and its report.</div>
   </section>
 
   <section class="panel">
@@ -239,12 +249,14 @@ export const VIEW = String.raw`
       content: a.id,
       kind: "agent",
       role,
+      agent: a,
       title:
         "<strong class='t-mono'>" + esc(a.id) + "</strong> " + ROLES[role] +
         "<div class='t-mono'>" + clock(a.start) + " &rarr; " +
         (lost ? "no completion recorded (lost to a restart)" : clock(a.end) + " &middot; " + fmtH((a.end - a.start) / H)) + "</div>" +
         (a.mechanism ? "<div class='t-task'><b>" + esc(a.mechanism) + "</b></div>" : "") +
-        (a.task ? "<div class='t-task'>" + esc(a.task) + "&hellip;</div>" : ""),
+        (a.task ? "<div class='t-task'>" + esc(a.task.slice(0, 150)) + (a.task.length > 150 ? "&hellip;" : "") + "</div>" : "") +
+        "<div class='t-mono'>click to inspect</div>",
     });
   });
   verifies.forEach((v, i) => {
@@ -257,6 +269,7 @@ export const VIEW = String.raw`
       className: "stage " + cls,
       content: "",
       kind: "verify",
+      ev: v,
       title:
         "<strong>" + STAGE[v.stage] + "</strong>" +
         "<div class='t-mono'>" + esc(v.revision) + " &middot; " + clock(v.t) + "</div>" +
@@ -273,6 +286,7 @@ export const VIEW = String.raw`
       className: "stage " + (g.verdict === "IDEA PASS" ? "stage-pass" : "stage-fail"),
       content: "",
       kind: "gate",
+      ev: g,
       title: "<strong>" + esc(g.verdict) + "</strong><div class='t-mono'>" + clock(g.t) + "</div><div class='t-task'>" + esc(g.mechanism) + "&hellip;</div>",
     });
   });
@@ -285,6 +299,7 @@ export const VIEW = String.raw`
       className: "stage stage-pass",
       content: "promoted " + esc(p.revision),
       kind: "promotion",
+      ev: p,
       title: "<strong>promotion</strong><div class='t-mono'>" + esc(p.revision) + " &middot; " + clock(p.t) + "</div>",
     });
   });
@@ -297,17 +312,18 @@ export const VIEW = String.raw`
       className: "wake",
       content: "",
       kind: "wake",
+      ev: w,
       title: "<strong>wake " + w.n + "</strong><div class='t-mono'>" + clock(w.t) + " &middot; " + w.live + " live &middot; " + w.reports + " new report(s)</div>",
     });
   });
 
   const flatGroups = [
-    { id: "agents", content: "agents" },
-    { id: "verify", content: "verification" },
-    { id: "gates", content: "gates & promotions" },
+    { id: "agents", content: "dispatched agents" },
+    { id: "verify", content: "verification stages" },
+    { id: "gates", content: "idea gates & promotions" },
   ];
   const roleGroups = usedRoles.map((r) => ({ id: r, content: ROLES[r].toLowerCase() }))
-    .concat([{ id: "verify", content: "verification" }, { id: "gates", content: "gates & promotions" }]);
+    .concat([{ id: "verify", content: "verification stages" }, { id: "gates", content: "idea gates & promotions" }]);
 
   const container = document.getElementById("tl");
   const dataset = new vis.DataSet(items);
@@ -331,6 +347,79 @@ export const VIEW = String.raw`
     template: (item) => item.content || "",
   };
   const timeline = new vis.Timeline(container, dataset, groupSet, options);
+
+  // ---- inspector ----
+  const box = document.getElementById("inspect");
+  const row = (k, v, cls) => '<div class="k">' + k + '</div><div class="v ' + (cls || "") + '">' + v + "</div>";
+  const absent = (why) => '<span class="absent">' + why + "</span>";
+  const block = (s) => "<pre>" + esc(s) + "</pre>";
+  // Packet fields older harness revisions never journaled; say that plainly
+  // rather than rendering an empty box.
+  const NOT_RECORDED = "not recorded by the harness revision that ran this campaign";
+
+  function inspectAgent(a) {
+    const role = roleOf(a);
+    const lost = a.end == null;
+    const parts = [
+      row("agent", "<b>" + esc(a.id) + "</b> &middot; " + ROLES[role] + (a.cancelled ? ' <span class="pill">cancelled</span>' : "")),
+      row("window", clock(a.start) + " &rarr; " + (lost ? absent("no completion recorded (lost to a restart)") : clock(a.end) + " &middot; " + fmtH((a.end - a.start) / H)), "mono"),
+      row("model", a.model ? esc(a.model) : absent(NOT_RECORDED), "mono"),
+      row("mechanism", a.mechanism ? esc(a.mechanism) : absent("none")),
+      row("task", a.task ? block(a.task) : absent(NOT_RECORDED)),
+      row("deliverable", a.deliverable ? block(a.deliverable) : absent(NOT_RECORDED)),
+      row("context", a.context ? block(a.context) : absent(NOT_RECORDED)),
+      row("FAILED.md check", a.failedCheck ? esc(a.failedCheck) : absent(NOT_RECORDED)),
+    ];
+    if (a.computation) parts.push(row("preregistered computation", block(a.computation)));
+    if (a.literature) parts.push(row("literature question", block(a.literature)));
+    parts.push(row("evidence", a.evidenceDir ? esc(a.evidenceDir) + "/" : absent(NOT_RECORDED), "mono"));
+    parts.push(row("report", a.report ? esc(a.report) : lost ? absent("never returned") : absent("not recorded"), "mono"));
+    if (a.reportText) parts.push(row("report text", block(a.reportText)));
+    box.className = "inspect";
+    box.innerHTML = parts.join("");
+  }
+
+  function inspectEvent(item) {
+    const e = item.ev;
+    const parts = [];
+    if (item.kind === "verify") {
+      parts.push(row("stage", "<b>" + STAGE[e.stage] + "</b>" + (e.verdict ? ' <span class="pill">' + e.verdict + "</span>" : "")));
+      parts.push(row("candidate", esc(e.revision), "mono"));
+      parts.push(row("recorded", clock(e.t), "mono"));
+      parts.push(row("verifier model", e.model ? esc(e.model) : absent(NOT_RECORDED), "mono"));
+      parts.push(row("note", "This is one call inside a verification cadence. In current runs the cadence " +
+        "itself is a dispatched agent (v###) and appears in the agents lane; these marks are the verdicts it recorded."));
+    } else if (item.kind === "gate") {
+      parts.push(row("idea gate", "<b>" + esc(e.verdict) + "</b>"));
+      parts.push(row("recorded", clock(e.t), "mono"));
+      parts.push(row("mechanism", block(e.mechanism)));
+    } else if (item.kind === "promotion") {
+      parts.push(row("promotion", "<b>" + esc(e.revision) + "</b>"));
+      parts.push(row("recorded", clock(e.t), "mono"));
+    } else if (item.kind === "wake") {
+      parts.push(row("coordinator wake", "<b>#" + e.n + "</b>"));
+      parts.push(row("at", clock(e.t), "mono"));
+      parts.push(row("live agents", String(e.live), "mono"));
+      parts.push(row("new reports", String(e.reports), "mono"));
+    }
+    box.className = "inspect";
+    box.innerHTML = parts.join("");
+  }
+
+  function inspect(id, scroll) {
+    const item = dataset.get(id);
+    if (!item) return false;
+    if (item.kind === "agent") inspectAgent(item.agent);
+    else inspectEvent(item);
+    if (scroll !== false) box.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    return true;
+  }
+  timeline.on("select", (props) => {
+    const id = props.items && props.items[0];
+    if (id != null) inspect(id);
+  });
+  // Small handle for scripting the view (and for the render test).
+  window.coverifyTrace = { timeline, dataset, inspect, data: DATA };
 
   document.getElementById("fit").addEventListener("click", () => timeline.fit({ animation: false }));
   const byRole = document.getElementById("byRole");

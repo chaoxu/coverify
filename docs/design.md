@@ -259,6 +259,14 @@ journal as a self-contained HTML timeline: agent lifetimes as ranges,
 verification and gate verdicts as points, coordinator wakes as bands, plus
 summary tiles and a table view. The widget is vis-timeline, vendored and
 inlined at render time, so a trace opens offline and under a strict CSP.
+Clicking any bar or mark opens an inspector showing the whole record: the
+packet the agent was given (task, deliverable, context, FAILED.md check, and
+the computation or literature declaration), its model, evidence directory,
+and its report inlined. A trace can only show what the journal recorded, so
+dispatches now journal the full packet; fields a campaign predates are
+labelled "not recorded by the harness revision that ran this campaign"
+rather than rendered blank.
+
 The page leads with its own view — summary tiles, the timeline, the table —
 because that is the monitoring read: campaign-shaped, instant, offline. Below
 it, a "deep dive" panel embeds the real Perfetto UI on demand: it hands the trace to
