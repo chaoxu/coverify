@@ -128,10 +128,10 @@ harness.ts       handle table, event loop, wakes; the only persistent process
   the keyIdeas/allowedSources bundle is coordinator-authored and gated by
   certification (see honesty ledger). The journal records supplied inputs,
   visibility, and model family per call.
-- **Workers are the async primitive**: worker dispatches are handles in one
-  table; completions wake the coordinator — no polling. Gate critics and the
-  verification chain run synchronously inside the coordinator's tool call.
-  (Supervised computation handles: roadmap.)
+- **Handles are the async primitive**: worker/technician dispatches and
+  verification cadences are handles in one table; completions wake the
+  coordinator — no polling. Gate critics run synchronously inside the
+  coordinator's tool call (single-shot verdicts, short).
 
 ## Conformance table
 
@@ -261,7 +261,15 @@ harnesses directly — `claude -p` / `codex exec` — via a harness-provided
 - [x] `record_promotion` as sole PROVED.md writer; OS write sandbox (macOS)
 - [x] Out-of-tree gate store; statement freeze + `coverify amend`; run version stamps
 - [ ] Retraction bookkeeping helper (registry relabel + dependent demotion)
-- [ ] Non-load-bearing delta-audit carry-forward path (currently always full re-verification — stricter than the contract, acceptable)
+- [x] Verification runs async as a handle (was: synchronous inside the
+      coordinator's tool call, blocking all gating/dispatch for the length of
+      a blind reconstruction — observed 27 min in a live campaign)
+- [x] Reconstruction carry-forward: when statement + bundle + promoted
+      premises are byte-identical to a prior run's inputs, the blind
+      reconstruction is reused (it never sees the candidate, so a candidate
+      repair cannot invalidate it); audit, bundle-cert, and comparison always
+      rerun since they see the candidate. Cuts clerical-repair re-cadence
+      cost by the reconstruction (the dominant step)
 - [x] No unsupervised detached compute (launcher: "Never run unsupervised
       detached compute."): roles have no shell at all — file work goes
       through read/ls/grep/scoped-write, execution only through
