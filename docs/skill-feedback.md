@@ -148,6 +148,61 @@ ideation instead of portfolio work.
    lands, decide whether a tier-1 audit FAIL has the same stands/rebuttal
    semantics as full-cadence FAILs (presumably yes; confirm wording).
 
+## Evidence from 2026-08-01 (harness hardening + conformance audit)
+
+A campaign's detached search jobs kernel-panicked the host, which forced a
+rebuild of everything that executes code and a line-by-line audit of the
+harness against the contract. Three divergences are the skill's to decide,
+not the harness's:
+
+6. **"Scheduler front door" assumes infrastructure that may not exist.**
+   The computation clause says to use "the workspace's established scheduler
+   front door or a committed workload-owned scheduler spec" and warns
+   against building "a second submission, reconciliation, locking,
+   monitoring, or certification layer". On a single-host campaign there is
+   no scheduler, and the honest reading forced a supervised in-harness
+   runner (argv-only, own process group, shared wall and RSS caps,
+   whole-tree kill, reaper on harness exit). That is exactly the "second
+   monitoring layer" the clause discourages, and it is also the only thing
+   that would have prevented the panic. Candidate wording: require
+   *supervision properties* (bounded, cancellable, reaped, logged, no
+   detached compute) and name the scheduler as the preferred implementation
+   where one exists, rather than requiring the scheduler itself.
+   *Activation test:* a campaign on a host with no scheduler — already met.
+
+7. **Computation is a role, not just a job.** The contract says "every
+   exploration agent must return a proved lemma, explicit construction,
+   counterexample/certificate, or a precise failing implication" and
+   separately that "a job emits raw evidence only". The harness materializes
+   computation as a dispatched *technician* — an agent that writes and runs
+   code but whose deliverable is raw output plus an encoding description,
+   never a proof. It is consistent with both clauses only because the
+   technician is a job wearing an agent's clothes. Worth one sentence in the
+   contract acknowledging that the executor may be an agent, so a reader
+   does not apply the exploration-agent deliverable rule to it.
+   *Activation test:* a skill-only session that dispatches a compute worker
+   and is told its raw table is not an acceptable deliverable.
+
+8. **Delegated literature search has no clause.** The sources rule bounds
+   *what* may be searched ("ordinary background and standard named theorems
+   only") but assumes the searching agent is the campaign agent. The harness
+   delegates to an external librarian CLI and archives its report as
+   evidence, which changes provenance: the citation is secondhand and
+   self-attested, and the scope limit must be carried into the librarian's
+   own charge (now done). Candidate: state that a delegated searcher
+   inherits the scope limit and that its report is evidence of a search, not
+   of a theorem — promotion-grade use still requires checking the source's
+   exact hypotheses.
+   *Activation test:* any campaign that cites a librarian report in a
+   promoted dependency.
+
+Conformance fixes made on the harness side instead of here (no skill change
+needed): pause/stop now interrupts live agents and cancels their
+computations per the reporting clause; a technician dispatch returns the
+`REGISTRY.md` launch record (workload, limits, output paths, cancellation)
+the computation clause requires; the librarian charge carries the
+public-search scope limit verbatim.
+
 ## Rejected candidates
 
 - Numeric thresholds for "substantial wave" — prose judgment is the right

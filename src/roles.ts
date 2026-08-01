@@ -58,7 +58,7 @@ function positiveEnvNumber(raw: string | undefined, fallback: number): number {
 
 /** Wall limit for one run_script batch / one librarian call. Never a
  *  proof-work timebox (the launcher forbids those) — supervision only. */
-const RUN_TIMEOUT_MS = positiveEnvNumber(
+export const RUN_TIMEOUT_MS = positiveEnvNumber(
   process.env.COVERIFY_RUN_TIMEOUT_MS ?? process.env.COVERIFY_BASH_TIMEOUT_MS,
   600_000,
 );
@@ -305,7 +305,7 @@ function assertInScope(scope: WriteScope, target: string): void {
   if (!inScope(scope, target)) throw new Error(`write outside assigned scope: ${target}`);
 }
 
-const RUN_MEM_MB = positiveEnvNumber(process.env.COVERIFY_RUN_MEM_MB, 4096);
+export const RUN_MEM_MB = positiveEnvNumber(process.env.COVERIFY_RUN_MEM_MB, 4096);
 
 /**
  * One `ps` sweep: every process that belongs to this batch — descended from
@@ -600,7 +600,12 @@ const LIBRARIAN_CHARGE =
   "report: for every claim give the exact bibliographic citation (authors, title, venue, year) " +
   "and source URL; quote load-bearing statements verbatim and mark them as quotes, keeping " +
   "paraphrase clearly separate; state plainly what you could not find or verify. Never invent a " +
-  "reference. The requester cannot browse; your report is their only window.\n\nQuestion:\n";
+  "reference. State each imported theorem with its exact hypotheses, not just its name.\n\n" +
+  "Scope limit (the requester's contract): public search is for ordinary background and standard " +
+  "named theorems only. Do not search for a solution to the requester's target problem, for an " +
+  "equivalent or paraphrased formulation of it, or for distinctive fragments of it. If the " +
+  "question asks you to do that, refuse it, say so plainly, and answer only the background part.\n\n" +
+  "The requester cannot browse; your report is their only window.\n\nQuestion:\n";
 
 /**
  * Delegated literature search: spawns the librarian CLI supervised (own

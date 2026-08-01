@@ -28,6 +28,8 @@ import { loadLauncherContract } from "./launcher.js";
 import {
   buildModels,
   CHARGES,
+  RUN_MEM_MB,
+  RUN_TIMEOUT_MS,
   createRoleSession,
   isCliProvider,
   roleModelSpec,
@@ -264,6 +266,11 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     });
     return toolText(
       `dispatched ${id} (${handles.size} live). The report will arrive at a later wake.` +
+        (isTechnician
+          ? `\nREGISTRY.md launch record: id ${id}; workload ${evidenceDir}; ` +
+            `limits ${Math.round(RUN_TIMEOUT_MS / 60000)} min / ${RUN_MEM_MB} MB per batch; ` +
+            `outputs + logs under ${path.relative(dir, evidenceDir)}/; cancel with cancel_agent ${id}.`
+          : "") +
         (decision.warning ? `\n${decision.warning}` : ""),
     );
   };
@@ -757,14 +764,23 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     description:
       "Explicitly pause or complete the campaign. Completion requires at least one recorded " +
       "promotion (the contract's completion criterion demands the full cadence on the final result). " +
-      "Pause is operational state, not blocked or complete.",
+      "Pause is operational state, not blocked or complete. Both states interrupt live agents and " +
+      "cancel their computations (contract: on pause/stop, cease dispatch and interrupt task " +
+      "agents); pass continueSupervised to leave them running under supervision instead.",
     parameters: Type.Object({
       state: Type.Union([Type.Literal("pause"), Type.Literal("complete")]),
       reason: Type.String(),
+      continueSupervised: Type.Optional(
+        Type.Boolean({
+          description:
+            "Leave live agents running (contract: only when the user explicitly authorized " +
+            "continuing under supervision).",
+        }),
+      ),
     }),
     executionMode: "sequential",
     execute: async (_id: string, params: unknown) => {
-      const p = params as { state: "pause" | "complete"; reason: string };
+      const p = params as { state: "pause" | "complete"; reason: string; continueSupervised?: boolean };
       if (p.state === "complete" && !store.all().some((e) => e.kind === "promotion")) {
         return toolText(
           "DECLARATION REFUSED: no promotion is on record; the completion criterion requires the " +
@@ -772,7 +788,25 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         );
       }
       declaration = p;
-      return toolText(`Declared: ${p.state}. The harness will stop after this wake.`);
+      // "cease dispatch, interrupt task agents, cancel task computations
+      // unless explicitly authorized to continue under supervision".
+      let interrupted = 0;
+      if (!p.continueSupervised) {
+        for (const [id, handle] of [...handles]) {
+          handle.session?.abort();
+          store.append({ kind: "completion", id, cancelled: true, reason: `campaign ${p.state}` });
+          handles.delete(id);
+          interrupted++;
+        }
+        settledQueue.length = 0;
+      }
+      return toolText(
+        `Declared: ${p.state}. ` +
+          (p.continueSupervised
+            ? `${handles.size} agent(s) left running under supervision. `
+            : `${interrupted} live agent(s) interrupted. `) +
+          "The harness will stop after this wake; checkpoint the ledgers now.",
+      );
     },
   } as AgentTool;
 
