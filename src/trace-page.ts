@@ -159,7 +159,7 @@ export const BODY = String.raw`
     </div>
     <div id="tl"></div>
     <div class="legend" id="legend"></div>
-    <div id="inspect" class="empty-inspect">Click any bar or mark to inspect it — the packet it was given, its
+    <div id="inspect" class="empty-inspect">Click any bar or mark to inspect it &mdash; the packet it was given, its
       model, and its report.</div>
   </section>
 
@@ -479,7 +479,7 @@ export const VIEW = String.raw`
 
   // ---- hand the same trace to the real Perfetto UI ----
   // Deep-linking protocol: open (or embed) ui.perfetto.dev, PING until it
-  // answers PONG, then post the trace buffer. Perfetto never uploads it — the
+  // answers PONG, then post the trace buffer. Perfetto never uploads it &mdash; the
   // data stays in the browser, which is why this works for a private campaign.
   const ORIGIN = "https://ui.perfetto.dev";
   const status = document.getElementById("pstatus");
@@ -512,18 +512,18 @@ export const VIEW = String.raw`
     frame.title = "Perfetto UI";
     frame.setAttribute("referrerpolicy", "no-referrer");
     host.appendChild(frame);
-    status.textContent = "Waiting for ui.perfetto.dev\u2026 it will ask whether to trust this page; " +
+    status.textContent = "Waiting for ui.perfetto.dev&hellip; it will ask whether to trust this page; " +
       "choose Always trust. The trace is passed in-browser and never uploaded.";
     handOff(frame.contentWindow, (ok) => {
       status.textContent = ok
-        ? "Trace sent to Perfetto \u2014 answer its trust prompt to view it. W/S zoom, A/D pan, / search."
-        : "ui.perfetto.dev did not respond \u2014 no network? The timeline above works offline.";
+        ? "Trace sent to Perfetto &mdash; answer its trust prompt to view it. W/S zoom, A/D pan, / search."
+        : "ui.perfetto.dev did not respond &mdash; no network? The timeline above works offline.";
     });
   }
   document.getElementById("retry").addEventListener("click", embed);
   document.getElementById("popout").addEventListener("click", () => {
     const win = window.open(ORIGIN);
-    if (!win) { status.textContent = "Popup blocked \u2014 allow popups, or use the embedded view."; return; }
+    if (!win) { status.textContent = "Popup blocked &mdash; allow popups, or use the embedded view."; return; }
     handOff(win, (ok) => { status.textContent = ok ? "Opened in a new tab." : "The new tab did not respond."; });
   });
   document.getElementById("download").addEventListener("click", () => {
