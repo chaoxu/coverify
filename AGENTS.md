@@ -30,7 +30,8 @@ its own review.
 
 A campaign is a folder elsewhere (the launcher's file layout). This repo is
 the harness only. Domain-specific checkers or search tools belong in the
-project folder, reached via the worker bash tool — never added to this CLI.
+project folder — never added to this CLI. Roles have no shell: technicians
+run scripts inside their own evidence directory via `run_script`.
 
 ## Style
 

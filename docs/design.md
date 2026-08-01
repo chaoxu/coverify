@@ -82,11 +82,20 @@ uncontaminated.
 
 `run_script` runs a batch of 1–8 script files (`.py` under python3, or
 executables) concurrently by argv — no shell, so detach primitives
-(setsid/nohup/disown, tmux -d, screen -dm) are not even expressible. Each
-run is its own process group; the whole batch shares one time limit and one
-combined RSS cap (`COVERIFY_RUN_MEM_MB`, default 4096) and every group is
-killed when the batch ends or a cap trips; a script that forks survivors
-gets them reaped with it. The batch is intra-turn concurrency for one
+(setsid/nohup/disown, tmux -d, screen -dm) are not even expressible. Each script
+must additionally resolve inside the role's own write scope, so a host
+interpreter (`/bin/sh -c …`, `python3 -c …`) cannot be named as the script
+and hand the shell back. Each run is its own process group; the whole batch
+shares one time limit and one combined RSS cap (`COVERIFY_RUN_MEM_MB`,
+default 4096). At batch end (or when a cap trips) the harness kills the
+groups and then sweeps `ps` for survivors — processes still descended from
+the batch, sharing its groups, or still running one of its script paths —
+because a child that calls `setpgrp()` and is reparented to pid 1 is
+invisible to a group kill alone. A survivor that both leaves its group and
+`exec`s an unrelated binary would evade the sweep; the technician is a
+supervised role, not an adversary, so that residual is stated rather than
+claimed away. If `ps` itself fails, the batch is killed and the failure
+reported — the cap never silently disappears. The batch is intra-turn concurrency for one
 technician; harness-level async computation handles remain the roadmap item.
 The scoped write tool additionally enforces ledger integrity: `FAILED.md`
 rewrites must preserve the existing content as an unchanged prefix
@@ -143,12 +152,12 @@ harness.ts       handle table, event loop, wakes; the only persistent process
 | Claim-label vocabulary quoted verbatim into the ledger templates at init; label discipline and weakest-premise inheritance are contract-instructed model judgment | "Claim labels — literal, never inflated" |
 | Dispatch schema requires the FAILED.md check field (`no close prior route` / `closest is X; differs because…`) | "Before every route, materially changed retry, or variant, check `FAILED.md`…" |
 | Worker packet schema requires a finite mathematical deliverable; the deliverable-or-precise-gap report form is charged in the role prompt, not parsed | "Every exploration agent must return a proved lemma, explicit construction, counterexample/certificate, or a precise failing implication" |
-| No harness timeouts on proof/audit/reconstruction work (a per-shell-command cap is surfaced in the tool description and env-tunable) | "Do not impose a coordinator-created elapsed-time limit…" |
+| No harness timeouts on proof/audit/reconstruction work (the per-run_script batch cap is surfaced in the tool description and env-tunable) | "Do not impose a coordinator-created elapsed-time limit…" |
 | Code tools (`run_script` + non-prose writes) exist only on a worker whose packet declares a computation with concrete bounds; dispatch gate refuses thin declarations; coordinator is prose-only | "Use computation only for a preregistered finite domain and stopping rule yielding a small witness, certificate, or table." / "Never run unsupervised detached compute." |
 | Wave gate: a second **concurrent** worker on a mechanism requires `IDEA PASS` on file; sequential retries get an advisory reminder, not a refusal (that judgment is the coordinator's); single first-wave scouts exempt | "Do not allow recursive subagent fan-out or a large route wave before the parent mechanism receives `IDEA PASS`…" |
 | Verification = stage 1 (fresh hostile audit) then stage 2: bundle certification (fresh agent sees candidate + bundle; leaky bundle refused, same-bundle retry hash-blocked) → blind reconstruction (no verdict) → fresh comparison carrying stage 2's verdict with the contract's match semantics; all outputs saved as citable EVIDENCE artifacts, hash-bound | "Verification cadence" 1–2 (2026-07-31 revision): bundle certification, "a fresh comparison agent…", explicit PASS/mismatch semantics |
 | Anti-verdict-shopping: a substantive audit/comparison FAIL on the exact revision contents blocks re-verification unless a recorded rebuttal artifact is supplied; every attempt stays on record | "A substantive FAIL from any stage stands… Do not rerun a failed stage on an unchanged revision in search of a PASS" |
-| Any content change ⇒ both stages invalidated (verdicts hash-bound to candidate + STATEMENT.md; every verifier call is a fresh instance). The non-load-bearing delta-audit carry-forward is not implemented — every change gets full re-verification, stricter than the contract (see roadmap) | Revision-impact rules |
+| Any content change ⇒ audit, bundle certification, and comparison rerun (verdicts hash-bound to candidate + STATEMENT.md; every verifier call is a fresh instance). The blind reconstruction is carried forward only when statement, bundle, and promoted premises are byte-identical to the prior run's inputs — it never sees a candidate, so a candidate repair cannot invalidate it | Revision-impact rules |
 | `record_promotion` is the sole writer of `PROVED.md` (direct writes OS-denied); legal only when both stage records exist for the exact revision with matching content hashes; entry carries dependency identities and audit-artifact citations | "Promotion records the revision and dependency identities plus every audit…" |
 | Campaign ends only by explicit `declare_campaign_state`; "complete" refused with zero promotions on record; an idle wake gets a nudge, and 3 consecutive no-op wakes trigger an operational *pause* (never a completion) as spend protection | "Do not mark it complete until the final result passes the full cadence…"; "Failed attempts… are not permission to return"; "Pause is operational state" (pause stops further wakes; live agents are not force-aborted — use cancel_agent) |
 | Harvest before judgment: worker reports are saved to EVIDENCE/ and completion-recorded before any model sees them; checkpoint ordering itself is contract-instructed, not enforced (struck as over-constraint — see review record) | "Checkpoint and learning loop" |

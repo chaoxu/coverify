@@ -39,21 +39,21 @@ preflight), `claude-cli` (`claude -p`, Claude-subscription billed),
 sandbox), and `chatgpt-cli` (the chatgpt.com daemon CLI from gitea
 `chaoxu/chatgpt-cli` — the only road to ChatGPT-Pro-only models like
 `gpt-5.6-pro`; its daemon picks the model, the spec's modelId is a
-provenance label). A single-shot-CLI-backed **worker** runs as an oracle:
+provenance label). A single-shot-CLI-backed **reasoner** runs as an oracle:
 one deep attempt, no tools, the reply is the deliverable — e.g.
-`COVERIFY_MODEL_WORKER=chatgpt-cli/gpt-5.6-pro` turns workers into GPT-5.6
-Pro deep provers. Defaults (all subscription billed, user decision 2026-08-01 — OpenAI
-everywhere except the independent audit): coordinator and workers
+`COVERIFY_MODEL_REASONER=chatgpt-cli/gpt-5.6-pro` turns reasoners into GPT-5.6
+Pro deep provers (technicians need tools, so a CLI oracle backend is refused there). Defaults (all subscription billed, user decision 2026-08-01 — OpenAI
+everywhere except the independent audit): coordinator, reasoners, and technicians
 `openai-codex/gpt-5.6-sol@max` — Sol at maximum effort as full pi agents
 on the ChatGPT-subscription OAuth (`coverify login openai-codex`);
 the single-shot verdict roles critic, certifier, reconstructor, and
 comparator `codex-cli/gpt-5.6-sol`; the hostile auditor `claude-cli/opus`,
 so every candidate still gets one cross-family (Claude) audit; the journal
 records the model family per call. When ChatGPT quota is exhausted,
-`COVERIFY_MODEL_WORKER=claude-cli/opus` falls back to all-Anthropic, and
+`COVERIFY_MODEL_REASONER=claude-cli/opus` falls back to all-Anthropic, and
 `COVERIFY_MODEL_RECONSTRUCTOR=google/gemini-3.6-flash` remains the cheap
 third-family trial candidate. Override globally with `COVERIFY_MODEL` or per role with
-`COVERIFY_MODEL_{COORDINATOR,WORKER,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}`.
+`COVERIFY_MODEL_{COORDINATOR,REASONER,TECHNICIAN,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}`.
 Auth per provider: the logged-in `claude` binary for `claude-bridge`/
 `claude-cli`, env API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`), or
 OAuth via `coverify login anthropic|openai-codex`
@@ -81,11 +81,17 @@ the gates; ephemeral model calls own the judgment:
 - **Coordinator** — a resident session across wakes (as when the skill runs
   live in Codex/Claude Code), rebuilt from the campaign files at a context
   cap — the compaction analog; sole ledger writer; tools:
-  `dispatch_worker`, `dispatch_gate_critic`, `request_verification`,
-  `record_promotion`, `cancel_worker`, `steer_worker`,
-  `declare_campaign_state`, plus bash in the campaign dir for ledger edits.
-- **Workers** — fresh instances, one packet with one finite mathematical
-  deliverable, write access only to their assigned `EVIDENCE/` directory.
+  `dispatch_reasoner`, `dispatch_technician`, `dispatch_gate_critic`,
+  `request_verification`, `record_promotion`, `cancel_agent`, `steer_agent`,
+  `declare_campaign_state`, plus read/ls/grep and a scoped prose write tool
+  for ledger edits (no shell, no code, no web).
+- **Reasoners** — fresh instances, one packet with one finite mathematical
+  deliverable, prose tools only, write access limited to their assigned
+  `EVIDENCE/` directory; a `literature` packet also grants a delegated
+  librarian search tool.
+- **Technicians** — fresh instances dispatched with a preregistered
+  computation; the only role that writes and runs code, via `run_script`
+  (supervised batches, shared time and memory caps).
 - **Verification** — the launcher's two-stage cadence as four fresh calls:
   hostile audit; bundle certification (a fresh agent shown candidate + bundle
   certifies the coordinator-authored key ideas/sources leak nothing; a leaky
@@ -110,7 +116,7 @@ machinery reads this):
 myproject/                git repo (committing/pushing is your call; the
   PROJECT.md              harness never runs git)
   notes/                  free-form thinking — not campaign state
-  tools/                  domain checkers, search scripts (workers reach them via bash)
+  tools/                  domain checkers, search scripts (technicians copy what they need)
   campaigns/
     2026-07-31-some-statement/    one frozen statement each, launcher layout
   papers/

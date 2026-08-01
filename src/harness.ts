@@ -131,10 +131,15 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   };
 
   const evidenceRelative = (p: string): string | undefined => {
-    const resolved = path.resolve(dir, "EVIDENCE", p);
-    return resolved.startsWith(path.join(dir, "EVIDENCE") + path.sep)
-      ? path.relative(path.join(dir, "EVIDENCE"), resolved)
-      : undefined;
+    const root = path.join(dir, "EVIDENCE");
+    let resolved = path.resolve(root, p);
+    if (!resolved.startsWith(root + path.sep)) return undefined;
+    // Canonical on-disk case: gate records (prior FAIL, bundle-cert FAIL,
+    // promotion) key on this string, and darwin opens `Cand.md` and `cand.md`
+    // as one file — without this, retyping the case would look like a new
+    // revision and slip past anti-verdict-shopping.
+    if (fs.existsSync(resolved)) resolved = fs.realpathSync.native(resolved);
+    return path.relative(fs.existsSync(root) ? fs.realpathSync.native(root) : root, resolved);
   };
 
   const liveOnMechanism = (mechanism: string): number =>
@@ -432,6 +437,13 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       // The cadence runs as an async handle, like a worker: during a long
       // blind reconstruction the coordinator keeps gating, dispatching, and
       // writing ledgers; the verdict arrives at a later wake.
+      // Set once the handle exists; a cancelled cadence must stop recording
+      // verdicts — otherwise cancel_agent would hide a verification that keeps
+      // running and can still authorize promotion off an unseen PASS.
+      let cancelled: () => boolean = () => false;
+      const abortIfCancelled = () => {
+        if (cancelled()) throw new Error(`verification cancelled; no verdict recorded for ${rel}`);
+      };
       const cadence = async (): Promise<string> => {
         // Stage 1 — hostile audit (bundle includes PROVED.md so promoted claims are checkable).
         const { text: auditText, usage: auditTextUsage } = await runRole({
@@ -442,6 +454,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           models,
         });
         addUsage(auditTextUsage);
+        abortIfCancelled();
         const auditPass = passOf(auditText);
         const auditEvidence = newEvidencePath(dir, `audits/${slug}.audit`);
         fs.writeFileSync(auditEvidence, auditText);
@@ -474,6 +487,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           models,
         });
         addUsage(certTextUsage);
+        abortIfCancelled();
         const certPass = passOf(certText);
         const certEvidence = newEvidencePath(dir, `audits/${slug}.bundle-cert`);
         fs.writeFileSync(certEvidence, certText);
@@ -514,6 +528,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
               typeof e.artifact === "string" &&
               fs.existsSync(path.join(dir, e.artifact)),
           );
+        abortIfCancelled();
         let reconText: string;
         let reconArtifact: string;
         if (priorRecon) {
@@ -573,6 +588,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           models,
         });
         addUsage(compareTextUsage);
+        abortIfCancelled();
         const comparePass = passOf(compareText);
         const compareEvidence = newEvidencePath(dir, `audits/${slug}.comparison`);
         fs.writeFileSync(compareEvidence, compareText);
@@ -601,6 +617,10 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       };
 
       const id = `v${String(nextId++).padStart(3, "0")}`;
+      // Journaled like an agent dispatch so ids stay unique across restarts
+      // (maxHandleId reads dispatch records only).
+      store.append({ kind: "dispatch", id, role: "verification", mechanism: `verification:${rel}`, task: rel });
+      cancelled = () => !handles.has(id);
       registerHandle({
         id,
         mechanism: `verification:${rel}`,

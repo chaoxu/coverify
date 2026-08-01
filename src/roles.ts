@@ -19,7 +19,11 @@ import { claudeBridgeProvider } from "./claude-bridge.js";
 import { Type } from "typebox";
 
 const OUTPUT_LIMIT = 50_000;
-const BASH_TIMEOUT_MS = Number(process.env.COVERIFY_BASH_TIMEOUT_MS ?? 600_000);
+/** Wall limit for one run_script batch / one librarian call. Never a
+ *  proof-work timebox (the launcher forbids those) — supervision only. */
+const RUN_TIMEOUT_MS = Number(
+  process.env.COVERIFY_RUN_TIMEOUT_MS ?? process.env.COVERIFY_BASH_TIMEOUT_MS ?? 600_000,
+);
 
 export type Models = ReturnType<typeof createModels>;
 
@@ -207,7 +211,11 @@ function sandboxedArgv(argv: string[], scope: WriteScope): { file: string; args:
   return { file: "sandbox-exec", args: ["-p", profile, ...argv] };
 }
 
-/** Resolve to a real path even for not-yet-existing files (symlinked ancestors count). */
+/** Resolve to a real path even for not-yet-existing files (symlinked ancestors
+ *  count). On darwin the default filesystem is case-insensitive, so `PROVED.md`
+ *  and `proved.md` are one file: fold case there, or a deny-list entry is
+ *  bypassable by retyping the name. Folding is conservative (it can only deny
+ *  more) which is the safe direction even on a case-sensitive volume. */
 function realResolve(p: string): string {
   const abs = path.resolve(p);
   let dir = path.dirname(abs);
@@ -216,30 +224,90 @@ function realResolve(p: string): string {
     tail.unshift(path.basename(dir));
     dir = path.dirname(dir);
   }
-  return path.join(fs.existsSync(dir) ? fs.realpathSync.native(dir) : dir, ...tail);
+  const resolved = path.join(fs.existsSync(dir) ? fs.realpathSync.native(dir) : dir, ...tail);
+  return process.platform === "darwin" ? resolved.toLowerCase() : resolved;
 }
 
-/** In-process mirror of the OS write sandbox, for the write tool. Deny wins. */
-function assertInScope(scope: WriteScope, target: string): void {
+/** In-process mirror of the OS write sandbox. Deny wins. */
+function inScope(scope: WriteScope, target: string): boolean {
   const real = realResolve(target);
   const inside = (root: string) => {
     const r = realResolve(root);
     return real === r || real.startsWith(r + path.sep);
   };
-  if (!scope.allow.some(inside) || scope.deny.some(inside)) {
-    throw new Error(`write outside assigned scope: ${target}`);
-  }
+  return scope.allow.some(inside) && !scope.deny.some(inside);
+}
+
+function assertInScope(scope: WriteScope, target: string): void {
+  if (!inScope(scope, target)) throw new Error(`write outside assigned scope: ${target}`);
 }
 
 const RUN_MEM_MB = Number(process.env.COVERIFY_RUN_MEM_MB ?? 4096);
 
 /**
+ * One `ps` sweep: every process that belongs to this batch — descended from
+ * `roots` by parent chain, sharing one of their process groups, or still
+ * running one of the batch's script paths on its command line. The last test
+ * is what catches a child that called setpgrp() and was then reparented to
+ * pid 1, where neither group nor parent chain can reach it.
+ */
+interface Proc {
+  ppid: number;
+  pgid: number;
+  rssKb: number;
+  args: string;
+}
+
+function processSweep(
+  roots: ReadonlySet<number>,
+  marks: readonly string[],
+): Promise<{ members: Map<number, Proc>; rssKb: number }> {
+  return new Promise((resolve, reject) => {
+    execFile("ps", ["-axo", "pid=,ppid=,pgid=,rss=,args="], (err: Error | null, out: string) => {
+      if (err) return reject(err);
+      const rows = new Map<number, Proc>();
+      for (const line of out.split("\n")) {
+        const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/);
+        if (m)
+          rows.set(Number(m[1]), {
+            ppid: Number(m[2]),
+            pgid: Number(m[3]),
+            rssKb: Number(m[4]),
+            args: m[5],
+          });
+      }
+      if (rows.size === 0) return reject(new Error("ps returned no parseable rows"));
+      const members = new Map<number, Proc>();
+      for (const [pid, r] of rows) {
+        if (pid === process.pid) continue;
+        if (roots.has(pid) || roots.has(r.pgid) || marks.some((m) => r.args.includes(m))) {
+          members.set(pid, r);
+        }
+      }
+      for (let changed = true; changed; ) {
+        changed = false;
+        for (const [pid, r] of rows) {
+          if (pid !== process.pid && !members.has(pid) && members.has(r.ppid)) {
+            members.set(pid, r);
+            changed = true;
+          }
+        }
+      }
+      let rssKb = 0;
+      for (const r of members.values()) rssKb += r.rssKb;
+      resolve({ members, rssKb });
+    });
+  });
+}
+
+/**
  * The only way a role executes code. Enforces the launcher's "Never run
- * unsupervised detached compute.": argv only (no shell, so detach primitives
- * are not expressible), process-group kill on exit/timeout, and an RSS
- * watchdog so a runaway search is killed before it exhausts the host —
- * detached setsid-nohup search jobs memory-exhausted saturn into a kernel
- * panic on 2026-08-01.
+ * unsupervised detached compute.": argv only and confined to the role's own
+ * directory (no shell, no host interpreter, so detach primitives are not
+ * expressible), whole-process-tree kill on exit/timeout, and an RSS watchdog
+ * so a runaway search is killed before it exhausts the host — detached
+ * setsid-nohup search jobs memory-exhausted saturn into a kernel panic on
+ * 2026-08-01.
  */
 function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
   return {
@@ -247,11 +315,12 @@ function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
     label: "Run scripts",
     description:
       `Run 1-8 script files concurrently, supervised, under ONE shared cap. Working directory: ${cwd}. ` +
-      "A .py file runs under python3; anything else must be executable. Write scripts with the " +
-      `write tool first. Limits for the whole batch: ${Math.round(BASH_TIMEOUT_MS / 60000)} minutes, ` +
-      `${RUN_MEM_MB} MB combined RSS; writes are OS-sandboxed to your assigned directories; when the ` +
-      "batch ends (or hits a limit) every process group is killed — nothing survives the call. " +
-      "Route genuinely long computation through the scheduler front door instead.",
+      "Each script must be a file inside your assigned directory: a .py runs under python3, " +
+      "anything else must be executable. Write scripts with the write tool first. Limits for the " +
+      `whole batch: ${Math.round(RUN_TIMEOUT_MS / 60000)} minutes, ${RUN_MEM_MB} MB combined RSS; ` +
+      "writes are OS-sandboxed to your assigned directories; when the batch ends (or hits a limit) " +
+      "the whole process tree is killed — nothing survives the call. Route genuinely long " +
+      "computation through the scheduler front door instead.",
     parameters: Type.Object({
       runs: Type.Array(
         Type.Object({
@@ -268,6 +337,15 @@ function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
       for (const r of runs) {
         const script = path.resolve(cwd, r.path);
         const label = [r.path, ...(r.args ?? [])].join(" ");
+        // The script must be one the role wrote in its own scope. Without
+        // this, `path` could name any host executable (/bin/sh -c ..., or
+        // python3 -c ...), handing back the general shell this tool removes.
+        if (!inScope(scope, script)) {
+          return toolText(
+            `[error: ${r.path}: run_script executes only scripts inside your assigned directory; ` +
+              "write the script there first]",
+          );
+        }
         if (!fs.existsSync(script)) return toolText(`[error: no such script: ${script}]`);
         if (script.endsWith(".py")) jobs.push({ label, argv: ["python3", script, ...(r.args ?? [])] });
         else {
@@ -294,51 +372,62 @@ function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
           if (outs[i].stderr.length <= OUTPUT_LIMIT) outs[i].stderr += d;
         });
       });
-      const killAll = () => {
-        for (const child of children) {
-          if (child.pid !== undefined) {
+      const roots = new Set(children.map((c) => c.pid).filter((p): p is number => p !== undefined));
+      // Script paths, used to recognize our processes by command line.
+      const marks = [...new Set(jobs.map((j) => j.argv.find((a) => a.startsWith(cwd)) ?? j.argv[0]))];
+      let fate: string | undefined;
+      const killAll = async () => {
+        // Two passes: killing the parents first stops them forking more, and
+        // the second sweep catches anything spawned between sweep and kill.
+        for (let pass = 0; pass < 2; pass++) {
+          for (const child of children) {
+            if (child.pid !== undefined) {
+              try {
+                process.kill(-child.pid, "SIGKILL");
+              } catch {
+                /* group already gone */
+              }
+            }
+          }
+          const sweep = await processSweep(roots, marks).catch(() => undefined);
+          for (const pid of sweep?.members.keys() ?? []) {
             try {
-              process.kill(-child.pid, "SIGKILL");
+              process.kill(pid, "SIGKILL");
             } catch {
-              /* group already gone */
+              /* already gone */
             }
           }
         }
       };
-      let fate: string | undefined;
       const timer = setTimeout(() => {
-        fate = `batch timed out after ${Math.round(BASH_TIMEOUT_MS / 60000)} minutes`;
-        killAll();
-      }, BASH_TIMEOUT_MS);
-      const pgids = new Set(children.map((c) => c.pid).filter((p) => p !== undefined));
+        fate = `batch timed out after ${Math.round(RUN_TIMEOUT_MS / 60000)} minutes`;
+        void killAll();
+      }, RUN_TIMEOUT_MS);
       const memWatch = setInterval(() => {
-        execFile("ps", ["-axo", "pgid=,rss="], (err: Error | null, out: string) => {
-          if (err || fate) return;
-          let rssKb = 0;
-          for (const line of out.split("\n")) {
-            const [pgid, rss] = line.trim().split(/\s+/);
-            if (pgids.has(Number(pgid))) rssKb += Number(rss) || 0;
-          }
-          if (rssKb > RUN_MEM_MB * 1024) {
-            fate = `batch exceeded the ${RUN_MEM_MB} MB combined memory cap (rss ${Math.round(rssKb / 1024)} MB)`;
-            killAll();
-          }
-        });
-      }, 1000);
-      // "exit" (not "close"): a forked child holding the stdio pipes must
-      // not delay the group kill that reaps it.
+        if (fate) return;
+        processSweep(roots, marks).then(
+          ({ rssKb }) => {
+            if (fate) return;
+            if (rssKb > RUN_MEM_MB * 1024) {
+              fate = `batch exceeded the ${RUN_MEM_MB} MB combined memory cap (rss ${Math.round(rssKb / 1024)} MB)`;
+              void killAll();
+            }
+          },
+          (err: Error) => {
+            // A silently absent cap is worse than a loud one: kill the batch
+            // and say so rather than letting an unmetered search run.
+            fate = `memory watchdog unavailable (${err.message}); batch stopped rather than run uncapped`;
+            void killAll();
+          },
+        );
+      }, 500);
+      // "exit" (not "close"): a forked child holding the stdio pipes must not
+      // delay the tree kill that reaps it.
       const codes = await Promise.all(
         children.map(
           (child) =>
             new Promise<string>((res) => {
               child.once("exit", (code, signal) => {
-                if (child.pid !== undefined) {
-                  try {
-                    process.kill(-child.pid, "SIGKILL");
-                  } catch {
-                    /* group already gone */
-                  }
-                }
                 res(code === 0 ? "" : `exit ${code ?? `signal ${signal}`}`);
               });
               child.once("error", (error: Error) => res(error.message));
@@ -347,7 +436,9 @@ function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
       );
       clearTimeout(timer);
       clearInterval(memWatch);
-      killAll();
+      // Awaited: survivors that left the process group are reaped here, so
+      // nothing outlives the call even when the direct children exited fine.
+      await killAll();
       const sections = jobs.map(({ label }, i) => {
         let out = [outs[i].stdout, outs[i].stderr].filter(Boolean).join("\n--- stderr ---\n");
         if (out.length > OUTPUT_LIMIT) out = out.slice(0, OUTPUT_LIMIT) + "\n[truncated]";
@@ -355,7 +446,7 @@ function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
         return jobs.length === 1 ? out : `## ${label}\n${out || "(no output)"}`;
       });
       let combined = sections.join("\n\n");
-      if (fate) combined = `${combined}\n[error: ${fate}; all process groups killed]`;
+      if (fate) combined = `${combined}\n[error: ${fate}; whole process tree killed]`;
       return toolText(combined || "(no output)");
     },
   } as AgentTool;
@@ -367,7 +458,7 @@ const PROSE_EXTS = new Set([".md", ".txt"]);
 /** Launcher: FAILED.md and PROVED.md are append-only. PROVED.md is already
  *  write-denied by scope (record_promotion is its sole writer); FAILED.md
  *  rewrites must preserve existing entries as an unchanged prefix. */
-const APPEND_ONLY_LEDGERS = new Set(["FAILED.md"]);
+const APPEND_ONLY_LEDGERS = new Set(["failed.md"]);
 
 /**
  * Librarian command: an external subscription CLI agent that does the web
@@ -392,7 +483,7 @@ const LIBRARIAN_CHARGE =
  * process group, killed on exit/timeout) and archives the full report as an
  * evidence artifact so citations remain auditable.
  */
-function literatureSearchTool(cwd: string): AgentTool {
+function literatureSearchTool(cwd: string, scope: WriteScope): AgentTool {
   return {
     name: "literature_search",
     label: "Literature search",
@@ -401,7 +492,7 @@ function literatureSearchTool(cwd: string): AgentTool {
       "compiled report with citations and URLs, archived verbatim under your evidence directory " +
       "as literature-<n>.md. The librarian's claims are secondhand: treat them as leads, cite the " +
       "archived report, and label dependencies per the contract. One question per call; " +
-      `${Math.round(BASH_TIMEOUT_MS / 60000)}-minute limit.`,
+      `${Math.round(RUN_TIMEOUT_MS / 60000)}-minute limit.`,
     parameters: Type.Object({
       question: Type.String({ description: "The literature question, self-contained" }),
     }),
@@ -409,7 +500,14 @@ function literatureSearchTool(cwd: string): AgentTool {
     execute: async (_id: string, params: unknown) =>
       new Promise((resolve) => {
         const { question } = params as { question: string };
-        const child = spawn(LITERATURE_CMD[0], [...LITERATURE_CMD.slice(1), LIBRARIAN_CHARGE + question], {
+        // Sandboxed like run_script: the librarian is a full coding agent
+        // (default argv skips its own permission prompts) driven by a
+        // role-authored question, so confine its writes to the same scope.
+        const { file, args } = sandboxedArgv(
+          [...LITERATURE_CMD, LIBRARIAN_CHARGE + question],
+          scope,
+        );
+        const child = spawn(file, args, {
           cwd,
           detached: true,
           stdio: ["ignore", "pipe", "pipe"],
@@ -435,8 +533,10 @@ function literatureSearchTool(cwd: string): AgentTool {
         const timer = setTimeout(() => {
           timedOut = true;
           killGroup();
-        }, BASH_TIMEOUT_MS);
-        child.once("exit", (code) => {
+        }, RUN_TIMEOUT_MS);
+        // "close" (not "exit"): the full report is the archived deliverable,
+        // so wait for the stdio pipes to drain before reading it.
+        child.once("close", (code) => {
           clearTimeout(timer);
           killGroup();
           if (timedOut || code !== 0 || !stdout.trim()) {
@@ -485,17 +585,17 @@ export function workspaceTools(
               "dispatch (launcher preregistration)",
           );
         }
-        const base = path.basename(absolutePath);
+        const base = path.basename(absolutePath).toLowerCase();
         if (APPEND_ONLY_LEDGERS.has(base) && fs.existsSync(absolutePath)) {
           const prior = await fs.promises.readFile(absolutePath, "utf8");
           if (!content.startsWith(prior) && !content.startsWith(prior.trimEnd())) {
             throw new Error(
-              `${base} is append-only (launcher): new content must begin with the existing ` +
+              `${path.basename(absolutePath)} is append-only (launcher): new content must begin with the existing ` +
                 "content unchanged; append below it",
             );
           }
         }
-        if (/^literature-\d+\.md$/.test(base) && fs.existsSync(absolutePath)) {
+        if (/^literature-\d+\.md$/i.test(base) && fs.existsSync(absolutePath)) {
           throw new Error("librarian reports are immutable evidence; write a new file instead");
         }
         await fs.promises.writeFile(absolutePath, content);
@@ -508,7 +608,7 @@ export function workspaceTools(
   });
   const tools = [createReadTool(cwd), createLsTool(cwd), createGrepTool(cwd), scopedWrite] as AgentTool[];
   if (code) tools.push(runScriptTool(cwd, scope));
-  if (opts?.literature === true) tools.push(literatureSearchTool(cwd));
+  if (opts?.literature === true) tools.push(literatureSearchTool(cwd, scope));
   return tools;
 }
 

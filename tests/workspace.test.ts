@@ -155,6 +155,61 @@ describe("run_script", () => {
   });
 });
 
+// Bypasses demonstrated by review on 2026-08-01; each is a live escape from
+// the confinement design.md claims, so each keeps a test.
+describe("enforcement bypasses (regression)", () => {
+  const ws = tmp("bypass");
+  const t = tools(ws, { code: true });
+  test("run_script refuses a host executable outside the scope", async () => {
+    const out = text(
+      await t.run_script.execute("t", { runs: [{ path: "/bin/sh", args: ["-c", "echo SHELL_REACHED"] }] }),
+    );
+    expect(out).not.toContain("SHELL_REACHED");
+    expect(out).toContain("inside your assigned directory");
+  });
+  test("run_script refuses an interpreter reached by traversal", async () => {
+    const out = text(await t.run_script.execute("t", { runs: [{ path: "../../../bin/sh" }] }));
+    expect(out).toContain("inside your assigned directory");
+  });
+  test("a child that leaves the process group is still reaped", async () => {
+    fs.writeFileSync(
+      path.join(ws, "escape.py"),
+      "import os,sys,time\npid=os.fork()\nif pid==0:\n  os.setpgrp()\n  time.sleep(300)\nelse:\n  print('BG',pid)\n  sys.stdout.flush()\n",
+    );
+    const out = text(await t.run_script.execute("t", { runs: [{ path: "escape.py" }] }));
+    const bgPid = Number(out.match(/BG (\d+)/)?.[1]);
+    expect(Number.isFinite(bgPid)).toBe(true);
+    await new Promise((r) => setTimeout(r, 500));
+    let alive = true;
+    try {
+      process.kill(bgPid, 0);
+    } catch {
+      alive = false;
+    }
+    if (alive) process.kill(bgPid, 9);
+    expect(alive).toBe(false);
+  }, 20000);
+  test("deny-list holds against a case-variant filename", async () => {
+    const scoped = Object.fromEntries(
+      workspaceTools(ws, { allow: [ws], deny: [path.join(ws, "PROVED.md")] }).map((x: any) => [x.name, x]),
+    );
+    fs.writeFileSync(path.join(ws, "PROVED.md"), "# real promotions\n");
+    await expect(
+      scoped.write.execute("t", { path: path.join(ws, "proved.md"), content: "# forged" }),
+    ).rejects.toThrow(/outside assigned scope/);
+    expect(fs.readFileSync(path.join(ws, "PROVED.md"), "utf8")).toContain("real promotions");
+  });
+  test("append-only holds against a case-variant ledger name", async () => {
+    const prose = tools(ws);
+    const ledger = path.join(ws, "FAILED.md");
+    await prose.write.execute("t", { path: ledger, content: "# Failed\n\n- route A\n" });
+    await expect(
+      prose.write.execute("t", { path: path.join(ws, "failed.md"), content: "# erased\n" }),
+    ).rejects.toThrow(/append-only/);
+    expect(fs.readFileSync(ledger, "utf8")).toContain("route A");
+  });
+});
+
 describe("literature_search (stub librarian)", () => {
   const ws = tmp("lit");
   const t = tools(ws, { literature: true });
