@@ -55,6 +55,8 @@ interface Handle {
   session?: RoleSession;
   /** Provider-reported usage, read at completion (undefined for CLI oracles). */
   usage?: () => RoleUsage | undefined;
+  /** Resolves (never rejects) when the handle finishes; set by registerHandle. */
+  settled: Promise<void>;
 }
 
 /** Consecutive wakes with no dispatch, no verification, and no declaration
@@ -150,16 +152,18 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     [...handles.values()].filter((h) => h.mechanism === mechanism).length;
 
   /** Registers a settled-queue handle: the one async pattern every dispatch shares. */
-  const registerHandle = (handle: Handle) => {
-    handles.set(handle.id, handle);
-    handle.promise
-      .then((report) => {
+  const registerHandle = (h: Omit<Handle, "settled">) => {
+    const handle = h as Handle;
+    handle.settled = handle.promise.then(
+      (report) => {
         if (handles.has(handle.id)) settledQueue.push({ h: handle, report });
-      })
-      .catch((err: unknown) => {
+      },
+      (err: unknown) => {
         if (handles.has(handle.id))
           settledQueue.push({ h: handle, report: `[${handle.id} failed: ${String(err)}]` });
-      });
+      },
+    );
+    handles.set(handle.id, handle);
     activityThisWake++;
   };
 
@@ -534,7 +538,11 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
               e.bundleHash === bundleHash &&
               e.provedHash === provedHash &&
               typeof e.artifact === "string" &&
-              fs.existsSync(path.join(dir, e.artifact)),
+              fs.existsSync(path.join(dir, e.artifact)) &&
+              // Content-bound: an artifact edited since it was recorded is
+              // no longer the independent reconstruction that was verified,
+              // so it must be regenerated rather than reused.
+              e.artifactHash === sha256File(path.join(dir, e.artifact)),
           );
         abortIfCancelled();
         let reconText: string;
@@ -542,6 +550,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         if (priorRecon) {
           reconArtifact = priorRecon.artifact as string;
           reconText = fs.readFileSync(path.join(dir, reconArtifact), "utf-8");
+          const carriedHash = priorRecon.artifactHash as string;
           store.append({
             kind: "reconstruction",
             revision: rel,
@@ -550,6 +559,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
             bundleHash,
             provedHash,
             artifact: reconArtifact,
+            artifactHash: carriedHash,
             carriedForwardFrom: priorRecon.revision,
             suppliedInputs: ["statement", "key ideas", "allowed sources", "promoted premises"],
             blindness:
@@ -579,6 +589,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
             bundleHash,
             provedHash,
             artifact: reconArtifact,
+            artifactHash: sha256File(reconEvidence),
             suppliedInputs: ["statement", "key ideas", "allowed sources", "promoted premises"],
             blindness:
               "fresh instance (enforced); candidate file withheld by harness (enforced); keyIdeas coordinator-authored (instructed only — paraphrase risk not machine-checked)",
@@ -674,12 +685,19 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         .filter((e) => sameRevision(e.revision, rel) && typeof e.artifact === "string")
         .map((e) => `${e.kind}: ${e.artifact}`)
         .join("; ");
+      // The promoted text is coordinator-authored; the harness cannot check
+      // that it is what the candidate proves. Recording the verified
+      // revision's content hash at least makes an over-claim auditable
+      // against the exact artifact the verifiers saw.
+      const verifiedHash = sha256File(path.join(dir, "EVIDENCE", rel));
       const entry =
         `\n## ${rel} — promoted ${new Date().toISOString()}\n\n` +
-        `**Statement:** ${p.exactStatement}\n\n**Dependencies:** ${p.dependencies}\n\n` +
+        `**Statement (coordinator-authored):** ${p.exactStatement}\n\n` +
+        `**Dependencies:** ${p.dependencies}\n\n` +
+        `**Verified candidate:** ${rel} (sha256 ${verifiedHash})\n\n` +
         `**Audit artifacts:** ${artifacts}\n`;
       fs.appendFileSync(path.join(dir, "PROVED.md"), entry);
-      store.append({ kind: "promotion", revision: rel });
+      store.append({ kind: "promotion", revision: rel, candidateHash: verifiedHash, statement: p.exactStatement });
       activityThisWake++;
       return toolText(`Promotion recorded in PROVED.md for ${rel}. Update REGISTRY.md to label it 'promoted'.`);
     },
@@ -884,7 +902,11 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       noopWakes = 0;
     }
     if (handles.size > 0 && settledQueue.length === 0) {
-      await Promise.race([...handles.values()].map((h) => h.promise));
+      // Settled, not raw: a rejected promise here (one transient API error in
+      // any live agent) would reject the race and kill the whole campaign,
+      // including every other live agent. registerHandle already turns a
+      // rejection into a failure report.
+      await Promise.race([...handles.values()].map((h) => h.settled));
     }
   }
 }

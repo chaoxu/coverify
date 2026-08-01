@@ -32,7 +32,11 @@ export class GateStore {
   readonly campaignDir: string;
 
   constructor(campaignDir: string) {
-    this.campaignDir = path.resolve(campaignDir);
+    // realpath, not just resolve: /tmp/c and /private/tmp/c are one campaign
+    // on darwin, and a fresh gate store would silently reset the statement
+    // freeze, every prior FAIL, and the handle counter.
+    const resolved = path.resolve(campaignDir);
+    this.campaignDir = fs.existsSync(resolved) ? fs.realpathSync.native(resolved) : resolved;
     const id = sha256Text(this.campaignDir).slice(0, 16);
     const stateDir =
       process.env.COVERIFY_STATE_DIR ?? path.join(os.homedir(), ".local/state/coverify");
@@ -140,10 +144,11 @@ export interface GateDecision {
 
 const FAILED_CHECK_RE = /^(no close prior route|closest prior route is .+; this differs materially because .+)/is;
 
+/** Latest verdict wins: a mechanism re-gated to IDEA FAIL/REPAIR loses wave
+ *  permission it earned earlier, or the gate could never be re-armed. */
 function ideaGatePassed(store: GateStore, mechanism: string): boolean {
-  return store
-    .all()
-    .some((e) => e.kind === "gate-verdict" && e.mechanism === mechanism && e.verdict === "IDEA PASS");
+  const verdicts = store.all().filter((e) => e.kind === "gate-verdict" && e.mechanism === mechanism);
+  return verdicts.length > 0 && verdicts[verdicts.length - 1].verdict === "IDEA PASS";
 }
 
 /**
@@ -164,7 +169,14 @@ export function checkDispatch(
   if (!packet.task || !packet.deliverable || !packet.mechanism) {
     return { allowed: false, reason: "packet must name a mechanism, task, and finite deliverable" };
   }
-  if (!FAILED_CHECK_RE.test(packet.failedCheck?.trim() ?? "")) {
+  const failedCheck = packet.failedCheck?.trim() ?? "";
+  if (/differs materially because \.\.\.\s*$/.test(failedCheck) || /^no close prior route\b.*\bnot\b/i.test(failedCheck)) {
+    return {
+      allowed: false,
+      reason: "failedCheck repeats the parameter's placeholder text; state the actual check result",
+    };
+  }
+  if (!FAILED_CHECK_RE.test(failedCheck)) {
     return {
       allowed: false,
       reason:
@@ -257,8 +269,22 @@ export function verificationState(store: GateStore, dir: string, revision: strin
     e.verdict === "PASS" &&
     e.candidateHash === candidateHash &&
     e.statementHash === stmtHash;
-  const stage1 = store.all().some((e) => e.kind === "audit" && match(e));
-  const stage2 = store.all().some((e) => e.kind === "comparison" && match(e));
+  // Latest verdict wins per stage: a PASS followed by a FAIL on the same
+  // candidate and statement is not verifier-backed, however the FAIL arose.
+  const latest = (kind: string) => {
+    const onThis = store
+      .all()
+      .filter(
+        (e) =>
+          e.kind === kind &&
+          sameRevision(e.revision, revision) &&
+          e.candidateHash === candidateHash &&
+          e.statementHash === stmtHash,
+      );
+    return onThis.length > 0 ? onThis[onThis.length - 1].verdict === "PASS" : false;
+  };
+  const stage1 = latest("audit");
+  const stage2 = latest("comparison");
   return { stage1Passed: stage1, stage2Passed: stage2, verifierBacked: stage1 && stage2 };
 }
 

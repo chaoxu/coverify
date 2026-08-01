@@ -35,7 +35,8 @@ REGISTRY.md           canonical route + claim-label index (mechanism × terminal
 FAILED.md             append-only closed routes with obstructions + retry-novelty bar
 PROVED.md             append-only promotions with dependencies + audit provenance
 PROCESS_LESSONS.md    process lessons only — the name itself carries the rule
-EVIDENCE/             append-only, revision-suffixed artifacts; identity = filename
+EVIDENCE/             revision-suffixed artifacts; identity = filename (harness-written
+                      artifacts are append-only; role scratch edits are instructed)
 .coverify/journal.jsonl   harness audit metadata (write-only mirror; gates never read it)
 ```
 
@@ -181,7 +182,7 @@ harness.ts       handle table, event loop, wakes; the only persistent process
 | Mechanical enforcement (code) | Launcher clause |
 | --- | --- |
 | `STATEMENT.md` written once; new revision only via explicit user amendment; completion evidence invalidated | "Fix its revision before search; only an explicit user amendment may replace it…" |
-| Campaign file set + `EVIDENCE/` append-only, revision-suffixed, no in-place edits | "Durable campaign state" bullets |
+| Campaign file set; harness-written evidence is revision-suffixed (`newEvidencePath`), and `FAILED.md` prefix-append plus `literature-*.md` immutability are enforced. Other in-place edits under `EVIDENCE/` are contract-instructed, not blocked — a role can still overwrite its own scratch artifact | "Durable campaign state" bullets |
 | Dispatched agents get no ledger-write capability; only assigned evidence paths | "The coordinator is the sole ledger writer; workers… write only assigned evidence artifacts" |
 | Resume bundle = STATEMENT + FRONTIER + full REGISTRY.md + full PROCESS_LESSONS.md, launcher embedded verbatim in the system prompt (never FAILED.md, PROVED.md, or EVIDENCE/ wholesale) | "After restart or context compaction, reread…" |
 | Claim-label vocabulary quoted verbatim into the ledger templates at init; label discipline and weakest-premise inheritance are contract-instructed model judgment | "Claim labels — literal, never inflated" |
@@ -190,13 +191,13 @@ harness.ts       handle table, event loop, wakes; the only persistent process
 | No harness timeouts on proof/audit/reconstruction work (the per-run_script batch cap is surfaced in the tool description and env-tunable) | "Do not impose a coordinator-created elapsed-time limit…" |
 | Code tools (`run_script` + non-prose writes) exist only on a worker whose packet declares a computation with concrete bounds; dispatch gate refuses thin declarations; coordinator is prose-only | "Use computation only for a preregistered finite domain and stopping rule yielding a small witness, certificate, or table." / "Never run unsupervised detached compute." |
 | Wave gate: a second **concurrent** worker on a mechanism requires `IDEA PASS` on file; sequential retries get an advisory reminder, not a refusal (that judgment is the coordinator's); single first-wave scouts exempt | "Do not allow recursive subagent fan-out or a large route wave before the parent mechanism receives `IDEA PASS`…" |
-| Verification = stage 1 (fresh hostile audit) then stage 2: bundle certification (fresh agent sees candidate + bundle; leaky bundle refused, same-bundle retry hash-blocked) → blind reconstruction (no verdict) → fresh comparison carrying stage 2's verdict with the contract's match semantics; all outputs saved as citable EVIDENCE artifacts, hash-bound | "Verification cadence" 1–2 (2026-07-31 revision): bundle certification, "a fresh comparison agent…", explicit PASS/mismatch semantics |
+| Verification = stage 1 (fresh hostile audit) then stage 2: bundle certification (fresh agent sees candidate + bundle; leaky bundle refused, same-bundle retry hash-blocked) → blind reconstruction (no verdict) → fresh comparison carrying stage 2's verdict with the contract's match semantics; all outputs saved as citable EVIDENCE artifacts, hash-bound; a carried-forward reconstruction is additionally bound to its artifact's content hash, so an edited artifact is regenerated rather than reused | "Verification cadence" 1–2 (2026-07-31 revision): bundle certification, "a fresh comparison agent…", explicit PASS/mismatch semantics |
 | Anti-verdict-shopping: a substantive audit/comparison FAIL on the exact revision contents blocks re-verification unless a recorded rebuttal artifact is supplied; every attempt stays on record | "A substantive FAIL from any stage stands… Do not rerun a failed stage on an unchanged revision in search of a PASS" |
 | Any content change ⇒ audit, bundle certification, and comparison rerun (verdicts hash-bound to candidate + STATEMENT.md; every verifier call is a fresh instance). The blind reconstruction is carried forward only when statement, bundle, and promoted premises are byte-identical to the prior run's inputs — it never sees a candidate, so a candidate repair cannot invalidate it | Revision-impact rules |
-| `record_promotion` is the sole writer of `PROVED.md` (direct writes OS-denied); legal only when both stage records exist for the exact revision with matching content hashes; entry carries dependency identities and audit-artifact citations | "Promotion records the revision and dependency identities plus every audit…" |
+| `record_promotion` is the sole writer of `PROVED.md` (direct writes OS-denied); legal only when both stage records exist for the exact revision with matching content hashes; entry carries dependency identities, audit-artifact citations, and the verified candidate's content hash. The promoted statement text itself is coordinator-authored and not machine-checked against the candidate — see the honesty ledger | "Promotion records the revision and dependency identities plus every audit…" |
 | Campaign ends only by explicit `declare_campaign_state`; "complete" refused with zero promotions on record; an idle wake gets a nudge, and 3 consecutive no-op wakes trigger an operational *pause* (never a completion) as spend protection | "Do not mark it complete until the final result passes the full cadence…"; "Failed attempts… are not permission to return"; "Pause is operational state" (pause stops further wakes; live agents are not force-aborted — use cancel_agent) |
 | Harvest before judgment: worker reports are saved to EVIDENCE/ and completion-recorded before any model sees them; checkpoint ordering itself is contract-instructed, not enforced (struck as over-constraint — see review record) | "Checkpoint and learning loop" |
-| Campaign loop persists across restarts until user stop or completion; pause = cease dispatch, interrupt agents, checkpoint | "The initial resolution request remains authorization…" |
+| Campaign loop persists across restarts until user stop or completion; pause = cease dispatch and checkpoint. Live agents keep running unless explicitly cancelled (`cancel_agent`, which now also aborts a running batch); the harness does not force-abort on pause | "The initial resolution request remains authorization…" |
 | Journal records each audit's supplied inputs, visibility, model family, and instructed-vs-platform-enforced restrictions | "Every audit records the supplied inputs, workspace/tool visibility, model-family provenance…" |
 | No agent-count ceiling; budget gate enforces only user/workspace/runtime limits | "Do not impose a fixed agent-count ceiling… scaling to available concurrency and any explicit user, workspace, or runtime limits" |
 
@@ -214,7 +215,16 @@ platform-enforced (macOS); the bundle (`keyIdeas`/`allowedSources`) is
 coordinator-authored but now passes a mandatory certification by a fresh
 agent before stage 2 runs (contract-required; the certification itself is
 model judgment, recorded as such); `declaredDependencies` remains
-instructed-only, mitigated by giving the stage-1 auditor PROVED.md.
+instructed-only, mitigated by giving the stage-1 auditor PROVED.md. The
+promoted statement text in `record_promotion` is likewise coordinator-
+authored and unverifiable by the harness — nothing mechanically checks that
+it is what the candidate proves, so PROVED.md entries carry the verified
+revision and its content hash and an over-claim is auditable against that
+exact artifact, not prevented. Re-verification after a substantive FAIL
+requires a rebuttal artifact to exist, but its content is never read or
+shown to a verifier; the anti-shopping property is that every attempt stays
+on record and the latest verdict per stage decides, not that a determined
+coordinator cannot resample.
 Non-darwin platforms: write confinement instructed-only. `claude-cli/*`
 verdict roles run as `claude -p` subprocesses: fresh process per call, run
 in an empty temp directory, but the CLI carries its own tools (file read,
