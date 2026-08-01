@@ -9,6 +9,7 @@ import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import { fileCredentialStore } from "./credentials.js";
+import { claudeBridgeProvider } from "./claude-bridge.js";
 import { Type } from "typebox";
 
 const OUTPUT_LIMIT = 50_000;
@@ -16,7 +17,7 @@ const BASH_TIMEOUT_MS = Number(process.env.COVERIFY_BASH_TIMEOUT_MS ?? 600_000);
 
 export type Models = ReturnType<typeof createModels>;
 
-export function buildModels(): Models {
+export async function buildModels(): Promise<Models> {
   // Persistent credential store: OAuth subscription logins (coverify login)
   // survive across runs; API-key env vars keep working unchanged.
   const models = createModels({ credentials: fileCredentialStore() });
@@ -24,6 +25,8 @@ export function buildModels(): Models {
   models.setProvider(openaiProvider());
   models.setProvider(openaiCodexProvider());
   models.setProvider(googleProvider());
+  // Subscription tool-loop transport (Agent SDK); see src/claude-bridge.ts.
+  models.setProvider((await claudeBridgeProvider()) as Parameters<Models["setProvider"]>[0]);
   return models;
 }
 
@@ -39,7 +42,15 @@ export type RoleName =
   | "comparator";
 
 export interface ModelSpec {
-  provider: "anthropic" | "openai" | "openai-codex" | "google" | "claude-cli" | "codex-cli" | "chatgpt-cli";
+  provider:
+    | "anthropic"
+    | "openai"
+    | "openai-codex"
+    | "google"
+    | "claude-bridge"
+    | "claude-cli"
+    | "codex-cli"
+    | "chatgpt-cli";
   modelId: string;
   thinking: ThinkingLevel;
 }
@@ -64,16 +75,18 @@ const ROLE_ENV: Record<RoleName, string> = {
   comparator: "COVERIFY_MODEL_COMPARATOR",
 };
 
-/** Workhorse decision (user, 2026-07-31): workers run GPT-5.6 Sol in its
- *  high-effort ("Ultra") mode. Subscription decision (user, 2026-07-31): the
- *  five single-shot verdict roles run through the official `claude -p` CLI —
- *  the only path that bills the Claude subscription allowance (third-party
- *  OAuth draws Extra Credits per current Anthropic billing). Only the
- *  coordinator (tool loop) remains on the Anthropic API by default. Every
- *  role is overridable per-role or globally. */
+/** All-Anthropic-on-subscription decision (user, 2026-07-31): every default
+ *  role bills the Claude subscription. The coordinator's tool loop runs
+ *  through claude-bridge (Agent SDK; official `claude` login) — bridge
+ *  sessions cross-contaminate when concurrent, so claude-bridge is
+ *  coordinator-only (enforced at preflight). Workers and the five
+ *  single-shot verdict roles run through the official `claude -p` CLI:
+ *  independent processes, safe in parallel, subscription-billed
+ *  (third-party OAuth draws Extra Credits per current Anthropic billing).
+ *  Every role is overridable per-role or globally. */
 const ROLE_DEFAULTS: Partial<Record<RoleName, string>> = {
-  coordinator: "openai/gpt-5.6-sol@xhigh",
-  worker: "openai/gpt-5.6-sol@xhigh",
+  coordinator: "claude-bridge/claude-opus-5@high",
+  worker: "claude-cli/opus",
   gateCritic: "claude-cli/opus",
   hostileAuditor: "claude-cli/opus",
   bundleCertifier: "claude-cli/opus",
@@ -94,6 +107,7 @@ export function parseModelSpec(spec: string): ModelSpec {
     provider !== "openai" &&
     provider !== "openai-codex" &&
     provider !== "google" &&
+    provider !== "claude-bridge" &&
     provider !== "claude-cli" &&
     provider !== "codex-cli" &&
     provider !== "chatgpt-cli"
@@ -119,7 +133,7 @@ function getModel(models: Models, spec: ModelSpec) {
   if (!model) {
     throw new Error(
       `unknown ${spec.provider} model id "${spec.modelId}"; check the COVERIFY_MODEL* spec ` +
-        `(auth: ${{ anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", google: "GEMINI_API_KEY", "openai-codex": "coverify login openai-codex", "claude-cli": "claude binary", "codex-cli": "codex binary", "chatgpt-cli": "chatgpt-cli binary (daemon must be running)" }[spec.provider]})`,
+        `(auth: ${{ anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", google: "GEMINI_API_KEY", "openai-codex": "coverify login openai-codex", "claude-bridge": "claude binary (Claude Code login)", "claude-cli": "claude binary", "codex-cli": "codex binary", "chatgpt-cli": "chatgpt-cli binary (daemon must be running)" }[spec.provider]})`,
     );
   }
   return model;

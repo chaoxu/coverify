@@ -52,11 +52,19 @@ function optionalInt(name: string): number | undefined {
 async function prove(resume: boolean): Promise<void> {
   // Auth preflight: a provider is usable via an env API key or a stored
   // OAuth subscription credential (coverify login <provider>).
-  const models = buildModels();
+  const models = await buildModels();
   const missing = new Set<string>();
   const { spawnSync } = await import("node:child_process");
   for (const role of ROLE_NAMES) {
     const provider = roleModelSpec(role).provider;
+    // claude-bridge supports exactly one live session; concurrent sessions
+    // cross-contaminate (observed in testing). Coordinator only.
+    if (provider === "claude-bridge" && role !== "coordinator") {
+      console.error(
+        `claude-bridge is coordinator-only (single concurrent session); re-point ${role} via COVERIFY_MODEL_* (e.g. claude-cli/opus)`,
+      );
+      process.exit(1);
+    }
     let ok = false;
     if (provider === "claude-cli" || provider === "codex-cli") {
       const { cliBackendCommand } = await import("./roles.js");
@@ -99,7 +107,7 @@ async function prove(resume: boolean): Promise<void> {
 async function oauth(action: "login" | "logout"): Promise<void> {
   const provider = positional[0];
   if (!provider) usage();
-  const models = buildModels();
+  const models = await buildModels();
   if (action === "logout") {
     await models.logout(provider);
     console.error(`[coverify] logged out of ${provider}`);

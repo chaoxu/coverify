@@ -10,6 +10,41 @@ its activation test; the arbiter is the shared-format comparison — same
 statement run under the raw skill in Codex and under coverify, campaign
 folders read side by side.
 
+## Evidence from campaign 1 (2026-07-31, linear-3-cut equivalence)
+
+First live campaign (`~/research/linear-3-cut/campaigns/2026-07-31-equiv-3scc-linear-3-cut`,
+resolved affirmatively, 3 promotions, 6 wakes, 2 audit-bounced revisions).
+Its PROCESS_LESSONS marks two lessons "graduate"; filed here as candidates:
+
+1. **Packet discipline for toolless workers** (from lesson L1). The launcher
+   assumes workers can be given tools; CLI-oracle workers have none, and a
+   packet written for a tooled worker burned a dispatch (w001). Candidate
+   launcher touch: "compose each packet against the worker's actual tool
+   surface — when workers are toolless, the coordinator retrieves sources,
+   runs computations, and inlines the results; a packet instructing a
+   toolless worker to fetch or verify anything is a defect."
+2. **Flag, never repair, defects in the frozen statement** (from lesson L5).
+   The statement misattributed Problem B's definition (right definition,
+   wrong author set); the coordinator flagged it and left STATEMENT
+   untouched, preserving the evidence that the definitional audit worked.
+   The launcher's amendment rule already implies this; candidate edit makes
+   it explicit: "inaccuracies discovered in the frozen statement (wrong
+   citation, misattribution) are reported to the user, never edited."
+
+Also evidenced, not yet a launcher edit: pinning a literature definition
+inside the statement with a "verify against the source; flag mismatches
+rather than silently adapting" clause paid off (caught the misattribution
+via L3's LaTeX-source retrieval). Worth standardizing as a statement-drafting
+convention if it recurs.
+
+Activation-test status for the deferred items below, after campaign 1:
+tiered verification — no evidence either way; all three promotions were
+load-bearing or final, so full cadence was justified, and the journal
+records no token usage, so the spend half of the test is unmeasurable until
+per-call token accounting lands (design.md roadmap). Idea generation — no
+evidence; one mechanism family sufficed at this statement size. Both stay
+deferred.
+
 ## Deferred: tiered verification (drafted, ready to land on evidence)
 
 Two launcher edits:
@@ -30,7 +65,7 @@ Rationale: verification cost should scale with citation fan-in and user
 visibility, not production volume; the completion gate already re-verifies
 the assembled whole, making per-lemma full cadence redundant for soundness.
 Deferral is already label-legal; this edit makes the default explicit so a
-conservative coordinator doesn't Danus itself.
+conservative coordinator doesn't over-verify.
 
 **Activation test:** first campaign's journal shows verification calls
 dominating token spend, or full-suite runs on lemmas that nothing else ever

@@ -1,13 +1,13 @@
 # Coverify
 
-Coverify 2.0 is a math proof-search campaign engine: the `math-proof-search`
+Coverify is a math proof-search campaign engine: the `math-proof-search`
 skill's launcher contract, compiled onto pi (`@earendil-works/pi-agent-core`).
 The skill is the spec; coverify is a mechanical referee for it. It adds no
 mathematical policy of its own — its edge over running the skill in a frontier
 harness is that the rules that matter are enforced in code and cannot drift.
 
-A project is a folder. There is no server, no worker daemon, no deploy
-pipeline, and no Cosheaf. The campaign directory uses the launcher's exact
+A project is a folder. There is no server, no worker daemon, and no deploy
+pipeline. The campaign directory uses the launcher's exact
 file layout (`STATEMENT.md`, `CURRENT_FRONTIER.md`, `REGISTRY.md`,
 `FAILED.md`, `PROVED.md`, `PROCESS_LESSONS.md`, `EVIDENCE/`), so a Claude Code or
 Codex session running the skill can resume a coverify campaign and vice versa.
@@ -17,7 +17,8 @@ Codex session running the skill can resume a coverify campaign and vice versa.
 ```bash
 bun install
 
-export ANTHROPIC_API_KEY=...   # fleet: fleet-secret get <app>/<name>
+# default routing needs only a logged-in official `claude` CLI (subscription);
+# API-key env vars are needed only for api-provider role overrides
 bun run src/cli.ts prove "Exact statement to resolve." --dir campaign
 bun run src/cli.ts status --dir campaign
 bun run src/cli.ts resume --dir campaign
@@ -27,44 +28,40 @@ bun run src/cli.ts amend --dir campaign    # accept an explicit user amendment o
 Optional user limits (the harness imposes none of its own): `--agent-limit N`
 (concurrent workers), `--max-wakes N` (pause after N coordinator wakes).
 
-**Models are per-role.** Specs are `provider/model[@thinking]` (providers:
-`anthropic`, `openai`, `openai-codex`, `google` — Gemini via
-`GEMINI_API_KEY` — and three CLI backends: `claude-cli` (`claude -p`,
-Claude-subscription billed), `codex-cli` (official `codex exec`,
-ChatGPT-subscription billed, read-only sandbox), and `chatgpt-cli` (the
-chatgpt.com daemon CLI from gitea `chaoxu/chatgpt-cli` — the only road to
-ChatGPT-Pro-only models like `gpt-5.6-pro`; its daemon picks the model, the
-spec's modelId is a provenance label). A CLI-backed **worker** runs as a
-single-shot oracle: one deep attempt, no tools, the reply is the
-deliverable — e.g. `COVERIFY_MODEL_WORKER=chatgpt-cli/gpt-5.6-pro` turns
-workers into GPT-5.6 Pro deep provers. Defaults: the coordinator and
-workers run `openai/gpt-5.6-sol@xhigh` (GPT-5.6 Sol high-effort "Ultra");
-the five single-shot verdict roles (critic, auditor, certifier,
-reconstructor, comparator) run `claude-cli/opus` — the official `claude -p`
-CLI, the one path that bills the Claude **subscription allowance**. Every
-verification is therefore cross-family from both producers (GPT coordinator
-and workers vs Claude verifiers). Override globally with
-`COVERIFY_MODEL` or per role with
+**Models are per-role.** Specs are `provider/model[@thinking]`. API
+providers: `anthropic`, `openai`, `openai-codex`, `google` (Gemini via
+`GEMINI_API_KEY`). CLI-backed providers, all riding official-CLI logins:
+`claude-bridge` (the pi-claude-bridge provider — a full tool loop through
+the Claude Agent SDK on the Claude subscription; **coordinator-only**,
+because concurrent bridge sessions cross-contaminate — enforced at
+preflight), `claude-cli` (`claude -p`, Claude-subscription billed),
+`codex-cli` (official `codex exec`, ChatGPT-subscription billed, read-only
+sandbox), and `chatgpt-cli` (the chatgpt.com daemon CLI from gitea
+`chaoxu/chatgpt-cli` — the only road to ChatGPT-Pro-only models like
+`gpt-5.6-pro`; its daemon picks the model, the spec's modelId is a
+provenance label). A single-shot-CLI-backed **worker** runs as an oracle:
+one deep attempt, no tools, the reply is the deliverable — e.g.
+`COVERIFY_MODEL_WORKER=chatgpt-cli/gpt-5.6-pro` turns workers into GPT-5.6
+Pro deep provers. Defaults (all Claude-subscription billed): coordinator
+`claude-bridge/claude-opus-5@high`; workers and the five single-shot
+verdict roles (critic, auditor, certifier, reconstructor, comparator)
+`claude-cli/opus`. The all-Anthropic default trades away cross-family
+verification — restoring it is one env var when other providers have quota,
+e.g. `COVERIFY_MODEL_WORKER=openai/gpt-5.6-sol@xhigh` or
+`COVERIFY_MODEL_RECONSTRUCTOR=google/gemini-3.6-flash`; the journal records
+the model family per call, so same-family verification is at least always
+disclosed. Override globally with `COVERIFY_MODEL` or per role with
 `COVERIFY_MODEL_{COORDINATOR,WORKER,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}`.
-`COVERIFY_CLAUDE_CMD` overrides the CLI base command (default `claude -p`).
-Auth per provider: env API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`),
-the `claude` binary for `claude-cli/*` roles (whatever `claude` is logged in
-as), or OAuth via `coverify login anthropic|openai-codex`
+Auth per provider: the logged-in `claude` binary for `claude-bridge`/
+`claude-cli`, env API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`), or
+OAuth via `coverify login anthropic|openai-codex`
 (`~/.config/coverify/auth.json`, auto-refresh). **Billing caution:**
 third-party OAuth against Anthropic reportedly draws Extra Credits, not the
-subscription allowance — only the official `claude` CLI is guaranteed
-subscription-billed, which is why the verdict roles default to `claude-cli`.
-`prove`/`resume` preflight that every configured role's provider has usable
-auth. With three families available, verification diversity is one env var —
-the current trial candidate is cheap Gemini flash for
-review/reconstruction: `COVERIFY_MODEL_RECONSTRUCTOR=google/gemini-3.6-flash`
-(GPT produces, Gemini reconstructs blind, Claude audits and compares);
-whether flash-tier is good enough is a layer-2 eval question.
-`COVERIFY_CLAUDE_CMD`/`COVERIFY_CODEX_CMD` override the CLI templates
-({model}/{out} substituted). A pleasant side effect of the
-default split: GPT-produced candidates are verified by Anthropic-family
-auditors — stage verification is cross-family out of the box, and the
-journal records the family per call.
+subscription allowance — only the official `claude` CLI paths
+(`claude-bridge`, `claude-cli`) are subscription-billed, which is why they
+are the defaults. `prove`/`resume` preflight that every configured role's
+provider has usable auth. `COVERIFY_CLAUDE_CMD`/`COVERIFY_CODEX_CMD`
+override the CLI templates ({model}/{out} substituted).
 
 The launcher contract is read at runtime from
 `~/kb/notes/agents/prompts/prompt-math-proof-search-launcher.md`
@@ -125,9 +122,8 @@ system. Keep campaigns out of the system temp tree (the write sandbox
 blanket-allows temp).
 
 See `docs/design.md` for the full conformance table (each enforcement →
-launcher clause) and the adversarial review record, `docs/retrospective.md`
-for why 1.0 was replaced, and `docs/skill-feedback.md` for the
-skill-improvement ledger.
+launcher clause) and the adversarial review record, and
+`docs/skill-feedback.md` for the skill-improvement ledger.
 
 ## Checks
 

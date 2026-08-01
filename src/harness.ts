@@ -83,7 +83,7 @@ function harnessRevision(): string {
 export async function runCampaign(opts: CampaignOptions): Promise<string> {
   const dir = path.resolve(opts.campaignDir);
   const contract = loadLauncherContract();
-  const models = buildModels();
+  const models = await buildModels();
   const store = new GateStore(dir);
 
   // Version stamp at every run start: attributes this run to an exact

@@ -1,6 +1,6 @@
-# Coverify 2.0 Design
+# Coverify Design
 
-Coverify 2.0 is a mechanical referee for the `math-proof-search` skill. The
+Coverify is a mechanical referee for the `math-proof-search` skill. The
 skill's launcher contract
 (`~/kb/notes/agents/prompts/prompt-math-proof-search-launcher.md`) is the
 spec; this harness adds **zero mathematical policy of its own**. A perfectly
@@ -63,12 +63,13 @@ project directories.)
 ## Runtime shape
 
 ```
-cli.ts       prove / resume / status / amend
-campaign.ts  state layer: init, revisions, append-only evidence, resume bundle
-launcher.ts  load + extract the fenced launcher contract (no fallback)
-roles.ts     prompt assembly (launcher verbatim + role charge); pi Agent runner
-gates.ts     dispatch gate, idea-gate ledger, two-stage verification, promotion
-harness.ts   handle table, event loop, wakes; the only persistent process
+cli.ts           prove / resume / status / amend
+campaign.ts      state layer: init, revisions, append-only evidence, resume bundle
+launcher.ts      load + extract the fenced launcher contract (no fallback)
+roles.ts         prompt assembly (launcher verbatim + role charge); pi Agent runner
+claude-bridge.ts pi-claude-bridge as a pi-ai provider (subscription tool loop)
+gates.ts         dispatch gate, idea-gate ledger, two-stage verification, promotion
+harness.ts       handle table, event loop, wakes; the only persistent process
 ```
 
 - **Coordinator**: resident across wakes — matching how the skill runs in a
@@ -134,9 +135,17 @@ Non-darwin platforms: write confinement instructed-only. `claude-cli/*`
 verdict roles run as `claude -p` subprocesses: fresh process per call, run
 in an empty temp directory, but the CLI carries its own tools (file read,
 web search) — their isolation is instructed-only, and the journal's
-modelFamily field discloses the backend per call.
+modelFamily field discloses the backend per call. A `claude-bridge`
+coordinator runs its tool loop through the Claude Agent SDK
+(pi-claude-bridge): the bridge starts Claude Code with built-in tools
+disabled and strict MCP config, so the model's whole tool surface is
+coverify's own (sandboxed bash + gate tools) — confinement is unchanged,
+though tool-disablement there is SDK-flag-enforced rather than
+OS-enforced. Concurrent bridge sessions cross-contaminate (observed in
+testing), so claude-bridge is coordinator-only, refused at preflight for
+every other role.
 
-## Efficiency (the anti-Danus commitments)
+## Efficiency commitments
 
 Verify at trust boundaries (promotions, resolution claims), not per
 micro-fact; gate before the wave; finite deliverables, never clocks; the
@@ -194,8 +203,7 @@ harnesses directly — `claude -p` / `codex exec` — via a harness-provided
   family and that provenance is self-attested — the exact pattern
   `fable-review` already uses.
 - Base commands are configurable (`COVERIFY_CLAUDE_CMD` / `COVERIFY_CODEX_CMD`)
-  so flag drift in the CLIs never requires a harness release — the lesson
-  from 1.0's Danus adapter.
+  so flag drift in the CLIs never requires a harness release.
 - Bonus this unlocks: `codex` is a demonstrably different model family, so
   the launcher's independent different-family audit can run on subscription
   rather than API pricing; `fable-review` (file-path interface: CANDIDATE
@@ -221,11 +229,13 @@ harnesses directly — `claude -p` / `codex exec` — via a harness-provided
 - [ ] Per-call token accounting in the journal (from pi usage events) —
       prerequisite for the evals token gauges and per-role model routing
 - [x] Per-role model specs (`provider/model[@thinking]`; providers:
-      anthropic, openai, openai-codex (subscription OAuth), claude-cli
-      (`claude -p`, subscription-allowance billed). Defaults: coordinator + workers
-      `openai/gpt-5.6-sol@xhigh`; verdict roles `claude-cli/opus`
-      (subscription-billed; cross-family vs both producers) — user
-      decisions 2026-07-31)
+      anthropic, openai, openai-codex (subscription OAuth), google,
+      claude-bridge (Agent SDK tool loop, coordinator-only), claude-cli
+      (`claude -p`), codex-cli, chatgpt-cli. Defaults all
+      Claude-subscription billed: coordinator
+      `claude-bridge/claude-opus-5@high`; workers + verdict roles
+      `claude-cli/opus` — user decision 2026-07-31; cross-family
+      verification is opt-in via env until other providers have quota)
 - [ ] Per-wake model routing and eval-driven per-role tuning (cheap wakes vs
       promotion wakes; cheap critics) — decided by eval evidence
 - [ ] Linux write-sandbox backend (bubblewrap/sandbox equivalent)
