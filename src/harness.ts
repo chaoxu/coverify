@@ -167,7 +167,13 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       const id = `w${String(nextId++).padStart(3, "0")}`;
       const evidenceDir = path.join(dir, "EVIDENCE", id);
       fs.mkdirSync(evidenceDir, { recursive: true });
-      store.append({ kind: "dispatch", id, mechanism: packet.mechanism, task: packet.task });
+      store.append({
+        kind: "dispatch",
+        id,
+        mechanism: packet.mechanism,
+        task: packet.task,
+        modelFamily: specLabel(roleModelSpec("worker")),
+      });
       const workerSpec = roleModelSpec("worker");
       const packetPrompt = `# Task\n\n${packet.task}\n\n# Deliverable\n\n${packet.deliverable}\n\n# Context\n\n${packet.context}`;
       let session: RoleSession | undefined;
