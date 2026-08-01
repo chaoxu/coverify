@@ -226,8 +226,10 @@ harnesses directly — `claude -p` / `codex exec` — via a harness-provided
 - [ ] Independent different-family audit path (fable-review for the Anthropic
       side; codex CLI as the different-family reviewer)
 - [ ] Citation lint (mechanics: cited evidence paths exist; never parses content)
-- [ ] Per-call token accounting in the journal (from pi usage events) —
-      prerequisite for the evals token gauges and per-role model routing
+- [x] Per-call token accounting in the journal (provider-reported usage on
+      completions, verification records, gate verdicts; cumulative per-wake
+      coordinator entry; CLI backends report none) — unblocks the evals
+      token gauges
 - [x] Per-role model specs (`provider/model[@thinking]`; providers:
       anthropic, openai, openai-codex (subscription OAuth), google,
       claude-bridge (Agent SDK tool loop, coordinator-only), claude-cli
