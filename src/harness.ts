@@ -915,12 +915,14 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       const handle = handles.get(p.id);
       if (!handle) return toolText(`no live agent ${p.id}`);
       if (!handle.session) return toolText(`${p.id} has no steerable session (CLI oracle or verification cadence); cancel or wait`);
-      handle.session.steer(p.message);
+      const delivered = await handle.session.steer(p.message);
+      if (!delivered) {
+        return toolText(
+          `${p.id} is idle (its turn just finished); steering dropped — its report arrives at the next wake regardless.`,
+        );
+      }
       appendJournal(dir, { kind: "note", note: `steered ${p.id}`, message: p.message });
-      return toolText(
-        `steering message queued for ${p.id} (dropped if the agent has already finished — ` +
-          `its report arrives at the next wake regardless).`,
-      );
+      return toolText(`steering message delivered to ${p.id} mid-run.`);
     },
   } as AgentTool;
 
@@ -1143,6 +1145,37 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           "These are user guidance, not a statement amendment: STATEMENT.md changes still " +
           "require 'coverify amend'."
         : "";
+    // Mid-turn steer: messages queued while the coordinator's turn runs are
+    // injected live via session steer instead of waiting a wake. The inbox is
+    // FIFO and append-only, so mid-turn arrivals are exactly the entries past
+    // the wake batch plus what this watcher already steered; delivery order
+    // is preserved by steering them in sequence. At-least-once: a steered
+    // message is consumed only if the turn succeeds — a failed turn loses the
+    // steered content with the session, so it redelivers at the next wake.
+    let steeredCount = 0;
+    let watcherBusy = false;
+    const inboxWatcher = setInterval(() => {
+      if (watcherBusy) return;
+      watcherBusy = true;
+      void (async () => {
+        try {
+          const fresh_ = peekUserMessages(dir).slice(userMessages.length + steeredCount);
+          for (const m of fresh_) {
+            const delivered = await coordinator!.steer(
+              `# Message from the user (verbatim)\n\n${m}\n\n(Steered mid-turn via 'coverify say'. ` +
+                "User guidance, not a statement amendment: STATEMENT.md changes still require 'coverify amend'.)",
+            );
+            if (!delivered) break; // turn just ended; the wake boundary takes over
+            steeredCount++;
+            appendJournal(dir, { kind: "note", note: `user message steered mid-turn: ${m}` });
+          }
+        } catch {
+          /* transport only; never break the campaign */
+        } finally {
+          watcherBusy = false;
+        }
+      })();
+    }, 1000);
     try {
       lastWakeText = await coordinator.ask(
         fresh
@@ -1150,7 +1183,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           : `${rereadBlock}${lostNote}${digest}${idleNudge}${compactionWarning}\n\n${newsBlock}${userBlock}`,
       );
       for (const m of userMessages) appendJournal(dir, { kind: "note", note: `user message: ${m}` });
-      consumeUserMessages(dir, userMessages.length);
+      consumeUserMessages(dir, userMessages.length + steeredCount);
     } catch (e) {
       // A hard provider failure on the coordinator's turn must not kill the
       // campaign with workers live: journal it and rebuild from the ledgers
@@ -1161,6 +1194,8 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       });
       coordinator = undefined;
       continue;
+    } finally {
+      clearInterval(inboxWatcher);
     }
     appendJournal(dir, {
       kind: "usage",

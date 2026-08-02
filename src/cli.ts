@@ -35,8 +35,8 @@ function usage(): never {
                                     gaps/stopReason, no content); without --session, one summary
                                     line per session; with it, TurnRecord JSONL on stdout
   coverify say "<message>" [--dir campaign]
-                                    queue a verbatim message for the coordinator's next wake
-                                    (delivered like a user turn in an interactive session)
+                                    send a verbatim message to the coordinator: steered into
+                                    its running turn within ~1s, else delivered at the next wake
   coverify amend [--dir campaign]   accept an explicit user amendment of STATEMENT.md
   coverify login <provider>         subscription OAuth (anthropic = Claude Pro/Max,
                                     openai-codex = ChatGPT; credential -> ~/.config/coverify/auth.json)
@@ -201,7 +201,7 @@ switch (command) {
     queueUserMessage(dir, message);
     console.error(
       `[coverify] message queued (${peekUserMessages(dir).length} pending); ` +
-        "delivered verbatim at the coordinator's next wake",
+        "steered into the coordinator's running turn within ~1s, else delivered at its next wake",
     );
     break;
   }

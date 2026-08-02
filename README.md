@@ -41,8 +41,9 @@ Optional user limits (the harness imposes none of its own): `--agent-limit N`
 (concurrent workers), `--max-wakes N` (pause after N coordinator wakes).
 
 **Interacting with a running campaign.** `coverify say "<message>"` (from any
-shell) queues guidance the coordinator receives verbatim at its next wake —
-the headless analog of typing to an interactive skill session; `status` lists
+shell) sends guidance the coordinator receives verbatim — steered into its
+running turn within about a second, or at the next wake if it is idle: the
+headless analog of typing to an interactive skill session. `status` lists
 pending messages. Ctrl-C is always safe (state is durable, supervised compute
 is reaped) and `resume` continues; `--max-wakes` chunks a campaign into
 supervised sittings; `amend` accepts a statement change. The campaign folder

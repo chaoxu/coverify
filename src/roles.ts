@@ -986,8 +986,9 @@ export interface RoleSession {
    *  older turns, keep a recent tail verbatim. The caller owns the policy
    *  and the contract's post-compaction reread rule. */
   compact?(customInstructions?: string): Promise<void>;
-  /** Inject a steering message while the session is running. */
-  steer(text: string): void;
+  /** Inject a steering message while the session is running. Resolves true
+   *  iff the session accepted it (false: session idle, message dropped). */
+  steer(text: string): Promise<boolean>;
   /** Abort the session's current run. */
   abort(): void;
 }
@@ -1207,10 +1208,14 @@ export async function createHarnessRoleSession(
       await harness.compact(customInstructions);
       await refresh();
     },
-    steer(text: string): void {
+    steer(text: string): Promise<boolean> {
       // AgentHarness.steer REJECTS when idle (worker just finished): a
-      // dropped steer is routine, an unhandled rejection kills the process.
-      harness.steer(text).catch(() => {});
+      // dropped steer is routine, an unhandled rejection kills the process —
+      // resolve to a delivered/dropped boolean so callers can act on it.
+      return harness.steer(text).then(
+        () => true,
+        () => false,
+      );
     },
     abort(): void {
       harness.abort().catch(() => {});
