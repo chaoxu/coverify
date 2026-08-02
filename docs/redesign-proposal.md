@@ -67,7 +67,7 @@ Verified enablers (pi-coding-agent 0.83.0, in our lockfile today):
 | --- | --- |
 | `createRoleSession` (Agent + wrapper) | landed as `createHarnessRoleSession` on pi's AgentHarness — not `createAgentSession`: the harness layer takes systemPrompt verbatim (prompt purity by construction, no resourceLoader/disk discovery), our Models instance, and plain AgentTools (roles.ts rationale; design.md) |
 | Cap-kill coordinator rebuild | pi compaction + a compaction-boundary message enforcing the launcher's reread rule ("after restart or context compaction, reread…") — contract-anticipated, arguably more faithful than cap-kill |
-| turns sidecars (`.coverify/turns/`) | derived view over pi session JSONL (full transcripts, branchable, resumable); kept as a durable per-turn transcript store for harness sessions (CLI single-shots have no session and emit no turn records) |
+| turns sidecars (`.coverify/turns/`) | retired (2026-08-02): the pi session JSONL trees contain everything the sidecars derived (sizes/usage/gaps/stopReason are pure functions of the stored messages); flat telemetry views are re-derived on demand instead of maintained |
 | in-memory coordinator state | durable session tree; crash-survivable mid-conversation |
 | ad-hoc error handling in salvage path | not taken — `retryAssistantCall`/`isContextOverflow`/`followUp` never landed; the salvage path kept its own error handling |
 | 50k char output slice | not taken — the slice remains `OUTPUT_LIMIT` (roles.ts), no `truncateTail` |
@@ -85,8 +85,8 @@ Verified enablers (pi-coding-agent 0.83.0, in our lockfile today):
 
 1. **Workers on the SDK.** Reasoners/technicians become `createAgentSession`
    instances (noTools:"all" + our tools, our prompts, sessions on disk).
-   Acceptance: a campaign runs end-to-end; session files replace worker
-   turns sidecars; conformance suite green; a runtime assertion checks
+   Acceptance: a campaign runs end-to-end; session files replace the
+   worker turns sidecars (since fully retired); conformance suite green; a runtime assertion checks
    `session.systemPrompt === contract+charge` (prompt purity as a test,
    not a hope).
 2. **Coordinator on the SDK with compaction.** Configure compaction
@@ -145,9 +145,9 @@ Round 2: fixes verified against pi source + live smokes → 048f0dd
 provider failure made recoverable; steer text honest). Converged.
 
 Deferred with eyes open: unify runRole onto a MemorySessionRepo harness
-session (deletes the second RoleSession implementation); decide the
-two-transcript-store question by either landing crash-resume from session
-trees or retiring the sidecars for harness sessions; prompt-purity is
+session (deletes the second RoleSession implementation); the
+two-transcript-store question was decided 2026-08-02 by retiring the
+sidecars (session trees are the single store); prompt-purity is
 source-verified + constructor-verbatim (no runtime getter exists to
 assert against — revisit on pi upgrade).
 

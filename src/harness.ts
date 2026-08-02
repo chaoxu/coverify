@@ -165,38 +165,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   const liveWorkers = (): number =>
     [...handles.keys()].filter((id) => id.startsWith("r") || id.startsWith("t")).length;
 
-  // Per-request telemetry sidecars (.coverify/turns/<name>.jsonl): one line
-  // per message with sizes, per-request usage, gaps, and stopReason — what
-  // was sent and generated, never prompt text. This is the record that makes
-  // cache effectiveness and empty-final-text failures diagnosable after the
-  // fact. Telemetry only: a write failure never affects the campaign.
-  const turnsDir = path.join(dir, ".coverify", "turns");
   const sessionsRoot = path.join(dir, ".coverify", "sessions");
-  // Incremental: message history is append-only, so only new records are
-  // written after the first dump (the full rewrite was quadratic over a
-  // long coordinator session — review 2026-08-02). First dump per name in
-  // this process truncates, clearing any stale file from a prior run.
-  const turnsWritten = new Map<string, number>();
-  const dumpTurns = (name: string, session?: RoleSession) => {
-    if (!session) return;
-    try {
-      fs.mkdirSync(turnsDir, { recursive: true });
-      const recs = session.turns();
-      const prev = turnsWritten.get(name);
-      const from = prev ?? 0;
-      if (recs.length <= from && prev !== undefined) return;
-      const text = recs
-        .slice(from)
-        .map((t) => JSON.stringify(t))
-        .join("\n") + "\n";
-      const file = path.join(turnsDir, `${name}.jsonl`);
-      if (prev === undefined) fs.writeFileSync(file, text);
-      else fs.appendFileSync(file, text);
-      turnsWritten.set(name, recs.length);
-    } catch {
-      /* observability must never break the run */
-    }
-  };
 
   /** Registers a settled-queue handle: the one async pattern every dispatch shares. */
   const registerHandle = (h: Omit<Handle, "settled">) => {
@@ -1051,7 +1020,6 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     // the contract says infrastructure failure is never PASS, and a failed run
     // must not count as a new report anywhere spend accounting reads the journal.
     const reportSections = reports.map((s) => {
-      dumpTurns(s.h.id, s.h.session);
       if (s.failed !== undefined) {
         store.append({ kind: "completion", id: s.h.id, failed: s.failed, usage: s.h.usage?.() });
         return (
@@ -1142,8 +1110,8 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           models,
         },
         {
-          // Matches the turns sidecar name (coordinator-<epoch>); the JSONL
-          // filename adds a timestamp, so restarts never collide.
+          // Epoch-numbered per rebuild; the JSONL filename adds a
+          // timestamp, so restarts never collide.
           sessionId: `coordinator-${coordinatorEpoch}`,
           sessionsRoot,
           cwd: dir,
@@ -1195,9 +1163,6 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       cumulative: coordinator.usage(),
       approxContextTokens: coordinator.approxTokens(),
     });
-    // Rewritten in full each wake: the file always mirrors the resident
-    // session; a rebuild starts a new epoch file.
-    dumpTurns(`coordinator-${coordinatorEpoch}`, coordinator);
     lostNote = "";
 
     // Frontier history: CURRENT_FRONTIER.md is rewritten by design, so the

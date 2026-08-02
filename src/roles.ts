@@ -1000,9 +1000,6 @@ export interface RoleSession {
   approxTokens(): number;
   /** Cumulative provider-reported token usage across the session's calls. */
   usage(): RoleUsage;
-  /** Per-message request telemetry (what was sent/generated per turn) — for
-   *  cache-effectiveness and failure diagnosis; never prompt text itself. */
-  turns(): TurnRecord[];
   /** In-place lossy compaction (harness-backed sessions only): summarize
    *  older turns, keep a recent tail verbatim. The caller owns the policy
    *  and the contract's post-compaction reread rule. */
@@ -1044,72 +1041,6 @@ function wireLogPayload(wirePath: string) {
   };
 }
 
-
-/** One message's telemetry: sizes + provider accounting, no content. For
- *  assistant messages `usage.input` is the uncached billed input of THAT
- *  request and `usage.cacheRead` the cached part (disjoint fields), so
- *  per-request cache-hit rate is cacheRead/(input+cacheRead); `gapMs` from
- *  the previous assistant message exposes cache-TTL effects; `stopReason`
- *  diagnoses truncation/empty-final-text failures. */
-interface TurnRecord {
-  i: number;
-  role: string;
-  ts?: number;
-  gapMs?: number;
-  textChars: number;
-  thinkingChars: number;
-  toolCalls: number;
-  stopReason?: string;
-  errorMessage?: string;
-  usage?: RoleUsage;
-}
-
-/** Walk a message history into TurnRecords (content sizes only). */
-function messagesToTurns(messages: readonly unknown[]): TurnRecord[] {
-  const out: TurnRecord[] = [];
-  let prevAssistantTs: number | undefined;
-  messages.forEach((m, i) => {
-    const msg = m as {
-      role?: string;
-      content?: unknown;
-      timestamp?: number;
-      stopReason?: string;
-      errorMessage?: string;
-      usage?: RoleUsage;
-    };
-    let textChars = 0;
-    let thinkingChars = 0;
-    let toolCalls = 0;
-    if (typeof msg.content === "string") textChars = msg.content.length;
-    else if (Array.isArray(msg.content)) {
-      for (const b of msg.content as { type?: string; text?: string; thinking?: string }[]) {
-        if (b.type === "text") textChars += b.text?.length ?? 0;
-        else if (b.type === "thinking") thinkingChars += b.thinking?.length ?? 0;
-        else if (b.type === "toolCall" || b.type === "tool_use" || b.type === "toolResult") toolCalls++;
-        else if (typeof b.text === "string") textChars += b.text.length;
-      }
-    }
-    const rec: TurnRecord = {
-      i,
-      role: msg.role ?? "?",
-      ts: msg.timestamp,
-      textChars,
-      thinkingChars,
-      toolCalls,
-      stopReason: msg.stopReason,
-      errorMessage: msg.errorMessage,
-      usage: msg.usage,
-    };
-    if (msg.role === "assistant") {
-      if (prevAssistantTs !== undefined && msg.timestamp !== undefined) {
-        rec.gapMs = msg.timestamp - prevAssistantTs;
-      }
-      if (msg.timestamp !== undefined) prevAssistantTs = msg.timestamp;
-    }
-    out.push(rec);
-  });
-  return out;
-}
 
 /** Provider-reported token usage (pi-ai Usage, summed; official CLIs parsed
  *  from their JSON output) — mechanics only; nothing reads this except the
@@ -1261,9 +1192,9 @@ export async function createHarnessRoleSession(
   // Sync RoleSession surface over async session storage: the message cache
   // refreshes after every completed run (telemetry reads between runs).
   // Two views on purpose: `allMessages` (every message ever, across all
-  // branches — usage totals and turn telemetry never un-count compacted
-  // spend) vs `contextMessages` (session.buildContext() — what the model
-  // actually sees next call).
+  // branches — usage totals never un-count compacted spend) vs
+  // `contextMessages` (session.buildContext() — what the model actually
+  // sees next call).
   let allMessages: AgentMessage[] = [];
   let contextMessages: AgentMessage[] = [];
   let compactionUsage: RoleUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -1320,9 +1251,6 @@ export async function createHarnessRoleSession(
     },
     usage(): RoleUsage {
       return addUsage(sumMessagesUsage(allMessages), compactionUsage);
-    },
-    turns(): TurnRecord[] {
-      return messagesToTurns(allMessages);
     },
     async compact(customInstructions?: string): Promise<void> {
       await harness.compact(customInstructions);
