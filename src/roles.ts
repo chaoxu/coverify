@@ -984,26 +984,6 @@ function wireLogPayload(wirePath: string) {
   };
 }
 
-function wireLogResponse(wirePath: string) {
-  return (r: { status: number; headers: Record<string, string> }) => {
-    try {
-      const h = r.headers;
-      fs.appendFileSync(
-        wirePath,
-        JSON.stringify({
-          ts: Date.now(),
-          kind: "response",
-          status: r.status,
-          rateLimit: Object.fromEntries(
-            Object.entries(h).filter(([k]) => k.toLowerCase().includes("ratelimit") || k.toLowerCase() === "retry-after"),
-          ),
-        }) + "\n",
-      );
-    } catch {
-      /* telemetry only */
-    }
-  };
-}
 
 /** One message's telemetry: sizes + provider accounting, no content. For
  *  assistant messages `usage.input` is the uncached billed input of THAT
@@ -1141,10 +1121,7 @@ export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: stri
     // streamFn wrapping needed (pi source review, 2026-08-02).
     sessionId: cacheSessionId,
     ...(process.env.COVERIFY_WIRE_LOG
-      ? {
-          onPayload: wireLogPayload(process.env.COVERIFY_WIRE_LOG),
-          onResponse: wireLogResponse(process.env.COVERIFY_WIRE_LOG),
-        }
+      ? { onPayload: wireLogPayload(process.env.COVERIFY_WIRE_LOG) }
       : {}),
   });
   return {
@@ -1225,16 +1202,16 @@ export async function createHarnessRoleSession(
   const wirePath = process.env.COVERIFY_WIRE_LOG;
   if (wirePath) {
     const logPayload = wireLogPayload(wirePath);
-    const logResponse = wireLogResponse(wirePath);
     harness.on("before_provider_payload", (e) => {
       logPayload((e as { payload?: unknown }).payload, (e as { model?: unknown }).model);
       return undefined;
     });
-    harness.on("after_provider_response", (e) => {
-      const r = e as { status?: number; headers?: Record<string, string> };
-      logResponse({ status: r.status ?? 0, headers: r.headers ?? {} });
-      return undefined;
-    });
+    // Response-side records (status, rate-limit headers) are NOT available:
+    // pi 0.83.0 types after_provider_response but never emits it on this
+    // provider path (verified empirically 2026-08-02 — neither .on() nor
+    // subscribe() ever sees it, and the Agent-path onResponse never fired
+    // either). Revisit on pi upgrade; until then the wire log is
+    // request-side only.
   }
   // Sync RoleSession surface over async session storage: the message cache
   // refreshes after every completed run (telemetry reads between runs).

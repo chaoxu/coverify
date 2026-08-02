@@ -954,7 +954,10 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       if (!handle.session) return toolText(`${p.id} has no steerable session (CLI oracle or verification cadence); cancel or wait`);
       handle.session.steer(p.message);
       appendJournal(dir, { kind: "note", note: `steered ${p.id}`, message: p.message });
-      return toolText(`steering message delivered to ${p.id}.`);
+      return toolText(
+        `steering message queued for ${p.id} (dropped if the agent has already finished — ` +
+          `its report arrives at the next wake regardless).`,
+      );
     },
   } as AgentTool;
 
@@ -1166,11 +1169,23 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         "follow; the compaction summary never overrides them.\n\n" +
         `${resumeBundle(dir)}\n\n---\n\n`
       : "";
-    lastWakeText = await coordinator.ask(
-      fresh
-        ? `${resumeBundle(dir)}\n\n---\n\nCampaign directory: ${dir}\n${lostNote}${digest}${idleNudge}\n\n${newsBlock}`
-        : `${rereadBlock}${lostNote}${digest}${idleNudge}${compactionWarning}\n\n${newsBlock}`,
-    );
+    try {
+      lastWakeText = await coordinator.ask(
+        fresh
+          ? `${resumeBundle(dir)}\n\n---\n\nCampaign directory: ${dir}\n${lostNote}${digest}${idleNudge}\n\n${newsBlock}`
+          : `${rereadBlock}${lostNote}${digest}${idleNudge}${compactionWarning}\n\n${newsBlock}`,
+      );
+    } catch (e) {
+      // A hard provider failure on the coordinator's turn must not kill the
+      // campaign with workers live: journal it and rebuild from the ledgers
+      // (the restart rule is already the recovery path).
+      appendJournal(dir, {
+        kind: "note",
+        note: `coordinator turn failed (${String(e).slice(0, 200)}); rebuilding via restart rule`,
+      });
+      coordinator = undefined;
+      continue;
+    }
     appendJournal(dir, {
       kind: "usage",
       role: "coordinator",
