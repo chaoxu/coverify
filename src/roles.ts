@@ -381,7 +381,7 @@ function processSweep(
  * setsid-nohup search jobs memory-exhausted saturn into a kernel panic on
  * 2026-08-01.
  */
-function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
+export function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
   return {
     name: "run_script",
     label: "Run scripts",

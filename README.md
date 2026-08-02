@@ -136,6 +136,12 @@ project-level promoted-results index; that would be a second proof-state
 system. Keep campaigns out of the system temp tree (the write sandbox
 blanket-allows temp).
 
+**Interactive inspection:** load `src/pi-extension.ts` in a vanilla pi
+session (extensions dir or `extensionFactories`) to get coverify's
+supervised `run_script` and a read-only `campaign_status` tool over any
+campaign directory — inspection only; gates, cadence, and promotion always
+require this CLI.
+
 See `docs/design.md` for the full conformance table (each enforcement →
 launcher clause) and the adversarial review record, and
 `docs/skill-feedback.md` for the skill-improvement ledger.

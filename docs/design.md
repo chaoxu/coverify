@@ -159,7 +159,18 @@ gates.ts         dispatch gate, idea-gate ledger, two-stage verification, promot
 harness.ts       handle table, event loop, wakes; the only persistent process
 trace.ts         journal -> self-contained HTML timeline (read-only observability)
 trace-page.ts    that page's markup, styles, and view code
+pi-extension.ts  interactive-pi boundary layer: supervised run_script +
+                 read-only campaign_status (phase 3; never writes trusted state)
 ```
+
+Observability layering (redesign phases 1–3): the **pi session JSONL trees**
+under `.coverify/sessions/` are the authoritative per-agent transcripts
+(full content, branchable, crash-survivable); the `.coverify/turns/`
+sidecars are a derived flat view (sizes/usage/gaps/stopReason, no content)
+kept because they also cover CLI single-shots and are grep-friendly; the
+journal remains the event index. A campaign directory is now openable in
+three harnesses: coverify headless, the raw skill in Codex, and interactive
+pi with `src/pi-extension.ts` loaded.
 
 - **Coordinator**: resident across wakes — matching how the skill runs in a
   live Codex/Claude Code session — as a durable pi AgentHarness session
