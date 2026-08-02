@@ -17,6 +17,8 @@ export interface TraceAgent {
   start: number;
   end?: number;
   cancelled?: boolean;
+  /** Infrastructure-failure reason (failed-flagged completion); no report exists. */
+  failed?: string;
   mechanism: string;
   /** The packet, as journaled. Fields beyond `task` exist only for campaigns
    *  run by a harness revision that recorded them; older runs leave them
@@ -94,6 +96,7 @@ export function traceData(dir: string): TraceData {
         a.end = t;
         a.cancelled = Boolean(g.cancelled);
         a.report = g.report;
+        if (g.failed !== undefined) a.failed = String(g.failed);
       }
     } else if (
       g?.kind === "audit" ||
@@ -195,7 +198,14 @@ export function perfettoTrace(dir: string): object {
       ts: us(a.start),
       dur: us((a.end ?? a.start + 60) - a.start),
       cat: open ? "agent,lost" : "agent",
-      args: { role: a.role, mechanism: a.mechanism, task: a.task, model: a.model, cancelled: a.cancelled ?? false },
+      args: {
+        role: a.role,
+        mechanism: a.mechanism,
+        task: a.task,
+        model: a.model,
+        cancelled: a.cancelled ?? false,
+        failed: a.failed,
+      },
     });
   });
 

@@ -25,7 +25,7 @@ export function initCampaign(dir: string, statement: string): void {
   );
   fs.writeFileSync(
     path.join(dir, "CURRENT_FRONTIER.md"),
-    "# CURRENT_FRONTIER\n\nCampaign initialized; no waves dispatched yet.\n",
+    "# CURRENT_FRONTIER\n\nCampaign initialized; nothing dispatched yet.\n",
   );
   // Field templates are scaffolding, not schema: they quote the launcher's
   // required fields so entry format survives coordinator changes. Nothing
@@ -49,7 +49,7 @@ export function initCampaign(dir: string, statement: string): void {
   );
   fs.writeFileSync(
     path.join(dir, "PROCESS_LESSONS.md"),
-    "# PROCESS_LESSONS\n\n<!-- actionable = changes how a future wave/test/gate/allocation " +
+    "# PROCESS_LESSONS\n\n<!-- actionable = changes how a future fan-out/test/gate/allocation " +
       "is run, else deferred with an activation test; mathematical facts belong in the ledgers; " +
       "mark cross-campaign lessons 'graduate' -->\n",
   );
@@ -126,6 +126,25 @@ export function sha256File(p: string): string {
  * reread the skill, STATEMENT.md, CURRENT_FRONTIER.md, actionable lessons,
  * the registry index, and every detailed claim actually reused."
  */
+/**
+ * Statements-only projection of PROVED.md for prompt contexts: each entry is
+ * cut at its provenance metadata (**Dependencies:** / **Audit artifacts:**),
+ * keeping the heading, theorem statements, and scope. The ledger itself is
+ * untouched — this slims what rides into gate/audit/reconstruction prompts
+ * (provenance is dispute-time material; the toolful coordinator can always
+ * read the full file). Pure context assembly: semantics-invisible mechanics.
+ */
+export function promotedStatementsView(dir: string): string {
+  const full = readLedger(dir, "PROVED.md");
+  return full
+    .split(/\n(?=## )/)
+    .map((entry) => {
+      const cut = entry.search(/\n\*\*(Dependencies|Audit artifacts):\*\*/);
+      return cut < 0 ? entry.trimEnd() : entry.slice(0, cut).trimEnd();
+    })
+    .join("\n\n");
+}
+
 export function resumeBundle(dir: string): string {
   return [
     readLedger(dir, "STATEMENT.md"),

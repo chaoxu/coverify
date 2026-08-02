@@ -749,8 +749,7 @@ export async function runRole(run: RoleRun): Promise<RoleResult> {
     if (run.workspace || run.extraTools) {
       throw new Error("CLI backends support single-shot verdict roles only (no tools)");
     }
-    const text = await runCliRole(run.spec.provider, run.spec.modelId, `${systemText(run)}\n\n---\n\n${run.prompt}`);
-    return { text };
+    return runCliRole(run.spec.provider, run.spec.modelId, `${systemText(run)}\n\n---\n\n${run.prompt}`);
   }
   const session = createRoleSession(run);
   const text = await session.ask(run.prompt);
@@ -761,22 +760,39 @@ export function isCliProvider(p: string): p is keyof typeof CLI_BACKENDS {
   return p in CLI_BACKENDS;
 }
 
+interface CliBackend {
+  env: string;
+  cmd: string;
+  /** Where the final text lives: stdout raw, stdout JSON, an {out} file, or the oracle's JSON. */
+  output: "stdout" | "claude-json" | "outfile" | "oracle-json";
+  /** Backend-specific stdout-side usage parser (telemetry only), orthogonal to `output`. */
+  usage?: (stdout: string) => RoleUsage | undefined;
+}
+
 /** Subscription-billed official CLIs as verdict-role backends. Command
  *  templates are env-overridable so CLI flag drift never needs a harness
- *  release; {model} and {out} are substituted. */
-export const CLI_BACKENDS = {
-  "claude-cli": { env: "COVERIFY_CLAUDE_CMD", cmd: "claude -p --model {model}", output: "stdout" },
+ *  release; {model} and {out} are substituted. Both official CLIs are asked
+ *  for machine-readable output so per-call token usage reaches the journal
+ *  (claude: result JSON on stdout; codex: JSONL events with turn usage);
+ *  an env-overridden template without those flags degrades to text-only. */
+export const CLI_BACKENDS: Record<"claude-cli" | "codex-cli" | "chatgpt-cli", CliBackend> = {
+  "claude-cli": {
+    env: "COVERIFY_CLAUDE_CMD",
+    cmd: "claude -p --model {model} --output-format json",
+    output: "claude-json",
+  },
   "codex-cli": {
     env: "COVERIFY_CODEX_CMD",
-    cmd: "codex exec --model {model} --sandbox read-only --skip-git-repo-check --output-last-message {out} -",
+    cmd: "codex exec --json --model {model} --sandbox read-only --skip-git-repo-check --output-last-message {out} -",
     output: "outfile",
+    usage: codexJsonlUsage,
   },
   /** Chao's chatgpt.com daemon CLI (gitea chaoxu/chatgpt-cli): the only road
    *  to ChatGPT-Pro-only models (gpt-5.6-pro) — the deep one-shot prover.
    *  The daemon picks the actual model; the spec's modelId is a provenance
    *  label. Emits {ok, text, error} JSON on stdout. */
   "chatgpt-cli": { env: "COVERIFY_CHATGPT_CMD", cmd: "chatgpt-cli oracle --quiet --timeout 6000", output: "oracle-json" },
-} as const;
+};
 
 export function cliBackendCommand(provider: keyof typeof CLI_BACKENDS): string {
   const backend = CLI_BACKENDS[provider];
@@ -787,18 +803,68 @@ function systemText(run: Pick<RoleRun, "contract" | "charge">): string {
   return `The campaign contract below governs this work. Follow it exactly.\n\n<contract>\n${run.contract}\n</contract>\n\n${run.charge}`;
 }
 
+/** claude -p --output-format json result payload (the fields we read). */
+interface ClaudeJsonResult {
+  is_error?: boolean;
+  result?: string;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  };
+}
+
+/** Sum token usage from codex --json JSONL events ({type:"turn.completed"}). */
+function codexJsonlUsage(stdout: string): RoleUsage | undefined {
+  let found = false;
+  let input = 0;
+  let output = 0;
+  let cacheRead = 0;
+  let cacheWrite = 0;
+  let reasoning = 0;
+  for (const line of stdout.split("\n")) {
+    if (!line.includes('"turn.completed"')) continue;
+    let event: {
+      type?: string;
+      usage?: {
+        input_tokens?: number;
+        cached_input_tokens?: number;
+        cache_write_input_tokens?: number;
+        output_tokens?: number;
+        reasoning_output_tokens?: number;
+      };
+    };
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (event.type !== "turn.completed" || !event.usage) continue;
+    found = true;
+    input += event.usage.input_tokens ?? 0;
+    output += event.usage.output_tokens ?? 0;
+    cacheRead += event.usage.cached_input_tokens ?? 0;
+    cacheWrite += event.usage.cache_write_input_tokens ?? 0;
+    reasoning += event.usage.reasoning_output_tokens ?? 0;
+  }
+  return found ? { input, output, cacheRead, cacheWrite, reasoning } : undefined;
+}
+
 /**
  * Run one single-shot role through an official subscription CLI. cwd is a
  * fresh empty temp dir; the CLI's own tools find nothing there
  * (instructed-only isolation — recorded honestly by callers). No timeout:
  * audit and reconstruction work is never clocked. Output comes from the
  * {out} file when the template names one (codex), else stdout (claude).
+ * Per-call token usage is parsed from the CLI's machine-readable output
+ * when present (telemetry only — absence never fails the call).
  */
 function runCliRole(
   provider: keyof typeof CLI_BACKENDS,
   modelId: string,
   fullPrompt: string,
-): Promise<string> {
+): Promise<{ text: string; usage?: RoleUsage }> {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "coverify-cli-"));
   const outFile = path.join(cwd, "last-message.txt");
   const backend = CLI_BACKENDS[provider];
@@ -820,16 +886,35 @@ function runCliRole(
           if (code !== 0 || !payload.ok || !payload.text?.trim()) {
             return reject(new Error(`${provider} failed: ${payload.error ?? `exit ${code}`}`));
           }
-          return resolve(payload.text.trim());
+          return resolve({ text: payload.text.trim() });
         } catch {
           return reject(new Error(`${provider} returned non-JSON output (exit ${code}): ${err.slice(0, 300)}`));
         }
       }
       if (code !== 0) return reject(new Error(`${provider} exited ${code}: ${err.slice(0, 500)}`));
-      if (backend.output === "outfile" && fs.existsSync(outFile)) {
-        return resolve(fs.readFileSync(outFile, "utf-8").trim());
+      if (backend.output === "claude-json") {
+        try {
+          const payload = JSON.parse(out) as ClaudeJsonResult;
+          if (payload.is_error) return reject(new Error(`${provider} reported an error result`));
+          const u = payload.usage;
+          return resolve({
+            text: (payload.result ?? "").trim(),
+            usage: u && {
+              input: u.input_tokens ?? 0,
+              output: u.output_tokens ?? 0,
+              cacheRead: u.cache_read_input_tokens ?? 0,
+              cacheWrite: u.cache_creation_input_tokens ?? 0,
+            },
+          });
+        } catch {
+          // Env-overridden template without --output-format json: plain text.
+          return resolve({ text: out.trim() });
+        }
       }
-      resolve(out.trim());
+      if (backend.output === "outfile" && fs.existsSync(outFile)) {
+        return resolve({ text: fs.readFileSync(outFile, "utf-8").trim(), usage: backend.usage?.(out) });
+      }
+      resolve({ text: out.trim() });
     });
     child.stdin.write(fullPrompt);
     child.stdin.end();
@@ -842,14 +927,84 @@ export interface RoleSession {
   approxTokens(): number;
   /** Cumulative provider-reported token usage across the session's calls. */
   usage(): RoleUsage;
+  /** Per-message request telemetry (what was sent/generated per turn) — for
+   *  cache-effectiveness and failure diagnosis; never prompt text itself. */
+  turns(): TurnRecord[];
   /** Inject a steering message while the session is running. */
   steer(text: string): void;
   /** Abort the session's current run. */
   abort(): void;
 }
 
-/** Provider-reported token usage (pi-ai Usage, summed). CLI backends report
- *  none — mechanics only; nothing reads this except the journal. */
+/** One message's telemetry: sizes + provider accounting, no content. For
+ *  assistant messages `usage.input` is the uncached billed input of THAT
+ *  request and `usage.cacheRead` the cached part (disjoint fields), so
+ *  per-request cache-hit rate is cacheRead/(input+cacheRead); `gapMs` from
+ *  the previous assistant message exposes cache-TTL effects; `stopReason`
+ *  diagnoses truncation/empty-final-text failures. */
+export interface TurnRecord {
+  i: number;
+  role: string;
+  ts?: number;
+  gapMs?: number;
+  textChars: number;
+  thinkingChars: number;
+  toolCalls: number;
+  stopReason?: string;
+  errorMessage?: string;
+  usage?: RoleUsage;
+}
+
+/** Walk an agent's message history into TurnRecords (content sizes only). */
+function agentTurns(agent: Agent): TurnRecord[] {
+  const out: TurnRecord[] = [];
+  let prevAssistantTs: number | undefined;
+  agent.state.messages.forEach((m, i) => {
+    const msg = m as {
+      role?: string;
+      content?: unknown;
+      timestamp?: number;
+      stopReason?: string;
+      errorMessage?: string;
+      usage?: RoleUsage;
+    };
+    let textChars = 0;
+    let thinkingChars = 0;
+    let toolCalls = 0;
+    if (typeof msg.content === "string") textChars = msg.content.length;
+    else if (Array.isArray(msg.content)) {
+      for (const b of msg.content as { type?: string; text?: string; thinking?: string }[]) {
+        if (b.type === "text") textChars += b.text?.length ?? 0;
+        else if (b.type === "thinking") thinkingChars += b.thinking?.length ?? 0;
+        else if (b.type === "toolCall" || b.type === "tool_use" || b.type === "toolResult") toolCalls++;
+        else if (typeof b.text === "string") textChars += b.text.length;
+      }
+    }
+    const rec: TurnRecord = {
+      i,
+      role: msg.role ?? "?",
+      ts: msg.timestamp,
+      textChars,
+      thinkingChars,
+      toolCalls,
+      stopReason: msg.stopReason,
+      errorMessage: msg.errorMessage,
+      usage: msg.usage,
+    };
+    if (msg.role === "assistant") {
+      if (prevAssistantTs !== undefined && msg.timestamp !== undefined) {
+        rec.gapMs = msg.timestamp - prevAssistantTs;
+      }
+      if (msg.timestamp !== undefined) prevAssistantTs = msg.timestamp;
+    }
+    out.push(rec);
+  });
+  return out;
+}
+
+/** Provider-reported token usage (pi-ai Usage, summed; official CLIs parsed
+ *  from their JSON output) — mechanics only; nothing reads this except the
+ *  journal. */
 export interface RoleUsage {
   input: number;
   output: number;
@@ -874,7 +1029,7 @@ function agentUsage(agent: Agent): RoleUsage {
 
 export interface RoleResult {
   text: string;
-  /** Undefined for CLI backends (no usage reporting). */
+  /** Undefined when the backend reported no usage (e.g. an env-overridden CLI template without JSON output). */
   usage?: RoleUsage;
 }
 
@@ -909,6 +1064,9 @@ export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: stri
     async ask(prompt: string): Promise<string> {
       await agent.prompt(prompt);
       return finalText(agent);
+    },
+    turns(): TurnRecord[] {
+      return agentTurns(agent);
     },
     approxTokens(): number {
       let chars = 0;
@@ -954,9 +1112,13 @@ technician dispatch. If your packet carries a literature
 question you also have literature_search (a delegated librarian with web access — archive and
 cite its reports, and treat its claims as leads, not established results); scratch
 work may be edited freely, but never edit a file you have already cited or reported — semantic
-changes to citable artifacts get a new revision-suffixed filename. Return a conclusion-first
-report: the deliverable — a proved lemma, explicit construction, counterexample/certificate — or
-the precise failing implication with evidence. Status reports and vague optimism are not
+changes to citable artifacts get a new revision-suffixed filename. Per the contract, a candidate
+revision contains only content submitted for promotion: state every unboundedly quantified claim
+as an explicit theorem or lemma with its hypotheses and quantifiers exposed, keep finite directly
+checkable content (a particular witness, its arithmetic, bounded tables) clearly separate from the
+theorems it supports, and put supporting notes in ordinary evidence artifacts instead. Return a
+conclusion-first report: the deliverable — a proved lemma, explicit construction,
+counterexample/certificate — or the precise failing implication with evidence. Status reports and vague optimism are not
 deliverables. Your packet may cite evidence paths and ledger locations; read them with your
 read/grep tools when
 your task needs depth — the packet is curated context, not the limit of what you may consult.`,
@@ -976,7 +1138,12 @@ line must be exactly one of: IDEA PASS / IDEA FAIL / IDEA REPAIR. Then give the 
 contract requires for that verdict.`,
   hostileAuditor: `You are stage 1 of the verification cadence: a fresh hostile auditor. You receive
 the exact candidate revision, its statement, declared dependencies, and the current PROVED.md so
-you can check what is actually promoted. Refute the candidate. Your VERY FIRST line must be exactly
+you can check what is actually promoted. Refute the candidate. Per the contract, finite directly
+checkable content (a particular witness and its arithmetic, bounded tables) is verified by YOUR
+outright check — reconstruction structurally cannot reach it, so your verification of it is the
+only one it gets; and an unboundedly quantified claim asserted only in passing prose, rather than
+as an explicit theorem or lemma with exposed hypotheses and quantifiers, is a concrete defect.
+Your VERY FIRST line must be exactly
 VERDICT: PASS or VERDICT: FAIL; then the smallest concrete gap (on FAIL) or what you checked.`,
   bundleCertifier: `You certify a reconstruction bundle before blind reconstruction begins. You
 receive the candidate and the proposed bundle (key ideas + allowed sources). Certify that no bundle
@@ -992,7 +1159,12 @@ independent reconstruction and the candidate's statement, conclusions, and decla
 Map the reconstruction to every conclusion and declared dependency of the candidate. Sameness of
 argument is NOT required: a reconstruction establishing every conclusion by a different valid
 route, within the declared dependencies and the reconstruction bundle, is a PASS — independence is
-the point. A concrete mismatch is: a conclusion not established (including established only in a
+the point. Per the contract, the reconstruction owes exactly the candidate's theorem-class claims:
+for an existential theorem, a reconstruction establishing existence through a different valid
+witness is PASS, and finite directly checkable content verified at stage 1 (a particular witness,
+its arithmetic, bounded tables) is not a mismatch when absent from the reconstruction, provided
+every theorem-class claim it supports is established. A concrete mismatch is: a theorem-class
+conclusion not established (including established only in a
 weaker or nearby form), or reliance on material outside the declared dependencies and bundle. Use
 the frozen statement and the candidate's declared contract; do not invent a stronger output
 requirement and fail the candidate for omitting it. Your VERY FIRST line must be exactly

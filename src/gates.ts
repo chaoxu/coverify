@@ -101,6 +101,23 @@ export function parseFirstLineVerdict(
   return tokens.find((t) => first.toUpperCase() === t.toUpperCase());
 }
 
+/**
+ * Platform-enforced reconstruction blindness: refuse to dispatch a
+ * reconstructor whose rendered prompt contains the candidate text. This is
+ * what lets the journal's "candidate file withheld by harness (enforced)"
+ * claim be a checked fact for whole-file interpolation rather than testimony
+ * (launcher: self-attestation does not establish blindness). Partial
+ * paraphrase inside keyIdeas remains the bundle certifier's judgment.
+ */
+export function assertCandidateWithheld(renderedPrompt: string, candidate: string): void {
+  const c = candidate.trim();
+  if (c.length > 0 && renderedPrompt.includes(c)) {
+    throw new Error(
+      "blindness violation: the reconstruction prompt contains the candidate text; refusing to dispatch",
+    );
+  }
+}
+
 export interface DispatchPacket {
   mechanism: string;
   task: string;
@@ -144,7 +161,7 @@ export interface GateDecision {
 
 const FAILED_CHECK_RE = /^(no close prior route|closest prior route is .+; this differs materially because .+)/is;
 
-/** Latest verdict wins: a mechanism re-gated to IDEA FAIL/REPAIR loses wave
+/** Latest verdict wins: a mechanism re-gated to IDEA FAIL/REPAIR loses fan-out
  *  permission it earned earlier, or the gate could never be re-armed. */
 function ideaGatePassed(store: GateStore, mechanism: string): boolean {
   return (
@@ -156,8 +173,9 @@ function ideaGatePassed(store: GateStore, mechanism: string): boolean {
 }
 
 /**
- * Wave gate. Launcher: "Do not allow recursive subagent fan-out or a large
- * route wave before the parent mechanism receives IDEA PASS". Enforced only
+ * Fan-out gate. Launcher: "Do not allow recursive subagent fan-out or broad
+ * concurrent exploration of a route before the parent mechanism receives
+ * IDEA PASS". Enforced only
  * at the unambiguous threshold — a second CONCURRENT worker on the same
  * mechanism. History-based cases (sequential retries) are the coordinator's
  * judgment; the harness attaches an advisory reminder instead of refusing.
@@ -215,13 +233,13 @@ export function checkDispatch(
       allowed: false,
       reason:
         `mechanism "${packet.mechanism}" already has ${liveOnMechanism} concurrent worker(s) and no ` +
-        "IDEA PASS on file; a multi-worker wave requires the idea gate first (dispatch_gate_critic).",
+        "IDEA PASS on file; concurrent workers on one mechanism require the idea gate first (dispatch_gate_critic).",
     };
   }
   const warning =
     !ideaGatePassed(store, packet.mechanism) && wasDispatchedBefore(store, packet.mechanism)
       ? `note: mechanism "${packet.mechanism}" was explored before without an IDEA PASS on file; ` +
-        "the contract requires gating before investing a follow-up wave — your judgment whether this is one."
+        "the contract requires gating before investing follow-up workers — your judgment whether this is that."
       : undefined;
   return { allowed: true, warning };
 }

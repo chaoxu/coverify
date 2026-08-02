@@ -6,6 +6,7 @@ import { Type } from "typebox";
 import {
   appendJournal,
   newEvidencePath,
+  promotedStatementsView,
   readLedger,
   resumeBundle,
   sha256File,
@@ -20,6 +21,7 @@ import {
   GateStore,
   parseFirstLineVerdict,
   recordGateVerdict,
+  assertCandidateWithheld,
   statementHash,
   type ReasonerPacket,
   type TechnicianPacket,
@@ -55,7 +57,8 @@ interface Handle {
   promise: Promise<string>;
   /** Absent for single-shot CLI workers (oracle attempts) — not steerable/abortable. */
   session?: RoleSession;
-  /** Provider-reported usage, read at completion (undefined for CLI oracles). */
+  /** Provider- or CLI-reported usage, read at completion (undefined when the
+   *  backend reported none). */
   usage?: () => RoleUsage | undefined;
   /** Resolves (never rejects) when the handle finishes; set by registerHandle. */
   settled: Promise<void>;
@@ -72,7 +75,7 @@ const NOOP_WAKE_PAUSE = 3;
  *  via the launcher's restart rule (reread statement, frontier, lessons,
  *  registry index). Mechanics: the cap changes cost, not semantics, because
  *  every decision must be externalized to the ledgers regardless. */
-const COORDINATOR_CONTEXT_TOKENS = Number(process.env.COVERIFY_COORDINATOR_CONTEXT_TOKENS ?? 150_000);
+const COORDINATOR_CONTEXT_TOKENS = Number(process.env.COVERIFY_COORDINATOR_CONTEXT_TOKENS ?? 300_000);
 
 function harnessRevision(): string {
   try {
@@ -120,7 +123,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   }
 
   const handles = new Map<string, Handle>();
-  const settledQueue: { h: Handle; report: string }[] = [];
+  const settledQueue: { h: Handle; report: string; failed?: string }[] = [];
   let nextId = store.maxHandleId() + 1;
   let activityThisWake = 0;
   let declaration: { state: "pause" | "complete"; reason: string } | undefined;
@@ -153,16 +156,50 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   const liveOnMechanism = (mechanism: string): number =>
     [...handles.values()].filter((h) => h.mechanism === mechanism).length;
 
+  // The user's --agent-limit caps concurrent WORKERS (reasoners r*, technicians
+  // t*). Judges — gate critics g* and verification cadences v* — are also
+  // handles but must not consume the workers' budget: ten pending verdicts
+  // should never block a dispatch.
+  const liveWorkers = (): number =>
+    [...handles.keys()].filter((id) => id.startsWith("r") || id.startsWith("t")).length;
+
+  // Per-request telemetry sidecars (.coverify/turns/<name>.jsonl): one line
+  // per message with sizes, per-request usage, gaps, and stopReason — what
+  // was sent and generated, never prompt text. This is the record that makes
+  // cache effectiveness and empty-final-text failures diagnosable after the
+  // fact. Telemetry only: a write failure never affects the campaign.
+  const turnsDir = path.join(dir, ".coverify", "turns");
+  const dumpTurns = (name: string, session?: RoleSession) => {
+    if (!session) return;
+    try {
+      fs.mkdirSync(turnsDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(turnsDir, `${name}.jsonl`),
+        session
+          .turns()
+          .map((t) => JSON.stringify(t))
+          .join("\n") + "\n",
+      );
+    } catch {
+      /* observability must never break the run */
+    }
+  };
+
   /** Registers a settled-queue handle: the one async pattern every dispatch shares. */
   const registerHandle = (h: Omit<Handle, "settled">) => {
     const handle = h as Handle;
     // A cancelled handle is removed from the table; its late report (or
-    // failure) must not resurface at a later wake.
-    const queue = (report: string) => {
-      if (handles.has(handle.id)) settledQueue.push({ h: handle, report });
+    // failure) must not resurface at a later wake. Failure is classified here,
+    // where the promise settles — a rejected call or empty final text is an
+    // infrastructure failure — so `failed` is the single source of truth and
+    // `failed` set ⟺ no usable report.
+    const queue = (report: string, failed?: string) => {
+      if (handles.has(handle.id)) settledQueue.push({ h: handle, report, failed });
     };
-    handle.settled = handle.promise.then(queue, (err: unknown) =>
-      queue(`[${handle.id} failed: ${String(err)}]`),
+    handle.settled = handle.promise.then(
+      (report) =>
+        queue(report, report.trim() === "" ? "empty report (no final text returned)" : undefined),
+      (err: unknown) => queue("", String(err)),
     );
     handles.set(handle.id, handle);
     activityThisWake++;
@@ -189,7 +226,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       role,
       packet,
       opts.userAgentLimit,
-      handles.size,
+      liveWorkers(),
       liveOnMechanism(packet.mechanism),
     );
     if (!decision.allowed) return toolText(`DISPATCH REFUSED: ${decision.reason}`);
@@ -259,7 +296,21 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         spec,
         models,
       });
-      promise = session.ask(`Assigned evidence directory: ${evidenceDir}\n\n${packetPrompt}`);
+      const live = session;
+      promise = live.ask(`Assigned evidence directory: ${evidenceDir}\n\n${packetPrompt}`).then(
+        // Salvage nudge: deep-reasoning runs sometimes end without emitting a
+        // final message (observed live 2026-08-02: four @max scouts, ~2.6M
+        // tokens, empty final text). The session context is intact at this
+        // point, so ask once for the report before the settle-side classifier
+        // writes the run off as an infrastructure failure.
+        (text) =>
+          text.trim() !== ""
+            ? text
+            : live.ask(
+                "Your previous turn ended with no final message. Emit your complete " +
+                  "conclusion-first report now, per your charge.",
+              ),
+      );
     }
     registerHandle({
       id,
@@ -325,33 +376,74 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     name: "dispatch_gate_critic",
     label: "Idea gate",
     description:
-      "Run a fresh idea-gate critic on one mechanism before investing a wave in it. Give only " +
-      "the frozen target, promoted premises, the mechanism, and its claimed first nontrivial implication.",
+      "Run a fresh idea-gate critic on one mechanism before investing workers in it. Give only " +
+      "the frozen target, promoted premises, the mechanism, and its claimed first nontrivial " +
+      "implication; quote imported premises verbatim with their exact revision identities — the " +
+      "critic is toolless and cannot read other campaigns' ledgers. Runs async like a worker: " +
+      "returns a handle immediately, verdict at a later wake — gate independent mechanisms " +
+      "concurrently rather than one per turn.",
     parameters: Type.Object({
       mechanism: Type.String(),
       firstImplication: Type.String({ description: "The claimed first nontrivial implication" }),
+      importedPremises: Type.Optional(
+        Type.String({
+          description:
+            "Promoted premises the mechanism relies on, quoted verbatim with exact revision " +
+            "identities (source path + hypotheses) — required when they live outside this " +
+            "campaign's PROVED.md. Statements only, and only load-bearing ones: the critic is " +
+            "deliberately minimal-context, and exposition or your own reasoning here anchors it " +
+            "toward your posterior (the packet is journaled; misquotes are auditable)",
+        }),
+      ),
     }),
     executionMode: "sequential",
     execute: async (_id: string, params: unknown) => {
-      const p = params as { mechanism: string; firstImplication: string };
+      const p = params as { mechanism: string; firstImplication: string; importedPremises?: string };
       const statement = readLedger(dir, "STATEMENT.md");
-      const proved = readLedger(dir, "PROVED.md");
-      const { text, usage: criticUsage } = await runRole({
+      const proved = promotedStatementsView(dir);
+      const id = `g${String(nextId++).padStart(3, "0")}`;
+      // The full gate packet is recorded (launcher: "Record every gate packet
+      // and verdict"), including any coordinator-attested imported premises so
+      // a misquote is auditable against the named source revision.
+      store.append({
+        kind: "dispatch",
+        id,
+        role: "gate-critic",
+        mechanism: p.mechanism,
+        task: p.firstImplication,
+        importedPremises: p.importedPremises,
+      });
+      const promise = runRole({
         contract,
         charge: CHARGES.gateCritic,
-        prompt: `# Frozen target\n\n${statement}\n\n# Promoted premises\n\n${proved}\n\n# Proposed mechanism\n\n${p.mechanism}\n\n# Claimed first nontrivial implication\n\n${p.firstImplication}`,
+        prompt:
+          `# Frozen target\n\n${statement}\n\n# Promoted premises\n\n${proved}` +
+          (p.importedPremises
+            ? `\n\n# Imported premises (coordinator-supplied verbatim, with revision identities)\n\n${p.importedPremises}`
+            : "") +
+          `\n\n# Proposed mechanism\n\n${p.mechanism}\n\n# Claimed first nontrivial implication\n\n${p.firstImplication}`,
         spec: roleModelSpec("gateCritic"),
         models,
+      }).then(({ text, usage: criticUsage }) => {
+        // A cancelled gate must not record a verdict (mirrors verification):
+        // an unseen verdict could later unlock concurrent workers nobody reviewed.
+        if (!handles.has(id)) return `[gate ${id} cancelled; verdict not recorded]`;
+        const verdict = recordGateVerdict(store, p.mechanism, text, criticUsage);
+        if (verdict === "UNPARSEABLE") {
+          return (
+            `UNPARSEABLE verdict (recorded as such; does not unlock concurrent workers). The critic's first ` +
+            `line was not a verdict token — re-run the gate.\n\n${text}`
+          );
+        }
+        return `${verdict}\n\n${text}`;
       });
-      activityThisWake++;
-      const verdict = recordGateVerdict(store, p.mechanism, text, criticUsage);
-      if (verdict === "UNPARSEABLE") {
-        return toolText(
-          `UNPARSEABLE verdict (recorded as such; does not unlock waves). The critic's first line ` +
-          `was not a verdict token — re-run the gate.\n\n${text}`,
-        );
-      }
-      return toolText(`${verdict}\n\n${text}`);
+      // `gate:` prefix keeps liveOnMechanism from counting a pending gate as a
+      // live worker on the mechanism it is judging.
+      registerHandle({ id, mechanism: `gate:${p.mechanism.slice(0, 60)}`, promise });
+      return toolText(
+        `gate ${id} dispatched (${handles.size} live). The verdict arrives at a later wake; ` +
+          `gate other mechanisms or continue ledger work meanwhile.`,
+      );
     },
   } as AgentTool;
 
@@ -403,8 +495,6 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       const candidate = fs.readFileSync(candidatePath, "utf-8");
       const candidateHash = sha256File(candidatePath);
       const stmtHash = statementHash(dir);
-      const passOf = (text: string) =>
-        parseFirstLineVerdict(text, ["VERDICT: PASS", "VERDICT: FAIL"]) === "VERDICT: PASS";
 
       // Anti-verdict-shopping (contract): a substantive FAIL stands against
       // the exact revision contents; re-attempt only with a recorded rebuttal.
@@ -448,7 +538,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         store.append({ kind: "rebuttal", revision: rel, artifact: rebuttalRel });
       }
       const statement = readLedger(dir, "STATEMENT.md");
-      const proved = readLedger(dir, "PROVED.md");
+      const proved = promotedStatementsView(dir);
       const slug = rel.replace(/[\/]/g, "_");
       const bundleHash = sha256Text(bundle);
       const provedHash = sha256Text(proved);
@@ -474,19 +564,35 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
        * certification, and comparison differ only in inputs and disclosure —
        * the stage sequence itself stays spelled out in `cadence` below.
        */
+      // One list drives both the prompt and the journal's suppliedInputs
+      // (2026-08-02 uniformity review): what the model was sent and what the
+      // record testifies can no longer drift. `blindness` stays hand-authored
+      // per call — it carries enforcement-modality and content-provenance
+      // claims a section list cannot derive.
+      const sectionsOf = (sections: { heading: string; name: string; text: string }[]) => ({
+        prompt: sections.map((s) => `# ${s.heading}\n\n${s.text}`).join("\n\n"),
+        suppliedInputs: sections.map((s) => s.name),
+      });
+      // Derivable half of the launcher's "workspace/tool visibility" honesty
+      // obligation: single-shot verdict roles get no workspace from us, but an
+      // official-CLI backend carries the CLI's own tools (instructed-only).
+      const toolVisibilityOf = (provider: string) =>
+        isCliProvider(provider)
+          ? "no workspace granted; official-CLI backend may expose its own tools (instructed only)"
+          : "none (single-shot, no tools granted)";
+
       const verdictStage = async (stage: {
         kind: "audit" | "bundle-cert" | "comparison";
         role: "hostileAuditor" | "bundleCertifier" | "comparator";
-        prompt: string;
-        suppliedInputs: string[];
+        ctx: { prompt: string; suppliedInputs: string[] };
         blindness: string;
         extra?: Record<string, unknown>;
-      }): Promise<{ text: string; pass: boolean; artifact: string }> => {
+      }): Promise<{ text: string; pass: boolean; unparseable: boolean; artifact: string }> => {
         const spec = roleModelSpec(stage.role);
         const { text, usage } = await runRole({
           contract,
           charge: CHARGES[stage.role],
-          prompt: stage.prompt,
+          prompt: stage.ctx.prompt,
           spec,
           models,
         });
@@ -495,21 +601,29 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         const evidence = newEvidencePath(dir, `audits/${slug}.${stage.kind}`);
         fs.writeFileSync(evidence, text);
         const artifact = path.relative(dir, evidence);
-        const pass = passOf(text);
+        const verdictLine = parseFirstLineVerdict(text, ["VERDICT: PASS", "VERDICT: FAIL"]);
+        const pass = verdictLine === "VERDICT: PASS";
+        // A reply with no verdict line is a protocol failure: never PASS
+        // (launcher), but recorded as UNPARSEABLE rather than FAIL so it
+        // neither arms anti-verdict-shopping against the revision nor
+        // hash-blocks a legitimate bundle forever — re-running the stage is
+        // the contract's legitimate response to an infrastructure failure.
+        const verdict = pass ? "PASS" : verdictLine === undefined ? "UNPARSEABLE" : "FAIL";
         store.append({
           kind: stage.kind,
           revision: rel,
-          verdict: pass ? "PASS" : "FAIL",
+          verdict,
           candidateHash,
           statementHash: stmtHash,
           ...stage.extra,
           artifact,
-          suppliedInputs: stage.suppliedInputs,
+          suppliedInputs: stage.ctx.suppliedInputs,
           blindness: stage.blindness,
+          toolVisibility: toolVisibilityOf(spec.provider),
           modelFamily: specLabel(spec),
           usage,
         });
-        return { text, pass, artifact };
+        return { text, pass, unparseable: verdictLine === undefined, artifact };
       };
 
       const cadence = async (): Promise<string> => {
@@ -517,12 +631,27 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         const audit = await verdictStage({
           kind: "audit",
           role: "hostileAuditor",
-          prompt: `# Statement\n\n${statement}\n\n# Currently promoted (PROVED.md)\n\n${proved}\n\n# Declared dependencies (coordinator-authored)\n\n${p.declaredDependencies}\n\n# Candidate revision ${rel}\n\n${candidate}`,
-          suppliedInputs: ["candidate revision", "statement", "PROVED.md", "declared dependencies"],
+          ctx: sectionsOf([
+            { heading: "Statement", name: "statement", text: statement },
+            { heading: "Currently promoted (PROVED.md)", name: "PROVED.md (statements view)", text: proved },
+            {
+              heading: "Declared dependencies (coordinator-authored)",
+              name: "declared dependencies",
+              text: p.declaredDependencies,
+            },
+            { heading: `Candidate revision ${rel}`, name: "candidate revision", text: candidate },
+          ]),
           blindness:
             "fresh instance (enforced); bundle built by harness (enforced); declaredDependencies coordinator-authored (instructed only)",
         });
         if (!audit.pass) {
+          if (audit.unparseable) {
+            return (
+              `STAGE 1 PROTOCOL FAILURE — the auditor's reply had no verdict line; recorded as ` +
+              `UNPARSEABLE (never PASS, but not a substantive FAIL). Re-running the stage is ` +
+              `legitimate. Saved: ${audit.artifact}\n\n${audit.text}`
+            );
+          }
           return `STAGE 1 FAIL — not verifier-backed. Audit saved: ${audit.artifact}\n\n${audit.text}`;
         }
 
@@ -533,12 +662,21 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         const cert = await verdictStage({
           kind: "bundle-cert",
           role: "bundleCertifier",
-          prompt: `# Candidate revision ${rel}\n\n${candidate}\n\n# Proposed reconstruction bundle\n\n${bundle}`,
-          suppliedInputs: ["candidate revision", "proposed bundle"],
+          ctx: sectionsOf([
+            { heading: `Candidate revision ${rel}`, name: "candidate revision", text: candidate },
+            { heading: "Proposed reconstruction bundle", name: "proposed bundle", text: bundle },
+          ]),
           blindness: "fresh instance (enforced); sees candidate by design (certification step)",
           extra: { bundleHash },
         });
         if (!cert.pass) {
+          if (cert.unparseable) {
+            return (
+              `BUNDLE CERTIFICATION PROTOCOL FAILURE — the certifier's reply had no verdict line; ` +
+              `recorded as UNPARSEABLE (the bundle is neither certified nor refused; this does not ` +
+              `hash-block it). Re-running the stage is legitimate. Saved: ${cert.artifact}\n\n${cert.text}`
+            );
+          }
           return (
             `BUNDLE CERTIFICATION FAIL — the bundle leaks the candidate argument; stage 2 refused. ` +
             `Revise keyIdeas/allowedSources and retry. Cert saved: ${cert.artifact}\n\n${cert.text}`
@@ -590,10 +728,20 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
             modelFamily: priorRecon.modelFamily,
           });
         } else {
+          const reconCtx = sectionsOf([
+            { heading: "Statement", name: "statement", text: statement },
+            { heading: "High-level key ideas", name: "key ideas", text: p.keyIdeas },
+            { heading: "Allowed sources", name: "allowed sources", text: p.allowedSources },
+            { heading: "Promoted premises", name: "promoted premises (statements view)", text: proved },
+          ]);
+          // Platform-enforced blindness: the "(enforced)" claim below is a
+          // checked fact for whole-file interpolation, not testimony. Partial
+          // paraphrase remains the bundle certifier's judgment.
+          assertCandidateWithheld(reconCtx.prompt, candidate);
           const { text, usage: reconTextUsage } = await runRole({
             contract,
             charge: CHARGES.reconstructor,
-            prompt: `# Statement\n\n${statement}\n\n# High-level key ideas\n\n${p.keyIdeas}\n\n# Allowed sources\n\n${p.allowedSources}\n\n# Promoted premises\n\n${proved}`,
+            prompt: reconCtx.prompt,
             spec: roleModelSpec("reconstructor"),
             models,
           });
@@ -612,9 +760,10 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
             provedHash,
             artifact: reconArtifact,
             artifactHash: sha256File(reconEvidence),
-            suppliedInputs: ["statement", "key ideas", "allowed sources", "promoted premises"],
+            suppliedInputs: reconCtx.suppliedInputs,
             blindness:
-              "fresh instance (enforced); candidate file withheld by harness (enforced); keyIdeas coordinator-authored (instructed only — paraphrase risk not machine-checked)",
+              "fresh instance (enforced); candidate file withheld by harness (enforced — rendered prompt checked); keyIdeas coordinator-authored (instructed only — paraphrase risk not machine-checked)",
+            toolVisibility: toolVisibilityOf(roleModelSpec("reconstructor").provider),
             modelFamily: specLabel(roleModelSpec("reconstructor")),
             usage: reconTextUsage,
           });
@@ -625,13 +774,17 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         const compare = await verdictStage({
           kind: "comparison",
           role: "comparator",
-          prompt: `# Statement\n\n${statement}\n\n# Independent reconstruction\n\n${reconText}\n\n# Candidate revision ${rel}\n\n${candidate}\n\n# Declared dependencies\n\n${p.declaredDependencies}`,
-          suppliedInputs: ["statement", "reconstruction", "candidate", "declared dependencies"],
+          ctx: sectionsOf([
+            { heading: "Statement", name: "statement", text: statement },
+            { heading: "Independent reconstruction", name: "reconstruction", text: reconText },
+            { heading: `Candidate revision ${rel}`, name: "candidate", text: candidate },
+            { heading: "Declared dependencies", name: "declared dependencies", text: p.declaredDependencies },
+          ]),
           blindness: "fresh instance (enforced); sees both sides by design (comparison step)",
         });
         const promotion = checkPromotion(store, dir, rel);
         return (
-          `STAGE 1 PASS; STAGE 2 ${compare.pass ? "PASS" : "FAIL"} (comparison verdict). ` +
+          `STAGE 1 PASS; STAGE 2 ${compare.pass ? "PASS" : compare.unparseable ? "UNPARSEABLE (protocol failure — never PASS; re-run is legitimate)" : "FAIL"} (comparison verdict). ` +
           (promotion.allowed
             ? `Revision ${rel} is verifier-backed; record_promotion is now legal for it.`
             : `Not promotable: ${promotion.reason}`) +
@@ -650,16 +803,17 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         id,
         mechanism: `verification:${rel}`,
         promise: cadence(),
-        // Summed over the cadence's role calls; undefined when every backend
-        // was a CLI (no usage reporting).
+        // Summed over the cadence's role calls; undefined when no backend
+        // reported usage.
         usage: () => {
           if (usages.length === 0) return undefined;
-          const total: RoleUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+          const total: RoleUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 };
           for (const u of usages) {
             total.input += u.input;
             total.output += u.output;
             total.cacheRead += u.cacheRead;
             total.cacheWrite += u.cacheWrite;
+            total.reasoning = (total.reasoning ?? 0) + (u.reasoning ?? 0);
           }
           return total;
         },
@@ -824,6 +978,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   let wakeCount = 0;
   let noopWakes = 0;
   let coordinator: RoleSession | undefined;
+  let coordinatorEpoch = 0;
   while (true) {
     wakeCount++;
     if (opts.maxWakes !== undefined && wakeCount > opts.maxWakes) {
@@ -832,7 +987,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     }
     activityThisWake = 0;
     const limits: string[] = [];
-    if (opts.userAgentLimit !== undefined) limits.push(`agents ${handles.size}/${opts.userAgentLimit}`);
+    if (opts.userAgentLimit !== undefined) limits.push(`workers ${liveWorkers()}/${opts.userAgentLimit}`);
     if (opts.maxWakes !== undefined) limits.push(`wakes ${wakeCount}/${opts.maxWakes}`);
     const digest =
       (handles.size === 0
@@ -842,17 +997,37 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
             .join(", ")}`) + (limits.length > 0 ? `\nUser limits: ${limits.join("; ")}.` : "");
     const reports = settledQueue.splice(0, settledQueue.length);
     for (const s of reports) handles.delete(s.h.id);
+    // Infrastructure failure is journaled as a failed-flagged completion (the
+    // shape cancellation already uses), never as one with an empty artifact:
+    // the contract says infrastructure failure is never PASS, and a failed run
+    // must not count as a new report anywhere spend accounting reads the journal.
     const reportSections = reports.map((s) => {
+      dumpTurns(s.h.id, s.h.session);
+      if (s.failed !== undefined) {
+        store.append({ kind: "completion", id: s.h.id, failed: s.failed, usage: s.h.usage?.() });
+        return (
+          `## ${s.h.id} [${s.h.mechanism}] FAILED (infrastructure): ${s.failed}\n\n` +
+          `No report artifact exists. Per the contract this is never PASS and carries no ` +
+          `mathematical content; re-dispatching the assignment is legitimate.`
+        );
+      }
       const reportPath = newEvidencePath(dir, `${s.h.id}/report`);
       fs.writeFileSync(reportPath, s.report);
       store.append({ kind: "completion", id: s.h.id, report: path.relative(dir, reportPath), usage: s.h.usage?.() });
       return `## ${s.h.id} [${s.h.mechanism}] (saved: ${path.relative(dir, reportPath)})\n\n${s.report}`;
     });
-    appendJournal(dir, { kind: "wake", wake: wakeCount, live: handles.size, newReports: reports.length });
+    const failedCount = reports.filter((s) => s.failed !== undefined).length;
+    appendJournal(dir, {
+      kind: "wake",
+      wake: wakeCount,
+      live: handles.size,
+      newReports: reports.length - failedCount,
+      ...(failedCount > 0 ? { failed: failedCount } : {}),
+    });
     const idleNudge =
       handles.size === 0 && reportSections.length === 0 && wakeCount > 1
         ? "\nNothing is live and no new reports arrived. Per the contract the campaign remains " +
-          "authorized: dispatch the next materially new wave, or explicitly declare_campaign_state."
+          "authorized: dispatch the next materially new fan-out, or explicitly declare_campaign_state."
         : "";
     // Resident coordinator: rebuild only at start or past the context cap
     // (the compaction analog — the launcher's restart rule is the rebuild).
@@ -866,6 +1041,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     let fresh = false;
     if (coordinator === undefined) {
       fresh = true;
+      coordinatorEpoch++;
       coordinator = createRoleSession({
         contract,
         charge: CHARGES.coordinator,
@@ -907,6 +1083,9 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       cumulative: coordinator.usage(),
       approxContextTokens: coordinator.approxTokens(),
     });
+    // Rewritten in full each wake: the file always mirrors the resident
+    // session; a rebuild starts a new epoch file.
+    dumpTurns(`coordinator-${coordinatorEpoch}`, coordinator);
     lostNote = "";
 
     // Frontier history: CURRENT_FRONTIER.md is rewritten by design, so the

@@ -361,7 +361,7 @@ export const VIEW = String.raw`
     const role = roleOf(a);
     const lost = a.end == null;
     const parts = [
-      row("agent", "<b>" + esc(a.id) + "</b> &middot; " + ROLES[role] + (a.cancelled ? ' <span class="pill">cancelled</span>' : "")),
+      row("agent", "<b>" + esc(a.id) + "</b> &middot; " + ROLES[role] + (a.cancelled ? ' <span class="pill">cancelled</span>' : "") + (a.failed ? ' <span class="pill">failed: ' + esc(a.failed) + "</span>" : "")),
       row("window", clock(a.start) + " &rarr; " + (lost ? absent("no completion recorded (lost to a restart)") : clock(a.end) + " &middot; " + fmtH((a.end - a.start) / H)), "mono"),
       row("model", a.model ? esc(a.model) : absent(NOT_RECORDED), "mono"),
       row("mechanism", a.mechanism ? esc(a.mechanism) : absent("none")),

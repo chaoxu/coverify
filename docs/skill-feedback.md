@@ -2,10 +2,36 @@
 
 Candidate improvements to the canonical `math-proof-search` skill
 (`~/kb/notes/agents/skills/math-proof-search/` + the launcher contract).
-**Policy: correctness fixes land immediately (three rounds already have:
+**Policy: correctness fixes land immediately (four rounds already have:
 2026-07-31 — PROCESS_LESSONS rename; adapter/launcher consolidation; stage-2
-certification/comparison rewrite; anti-verdict-shopping). Performance-shaped
-changes wait here for live campaign evidence.** Each deferred entry states
+certification/comparison rewrite; anti-verdict-shopping; 2026-08-01 —
+theorem-class/check-class verification split, below). Performance-shaped
+changes wait here for live campaign evidence.**
+
+## Landed 2026-08-01: theorem-class vs check-class content (launcher + charges)
+
+Evidence: five same-day comparison FAILs split into substantive catches
+(quantifier/hypothesis strength — all correct) and a bookkeeping class
+(w020, r035: stage 2 penalized witness-specific finite facts that the
+stage-1 auditor had already hand-verified and that a blind reconstructor
+*structurally cannot* confirm, since it proves existential theorems via its
+own witness). Comparators were inconsistent about it (obstructions.r2's
+called a vertex count "an incidental witness parameter"; w020's failed on
+exact values). Fix landed in the launcher's verification-cadence section
+plus reasoner/auditor/comparator charges: candidate revisions contain only
+promotable content (notes go in ordinary evidence artifacts); unboundedly
+quantified claims must be stated as explicit theorems (prose-only assertion
+is a stage-1 defect); reconstruction owes exactly theorem-class claims
+(different witness = PASS for existentials); finite directly checkable
+content is verified outright at stage 1 or by computation, never by
+reconstruction. Neither class is exempt — the split assigns each claim to
+the only channel able to verify it.
+
+Rejected on the way (recorded so the reasoning survives): a
+declared-conclusion-contract that *scopes* verification — under file-level
+promotion it lets an author under-declare and ship unverified theorems
+inside a promoted file; the completeness check needed to plug that hole
+re-creates the whole-file obligation anyway (Chao's objection, 2026-08-01). Each deferred entry states
 its activation test; the arbiter is the shared-format comparison — same
 statement run under the raw skill in Codex and under coverify, campaign
 folders read side by side.
@@ -78,6 +104,34 @@ observed state discontinuity).
    PASS that dispatched two workers), vs. routine passes under Opus.
    Confounded (model change vs. genuine lane exhaustion at wake 8+); watch
    before drawing a lesson.
+4. **Graduate lessons from the campaign's PROCESS_LESSONS (L25–L27),
+   candidates for the launcher's allocation guidance:**
+   - *L25 — adversarially solve a promised source before building hardness
+     on it.* The only gate-passed hardness map died because nobody had
+     checked whether its promised source class was itself polynomial (it
+     was: the promise deleted exactly the cycles carrying hardness). One
+     algorithm gate on the source would have saved a three-worker wave.
+   - *L26 — close the demand/promise Cartesian product before gadgetising a
+     multicut source.* Demands + promises together formed a complete S×T
+     product = one ordinary cut; a max-flow check beats any reduction
+     design.
+   - *L27 — an NP-hard constrained base case is a hardness lead, not a
+     lift.* Gate the unchanged-instance lift on a tiny source instance
+     before amplification; free optimization reliably escapes through what
+     the constraint suppressed.
+5. **Hostile audit caught a false counterexample (w019)** — a wrong
+   refutation that would have permanently closed a live algorithmic route
+   in FAILED.md: the auditor exhibited an optimal tie-break-minimal
+   partition on the candidate's own instance satisfying the allegedly
+   refuted conditions. Verification pays in both directions: against false
+   theorems and against false give-ups.
+6. **Async verification handles (harness 045d36f) removed the wake-loop
+   serialization** that cost ~27 idle coordinator minutes per blind
+   reconstruction under the synchronous design. Also observed: two
+   transient provider failures journaled as ordinary completions with
+   empty 0-byte reports — fixed 2026-08-01: completions now carry a
+   `failed` reason flag (same shape as `cancelled`), write no phantom
+   artifact, and are excluded from the wake's `newReports` count.
 
 ## Deferred: tiered verification (drafted, ready to land on evidence)
 
@@ -110,25 +164,44 @@ Harness ripple when landed: `depth: "audit" | "full"` parameter on
 mechanical fan-in flag ("this premise is now cited by a second route —
 consider promotion") in the wake digest.
 
-## Deferred: idea generation as delegable labor (drafted)
+## Landed 2026-08-02: idea generation as delegable labor
 
-Two launcher touches:
+Both drafted launcher touches landed (kb 30f0dd9): the exploration-agent
+deliverable list now includes gate-ready mechanism proposals, and scouts at
+any point may propose (first-wave restriction dropped; selection stays with
+the coordinator; every proposal still faces the gate). Activation evidence
+from campaign 3 (fresh lin-3-cut, 2026-08-02): the fresh coordinator
+hand-wrote 13 mechanisms and serialized them through gates in its own
+context (~35 min, 0 IDEA PASS, 7 FAIL / 6 REPAIR — every sampled verdict
+mathematically sound, with 4–5-vertex counterexamples), then independently
+invented a 7-reasoner mechanism-scout wave — the exact pattern the edit
+formalizes. Harness ripple landed the same day: dispatch_gate_critic is
+now an async handle (verdict at a later wake, gates run concurrently) with
+an importedPremises field, closing the G1b gap where a toolless critic
+correctly refused premises the coordinator forgot to inline.
 
-1. Extend the worker-deliverable list with: "or a set of gated-ready
-   mechanism proposals, each with its claimed first nontrivial implication."
-2. Drop the accidental first-wave restriction on proposal packets ("
-   Independent first-wave scouts may propose…" → scouts at any point may
-   propose; every proposed mechanism still faces the gate before a wave).
+## Deferred: imports provisioning — ledger file vs knowledge-manager role
 
-Rationale: generation is creative labor, not judgment — it benefits from
-fresh eyes (a resident coordinator sampling its own posterior yields
-correlated ideas), deep reading the coordinator cannot afford, and
-per-packet model-family diversity. Selection remains the coordinator's.
-No new role: a generator is a worker packet.
+Cross-campaign imports revealed a general provisioning problem: every role
+is deliberately context-starved, so each call needs its premise bundle
+assembled, and the assembler (coordinator) forgets (G1: inlined correctly;
+G1b: empty packet → correct-but-avoidable FAIL). Two candidate shapes:
 
-**Activation test:** first campaign shows poor mechanism diversity (routes
-clustering on one family), or the coordinator's context filling with
-ideation instead of portfolio work.
+1. **IMPORTS.md ledger** (mechanical): one campaign file where each
+   imported theorem is recorded once — verbatim statement, source path,
+   revision identity, hypotheses-verified note — and every packet cites or
+   inlines from it. One provisioning act, many uses; no new role.
+2. **Knowledge-manager role** (MechMath-style): an agent that assembles
+   "what is known relevant to X" per packet. Rejected for now: premise
+   *selection* is judgment that re-creates the same omission risk one
+   level down, adds a second authority over what is known, and its output
+   feeding blind roles would need its own certification. Revisit only if a
+   campaign's promoted-premise count grows past what a flat ledger file
+   serves (≳50 entries).
+
+**Activation test for (1):** recurrent premise-omission gate FAILs after
+the importedPremises field exists, or per-call premise re-inlining
+becoming a visible share of coordinator output tokens.
 
 ## Deferred (earlier entries)
 

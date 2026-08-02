@@ -163,7 +163,7 @@ trace-page.ts    that page's markup, styles, and view code
 
 - **Coordinator**: resident across wakes — matching how the skill runs in a
   live Codex/Claude Code session — until a context cap
-  (`COVERIFY_COORDINATOR_CONTEXT_TOKENS`, default ~150k), which is the
+  (`COVERIFY_COORDINATOR_CONTEXT_TOKENS`, default ~300k), which is the
   compaction analog: the session is rebuilt via the launcher's restart rule.
   Continuing wakes receive only new reports + status digest; the full resume
   bundle is sent on (re)build. Sole ledger writer. Decisions must still be
@@ -325,6 +325,34 @@ recorded honestly). Git auto-commit of campaigns was reviewed and **rejected**
 as a second versioning system; git remains a user convention. Mechanical
 checkpoint-ordering enforcement and coordinator-cache machinery were struck
 from the roadmap as over-constraint waiting to happen.
+
+**Uniformity review (2026-08-02, three independent agents: altitude,
+conformance, implementation-shape).** A proposed "role-call descriptor +
+uniform runner" framework for the six single-shot roles was **rejected**: the
+three roles outside `verdictStage` differ in control flow and record schema,
+not parameters (gate: no artifact, 3-token contract, async handle, `gate:`
+mechanism prefix; reconstructor: no verdict by repaired design, content-bound
+carry-forward; CLI oracle: worker-journaled), so discriminators would exceed
+the ~50 duplicated lines; the implementation review catalogued 16 hidden
+couplings, the worst being that the `bundle` string's bytes key both the
+leaky-bundle refusal and reconstruction carry-forward. Unified verdict-token
+vocabularies were rejected (merging would let `IDEA PASS` satisfy a cadence
+stage). **Adopted in narrowed form:** (1) cadence prompts and their
+`suppliedInputs` derive from one section list (they can no longer drift;
+`blindness` stays hand-authored — it carries enforcement-modality and
+content-provenance claims a section list cannot express, and the
+carry-forward record keeps its hand-written provenance since no prompt
+exists); (2) an unparseable verdict reply is recorded `UNPARSEABLE`, never
+`FAIL` — a protocol failure must not arm anti-verdict-shopping nor
+permanently hash-block a legitimate bundle (previously a garbled certifier
+reply was a permanent trap); (3) a `toolVisibility` journal field on
+verification records (the launcher's previously-unrecorded honesty limb —
+CLI backends may expose their own tools, instructed-only); (4) reconstruction
+blindness is platform-enforced: `assertCandidateWithheld` refuses a rendered
+reconstructor prompt containing the candidate text (tests/blindness.test.ts),
+upgrading the journal's "(enforced)" from testimony to checked fact; (5) the
+user `--agent-limit` counts workers (r*/t*) only — judge handles (g*/v*)
+no longer consume the workers' budget.
 
 ## Planned capability: CLI coding agents (design reserved, not built)
 
