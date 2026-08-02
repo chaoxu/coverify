@@ -162,14 +162,19 @@ trace-page.ts    that page's markup, styles, and view code
 ```
 
 - **Coordinator**: resident across wakes — matching how the skill runs in a
-  live Codex/Claude Code session — until a context cap
-  (`COVERIFY_COORDINATOR_CONTEXT_TOKENS`, default ~300k), which is the
-  compaction analog: the session is rebuilt via the launcher's restart rule.
-  Continuing wakes receive only new reports + status digest; the full resume
-  bundle is sent on (re)build. Sole ledger writer. Decisions must still be
-  externalized to the ledgers every wake — residency is continuity of soft
-  context, never a substitute for durable state.
-- **Reasoners and technicians**: fresh `Agent` instances; packet in, finite deliverable out;
+  live Codex/Claude Code session — as a durable pi AgentHarness session
+  (JSONL tree under `.coverify/sessions/`). At the context cap
+  (`COVERIFY_COORDINATOR_CONTEXT_TOKENS`, default ~300k) it **compacts in
+  place** — the launcher's anticipated "context compaction", with the
+  summary explicitly subordinated to the ledgers and the restart-rule
+  reread instruction delivered in the next wake message (kill-and-rebuild
+  remains the fallback for non-compactable sessions). Continuing wakes
+  receive only new reports + status digest; the full resume bundle is sent
+  on (re)build. Sole ledger writer. Decisions must still be externalized to
+  the ledgers every wake — residency is continuity of soft context, never a
+  substitute for durable state.
+- **Reasoners and technicians**: fresh AgentHarness sessions (durable JSONL
+  transcripts, session id = handle id = prompt_cache_key); packet in, finite deliverable out;
   write access only to assigned `EVIDENCE/` paths.
 - **Verifiers**: the stage-1 hostile auditor, bundle certifier, stage-2
   blind reconstructor, and comparator are fresh instances; the harness
