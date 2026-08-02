@@ -235,12 +235,64 @@ function sbplLiteral(p: string): string {
  * Wrap an argv in an OS write-sandbox (macOS sandbox-exec; SBPL rules are
  * last-match-wins, so denies are declared after allows). Reads stay
  * unrestricted — this narrows the tool surface, it adds no policy. On
- * non-darwin platforms the argv runs unsandboxed and callers must treat
- * write confinement as instructed-only.
+ * non-darwin platforms the backend is @landstrip/landstrip (Landlock +
+ * seccomp on Linux — kernel-enforced, no root; ecosystem adoption
+ * 2026-08-02): same WriteScope semantics plus deny-default networking.
+ * If the landstrip binary is unavailable there, the argv runs unsandboxed
+ * and write confinement degrades to instructed-only — loudly.
  */
+const LANDSTRIP_BIN = path.join(
+  path.dirname(new URL(import.meta.url).pathname),
+  "..",
+  "node_modules",
+  ".bin",
+  "landstrip",
+);
+let landstripChecked = false;
+let landstripUsable = false;
+function landstripAvailable(): boolean {
+  if (!landstripChecked) {
+    landstripChecked = true;
+    landstripUsable = fs.existsSync(LANDSTRIP_BIN);
+    if (!landstripUsable) {
+      console.error(
+        "[coverify] landstrip binary not found — non-darwin write confinement is " +
+          "INSTRUCTED-ONLY for this run (bun install to restore the sandbox)",
+      );
+    }
+  }
+  return landstripUsable;
+}
+
+/** WriteScope → landstrip policy JSON. Reads stay unrestricted (fields
+ *  omitted); network deny-default is landstrip's default, stated explicitly.
+ *  Deny targets need no existence dance here: landstrip evaluates globs at
+ *  access time, covering the not-yet-existing forged-PROVED.md case. */
+function landstripPolicy(scope: WriteScope): object {
+  // Canonical paths only: landstrip refuses deny targets reachable through a
+  // symlinked ancestor of an allow root (POLICY_DENY_WRITE_SYMLINK_ANCESTOR),
+  // e.g. /tmp → /private/tmp. realResolve also canonicalizes not-yet-existing
+  // deny targets against their deepest real ancestor.
+  const canon = (p: string) => realResolve(p);
+  return {
+    enabled: true,
+    network: { allowNetwork: false, allowLocalBinding: false, allowAllUnixSockets: false },
+    filesystem: {
+      allowWrite: [...new Set([...scope.allow.map(canon), canon(os.tmpdir()), "/dev/null"])],
+      denyWrite: scope.deny.map(canon),
+    },
+  };
+}
+
 function sandboxedArgv(argv: string[], scope: WriteScope): { file: string; args: string[] } {
   if (process.platform !== "darwin") {
-    return { file: argv[0], args: argv.slice(1) };
+    if (!landstripAvailable()) {
+      return { file: argv[0], args: argv.slice(1) };
+    }
+    const policyDir = fs.mkdtempSync(path.join(os.tmpdir(), "coverify-policy-"));
+    const policyFile = path.join(policyDir, "policy.json");
+    fs.writeFileSync(policyFile, JSON.stringify(landstripPolicy(scope)));
+    return { file: LANDSTRIP_BIN, args: ["run", "-p", policyFile, "--", ...argv] };
   }
   const allows = [
     '(subpath "/private/tmp")',

@@ -450,7 +450,10 @@ harnesses directly — `claude -p` / `codex exec` — via a harness-provided
       still cross-family out of the box)
 - [ ] Per-wake model routing and eval-driven per-role tuning (cheap wakes vs
       promotion wakes; cheap critics) — decided by eval evidence
-- [ ] Linux write-sandbox backend (bubblewrap/sandbox equivalent)
+- [x] Linux write-sandbox backend: @landstrip/landstrip (Landlock+seccomp;
+      deny-default network for scripts on all platforms' landstrip path;
+      loud instructed-only fallback when the binary is absent — pending
+      first-run validation on a Linux fleet host)
 - [ ] Trigger + contract-adherence evals per `docs/evals.md` (toy campaign
       + fresh-context contract judge); blind A/B reserved for real changes
 - [ ] First live campaign; then revisit `docs/skill-feedback.md`

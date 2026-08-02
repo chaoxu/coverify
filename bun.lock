@@ -9,6 +9,7 @@
         "@earendil-works/pi-ai": "^0.83.0",
         "@earendil-works/pi-coding-agent": "^0.83.0",
         "@earendil-works/pi-tui": "^0.83.0",
+        "@landstrip/landstrip": "^0.18.18",
         "pi-claude-bridge": "^0.6.3",
         "typebox": "^1.3.7",
         "vis-data": "^8.0.4",
@@ -105,6 +106,20 @@
     "@google/genai": ["@google/genai@1.52.0", "", { "dependencies": { "google-auth-library": "^10.3.0", "p-retry": "^4.6.2", "protobufjs": "^7.5.4", "ws": "^8.18.0" }, "peerDependencies": { "@modelcontextprotocol/sdk": "^1.25.2" }, "optionalPeers": ["@modelcontextprotocol/sdk"] }, "sha512-gwSvbpiN/17O9TbsqSsE/OzZcpv5Fo4RQjdngGgogtuB9RsyJ8ZHhX5KjHj1bp5N9snN2eK8LDGXSaWW2hof8Q=="],
 
     "@hono/node-server": ["@hono/node-server@2.0.12", "", { "peerDependencies": { "hono": "^4" } }, "sha512-eWpQYr67tqJLeaSUl0Q+TquuYfUdTibpOJlUMV2FfUP7+KqCC5TufnwnlXL6mobZBJbGAYRd7ZvEBDCbLInjhg=="],
+
+    "@landstrip/landstrip": ["@landstrip/landstrip@0.18.18", "", { "optionalDependencies": { "@landstrip/landstrip-darwin-arm64": "0.18.18", "@landstrip/landstrip-darwin-x64": "0.18.18", "@landstrip/landstrip-linux-arm64": "0.18.18", "@landstrip/landstrip-linux-x64": "0.18.18", "@landstrip/landstrip-win32-arm64": "0.18.18", "@landstrip/landstrip-win32-x64": "0.18.18" }, "bin": { "landstrip": "bin/landstrip.js" } }, "sha512-1xI6mn+SEbVGOb7SsFzxzE/zxhxFPkJsgVA4Hq7XBxKZytPC+IJsBwmRJyEQgd/ri6cKSEHUUMRrOdO4isRHIw=="],
+
+    "@landstrip/landstrip-darwin-arm64": ["@landstrip/landstrip-darwin-arm64@0.18.18", "", { "os": "darwin", "cpu": "arm64" }, "sha512-RlDcx1orV0ZGHOSKgDwJ24TliNAGuNSLcY7w8iSoyGTWQu9o1geqSDo8QG5CFr+riPVt5UmHFoma27s8qtrTeQ=="],
+
+    "@landstrip/landstrip-darwin-x64": ["@landstrip/landstrip-darwin-x64@0.18.18", "", { "os": "darwin", "cpu": "x64" }, "sha512-HFSw2Is6I8tfFLb3NSjGbVpK7xSUxmOix6h2mXx3ocTAoDKarss3Wu9iUEVB/ItFmMzlAyVVZVPpSoxNAFATBA=="],
+
+    "@landstrip/landstrip-linux-arm64": ["@landstrip/landstrip-linux-arm64@0.18.18", "", { "os": "linux", "cpu": "arm64" }, "sha512-HZfPhOqKWJRi7WJF+7c06p1Bp/YPXmyNifeOFjwSMgObXGw0mNIofP7WvTagulxCHAn9G0ORV7MSTZo8+y6E+w=="],
+
+    "@landstrip/landstrip-linux-x64": ["@landstrip/landstrip-linux-x64@0.18.18", "", { "os": "linux", "cpu": "x64" }, "sha512-3E01AdjgItIH9pNC9+/W9trBYEJJXcLXJmTcmtjrNxDL97Aj5VmS0rNkEkCTdAJ1B04azOAtc4Txp/415mVKSw=="],
+
+    "@landstrip/landstrip-win32-arm64": ["@landstrip/landstrip-win32-arm64@0.18.18", "", { "os": "win32", "cpu": "arm64" }, "sha512-5fnIdbjz2nHzNQmYAzURxrQIQ+SDzjaTSEFooxwllx9D9wadKA2mgVnEfSBKYoc9yd+8iQOz1vNwdM6eh67wyg=="],
+
+    "@landstrip/landstrip-win32-x64": ["@landstrip/landstrip-win32-x64@0.18.18", "", { "os": "win32", "cpu": "x64" }, "sha512-A7EmxsPCHP7rAblD//gDeClIQGXiwunmZdNZ76Es5MZpRqUQ9gmLbyY+9a3TTiDFNOKLbde2bSisfsT/IBsAVQ=="],
 
     "@mariozechner/clipboard": ["@mariozechner/clipboard@0.3.9", "", { "optionalDependencies": { "@mariozechner/clipboard-darwin-arm64": "0.3.9", "@mariozechner/clipboard-darwin-universal": "0.3.9", "@mariozechner/clipboard-darwin-x64": "0.3.9", "@mariozechner/clipboard-linux-arm64-gnu": "0.3.9", "@mariozechner/clipboard-linux-arm64-musl": "0.3.9", "@mariozechner/clipboard-linux-riscv64-gnu": "0.3.9", "@mariozechner/clipboard-linux-x64-gnu": "0.3.9", "@mariozechner/clipboard-linux-x64-musl": "0.3.9", "@mariozechner/clipboard-win32-arm64-msvc": "0.3.9", "@mariozechner/clipboard-win32-x64-msvc": "0.3.9" } }, "sha512-ABnA53mdfkGZwOFUdZNv2S0CWGO/EIuPj8Vv9xmBFmSYg/qFc7ihO6q5FcQjvoE67kZpWkEc4AhD6B/os04yuA=="],
 
