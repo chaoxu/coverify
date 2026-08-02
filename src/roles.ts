@@ -1220,6 +1220,22 @@ export async function createHarnessRoleSession(
     activeToolNames: tools.map((t) => t.name),
     resources: {},
   });
+  // Wire logging via the harness's own hooks (the Agent-ctor onPayload path
+  // does not exist at this layer — review 2026-08-02 caught the silent loss).
+  const wirePath = process.env.COVERIFY_WIRE_LOG;
+  if (wirePath) {
+    const logPayload = wireLogPayload(wirePath);
+    const logResponse = wireLogResponse(wirePath);
+    harness.on("before_provider_payload", (e) => {
+      logPayload((e as { payload?: unknown }).payload, (e as { model?: unknown }).model);
+      return undefined;
+    });
+    harness.on("after_provider_response", (e) => {
+      const r = e as { status?: number; headers?: Record<string, string> };
+      logResponse({ status: r.status ?? 0, headers: r.headers ?? {} });
+      return undefined;
+    });
+  }
   // Sync RoleSession surface over async session storage: the message cache
   // refreshes after every completed run (telemetry reads between runs).
   // Two views on purpose: `allMessages` (every message ever, across all
@@ -1228,18 +1244,49 @@ export async function createHarnessRoleSession(
   // actually sees next call).
   let allMessages: AgentMessage[] = [];
   let contextMessages: AgentMessage[] = [];
+  let compactionUsage: RoleUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   const refresh = async () => {
-    // getEntries (not getBranch): compaction moves the leaf to a new branch,
-    // and usage/turn totals must keep counting the abandoned one — spend
-    // doesn't un-happen at a compaction boundary.
+    // getEntries (not getBranch): usage/turn totals must keep counting
+    // everything ever spent — including entries a compaction superseded.
     const entries = await session.getEntries();
     allMessages = entries.flatMap((e) => (e.type === "message" ? [e.message] : []));
+    // The summarization call's own spend lives on the compaction entry, not
+    // on any assistant message — without this, every compaction's large
+    // request would vanish from the usage journal (review 2026-08-02).
+    compactionUsage = sumMessagesUsage(
+      entries.flatMap((e) =>
+        e.type === "compaction" && (e as { usage?: unknown }).usage
+          ? [{ role: "assistant", usage: (e as { usage?: unknown }).usage }]
+          : [],
+      ),
+    );
     contextMessages = (await session.buildContext()).messages;
   };
+  const addUsage = (a: RoleUsage, b: RoleUsage): RoleUsage => ({
+    input: a.input + b.input,
+    output: a.output + b.output,
+    cacheRead: a.cacheRead + b.cacheRead,
+    cacheWrite: a.cacheWrite + b.cacheWrite,
+    reasoning: (a.reasoning ?? 0) + (b.reasoning ?? 0),
+    costUSD: (a.costUSD ?? 0) + (b.costUSD ?? 0),
+  });
   return {
     async ask(prompt: string): Promise<string> {
-      const final = await harness.prompt(prompt);
-      await refresh();
+      let final;
+      try {
+        final = await harness.prompt(prompt);
+      } finally {
+        // Telemetry must reflect spend even when the run rejects — a failed
+        // 500k-token run recorded as zero usage is worse than the failure.
+        await refresh().catch(() => {});
+      }
+      // The harness resolves failures as a synthetic message; surface the
+      // real cause instead of an empty string (which would read as the
+      // empty-report infra failure and trigger a pointless salvage nudge).
+      if (final.stopReason === "error") {
+        throw new Error(final.errorMessage ?? "provider error (no message)");
+      }
+      if (final.stopReason === "aborted") return "";
       if (typeof final.content === "string") return final.content;
       return (final.content ?? [])
         .filter((b): b is { type: "text"; text: string } => (b as { type?: string }).type === "text")
@@ -1250,7 +1297,7 @@ export async function createHarnessRoleSession(
       return estimateContextTokens(contextMessages).tokens;
     },
     usage(): RoleUsage {
-      return sumMessagesUsage(allMessages);
+      return addUsage(sumMessagesUsage(allMessages), compactionUsage);
     },
     turns(): TurnRecord[] {
       return messagesToTurns(allMessages);
@@ -1260,10 +1307,12 @@ export async function createHarnessRoleSession(
       await refresh();
     },
     steer(text: string): void {
-      void harness.steer(text);
+      // AgentHarness.steer REJECTS when idle (worker just finished): a
+      // dropped steer is routine, an unhandled rejection kills the process.
+      harness.steer(text).catch(() => {});
     },
     abort(): void {
-      void harness.abort();
+      harness.abort().catch(() => {});
     },
   };
 }

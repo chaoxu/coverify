@@ -63,15 +63,26 @@ export default function coverifyExtension(pi: ExtensionAPI): void {
       if (!fs.existsSync(path.join(d, "STATEMENT.md"))) {
         return { content: [{ type: "text" as const, text: `no campaign at ${d}` }], details: {} };
       }
-      const promoted = promotedStatementsView(d);
-      const promotedHeads = (promoted.match(/^## .*/gm) ?? []).join("\n") || "(no promotions)";
-      const tail = readJournal(d)
-        .slice(-8)
-        .map((e) => JSON.stringify(e).slice(0, 160))
-        .join("\n");
+      const safe = (fn: () => string): string => {
+        try {
+          return fn();
+        } catch (e) {
+          return `(unreadable: ${String(e).slice(0, 120)})`;
+        }
+      };
+      const promotedHeads = safe(() => {
+        const promoted = promotedStatementsView(d);
+        return (promoted.match(/^## .*/gm) ?? []).join("\n") || "(no promotions)";
+      });
+      const tail = safe(() =>
+        readJournal(d)
+          .slice(-8)
+          .map((e) => JSON.stringify(e).slice(0, 160))
+          .join("\n"),
+      );
       const text =
-        `# Statement (head)\n${head(readLedger(d, "STATEMENT.md"), 20)}\n\n` +
-        `# CURRENT_FRONTIER\n${head(readLedger(d, "CURRENT_FRONTIER.md"), 60)}\n\n` +
+        `# Statement (head)\n${safe(() => head(readLedger(d, "STATEMENT.md"), 20))}\n\n` +
+        `# CURRENT_FRONTIER\n${safe(() => head(readLedger(d, "CURRENT_FRONTIER.md"), 60))}\n\n` +
         `# Promoted entries\n${promotedHeads}\n\n# Journal tail\n${tail}`;
       return { content: [{ type: "text" as const, text }], details: {} };
     },

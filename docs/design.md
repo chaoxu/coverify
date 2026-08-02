@@ -205,7 +205,7 @@ pi with `src/pi-extension.ts` loaded.
 | `STATEMENT.md` written once; new revision only via explicit user amendment; completion evidence invalidated | "Fix its revision before search; only an explicit user amendment may replace it…" |
 | Campaign file set; harness-written evidence is revision-suffixed (`newEvidencePath`), and `FAILED.md` prefix-append plus `literature-*.md` immutability are enforced. Other in-place edits under `EVIDENCE/` are contract-instructed, not blocked — a role can still overwrite its own scratch artifact | "Durable campaign state" bullets |
 | Dispatched agents get no ledger-write capability; only assigned evidence paths | "The coordinator is the sole ledger writer; workers… write only assigned evidence artifacts" |
-| Resume bundle = STATEMENT + FRONTIER + full REGISTRY.md + full PROCESS_LESSONS.md, launcher embedded verbatim in the system prompt (never FAILED.md, PROVED.md, or EVIDENCE/ wholesale) | "After restart or context compaction, reread…" |
+| Resume bundle = STATEMENT + FRONTIER + full REGISTRY.md + full PROCESS_LESSONS.md, launcher embedded verbatim in the system prompt (never FAILED.md, PROVED.md, or EVIDENCE/ wholesale) — supplied on every coordinator (re)build **and re-supplied on the wake after every in-place compaction**, so both halves of the clause are enforced, not instructed | "After restart or context compaction, reread…" |
 | Claim-label vocabulary quoted verbatim into the ledger templates at init; label discipline and weakest-premise inheritance are contract-instructed model judgment | "Claim labels — literal, never inflated" |
 | Dispatch schema requires the FAILED.md check field (`no close prior route` / `closest is X; differs because…`) | "Before every route, materially changed retry, or variant, check `FAILED.md`…" |
 | Worker packet schema requires a finite mathematical deliverable; the deliverable-or-precise-gap report form is charged in the role prompt, not parsed | "Every exploration agent must return a proved lemma, explicit construction, counterexample/certificate, or a precise failing implication" |
@@ -325,6 +325,21 @@ slimmed both SKILL.md adapters to runtime-specific mechanics. The charge now
 cites the launcher directly. With a resident coordinator the delegation
 rationale is structural: inline proof work pollutes the long-lived judgment
 context and accelerates compaction.
+
+**Honesty notes from the 2026-08-02 runtime-migration review:** (1) the
+compaction summary is produced by pi's generic summarizer
+(`SUMMARIZATION_SYSTEM_PROMPT`), a distinct stateless utility call outside
+the contract; it enters the coordinator's context as soft user-role text
+with a fixed ~20k-token verbatim tail, is billed at the coordinator's model
+and thinking level, its spend is counted into the usage journal via the
+compaction entry, and the ledgers remain authoritative (re-supplied in the
+next wake). (2) Session JSONL trees under `.coverify/sessions/` are full
+transcripts on disk; reads are unrestricted by design, so any role could in
+principle read another's transcript (threat-model item 3 class; same
+exposure class as world-readable EVIDENCE/, blind roles remain toolless).
+(3) Prompt purity of harness sessions is by construction — AgentHarness
+uses the `systemPrompt` string verbatim with no hooks registered and empty
+resources — verified against pi source at 0.83.0; re-verify on pi upgrades.
 
 ## Review record
 

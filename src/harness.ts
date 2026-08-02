@@ -1,5 +1,4 @@
 import { execSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -170,17 +169,28 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   // cache effectiveness and empty-final-text failures diagnosable after the
   // fact. Telemetry only: a write failure never affects the campaign.
   const turnsDir = path.join(dir, ".coverify", "turns");
+  const sessionsRoot = path.join(dir, ".coverify", "sessions");
+  // Incremental: message history is append-only, so only new records are
+  // written after the first dump (the full rewrite was quadratic over a
+  // long coordinator session — review 2026-08-02). First dump per name in
+  // this process truncates, clearing any stale file from a prior run.
+  const turnsWritten = new Map<string, number>();
   const dumpTurns = (name: string, session?: RoleSession) => {
     if (!session) return;
     try {
       fs.mkdirSync(turnsDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(turnsDir, `${name}.jsonl`),
-        session
-          .turns()
-          .map((t) => JSON.stringify(t))
-          .join("\n") + "\n",
-      );
+      const recs = session.turns();
+      const prev = turnsWritten.get(name);
+      const from = prev ?? 0;
+      if (recs.length <= from && prev !== undefined) return;
+      const text = recs
+        .slice(from)
+        .map((t) => JSON.stringify(t))
+        .join("\n") + "\n";
+      const file = path.join(turnsDir, `${name}.jsonl`);
+      if (prev === undefined) fs.writeFileSync(file, text);
+      else fs.appendFileSync(file, text);
+      turnsWritten.set(name, recs.length);
     } catch {
       /* observability must never break the run */
     }
@@ -303,7 +313,10 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           spec,
           models,
         },
-        { sessionId: id, sessionsRoot: path.join(dir, ".coverify", "sessions"), cwd: evidenceDir },
+        // cwd is the campaign dir for every session: JsonlSessionRepo groups
+        // by cwd-encoded subdirectory, and one-directory-per-worker keyed on
+        // absolute evidence paths was pure junk layout (review 2026-08-02).
+        { sessionId: id, sessionsRoot, cwd: dir },
       ).then((s) => {
         session = s;
         // The handle was registered before the async session resolved; patch
@@ -312,22 +325,27 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         if (h) h.session = s;
         return s;
       });
-      promise = sessionPromise.then((live) =>
-        live.ask(`Assigned evidence directory: ${evidenceDir}\n\n${packetPrompt}`).then(
+      promise = sessionPromise.then((live) => {
+        // Cancelled while the session was being created: don't launch the
+        // turn at all — nothing could stop it and the report would be dropped.
+        if (!handles.has(id)) return "";
+        return live.ask(`Assigned evidence directory: ${evidenceDir}\n\n${packetPrompt}`).then(
         // Salvage nudge: deep-reasoning runs sometimes end without emitting a
         // final message (observed live 2026-08-02: four @max scouts, ~2.6M
         // tokens, empty final text). The session context is intact at this
         // point, so ask once for the report before the settle-side classifier
         // writes the run off as an infrastructure failure.
           (text) =>
-            text.trim() !== ""
+            // No salvage for a cancelled handle (abort resolves empty by
+            // design) — a nudge there is a full-context turn nobody reads.
+            text.trim() !== "" || !handles.has(id)
               ? text
               : live.ask(
                   "Your previous turn ended with no final message. Emit your complete " +
                     "conclusion-first report now, per your charge.",
                 ),
-        ),
-      );
+        );
+      });
     }
     registerHandle({
       id,
@@ -1068,14 +1086,25 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           kind: "note",
           note: `coordinator context cap (${COORDINATOR_CONTEXT_TOKENS} tok) reached; compacting (restart rule applies)`,
         });
-        await coordinator.compact(
-          "The campaign ledgers (STATEMENT.md, CURRENT_FRONTIER.md, REGISTRY.md, FAILED.md, " +
-            "PROVED.md, PROCESS_LESSONS.md) are the durable state and remain authoritative; this " +
-            "summary is soft context only and must never be cited over them. Preserve precisely: " +
-            "live agent assignments and their mechanisms, the verification queue state, dispatch " +
-            "decisions not yet externalized, and open questions from the newest reports.",
-        );
-        justCompacted = true;
+        try {
+          await coordinator.compact(
+            "The campaign ledgers (STATEMENT.md, CURRENT_FRONTIER.md, REGISTRY.md, FAILED.md, " +
+              "PROVED.md, PROCESS_LESSONS.md) are the durable state and remain authoritative; this " +
+              "summary is soft context only and must never be cited over them. Preserve precisely: " +
+              "live agent assignments and their mechanisms, the verification queue state, dispatch " +
+              "decisions not yet externalized, and open questions from the newest reports.",
+          );
+          justCompacted = true;
+        } catch (e) {
+          // Compaction is a real LLM call and can fail (quota, provider);
+          // the campaign must not die with workers live — fall back to the
+          // infallible restart-rule rebuild (review 2026-08-02).
+          appendJournal(dir, {
+            kind: "note",
+            note: `compaction failed (${String(e).slice(0, 200)}); rebuilding via restart rule`,
+          });
+          coordinator = undefined;
+        }
       } else {
         appendJournal(dir, {
           kind: "note",
@@ -1107,8 +1136,10 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           models,
         },
         {
-          sessionId: `coord-${coordinatorEpoch}-${randomUUID().slice(0, 8)}`,
-          sessionsRoot: path.join(dir, ".coverify", "sessions"),
+          // Matches the turns sidecar name (coordinator-<epoch>); the JSONL
+          // filename adds a timestamp, so restarts never collide.
+          sessionId: `coordinator-${coordinatorEpoch}`,
+          sessionsRoot,
           cwd: dir,
         },
       );
@@ -1127,15 +1158,18 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         : "";
     // The contract's restart rule, applied at the compaction boundary: the
     // summary is soft context; the ledgers are what the coordinator re-reads.
-    const rereadNudge = justCompacted
-      ? "\nYour context was just compacted. Per the contract's restart rule, reread STATEMENT.md, " +
-        "CURRENT_FRONTIER.md, actionable lessons, and the registry index before further decisions; " +
-        "the compaction summary never overrides the ledgers.\n"
+    // Post-compaction the contract's reread is SUPPLIED, not merely
+    // instructed — the same resume bundle a rebuilt coordinator gets, so the
+    // compaction branch enforces the identical clause (review 2026-08-02).
+    const rereadBlock = justCompacted
+      ? "Your context was just compacted. Per the contract's restart rule, the current ledgers " +
+        "follow; the compaction summary never overrides them.\n\n" +
+        `${resumeBundle(dir)}\n\n---\n\n`
       : "";
     lastWakeText = await coordinator.ask(
       fresh
         ? `${resumeBundle(dir)}\n\n---\n\nCampaign directory: ${dir}\n${lostNote}${digest}${idleNudge}\n\n${newsBlock}`
-        : `${rereadNudge}${lostNote}${digest}${idleNudge}${compactionWarning}\n\n${newsBlock}`,
+        : `${rereadBlock}${lostNote}${digest}${idleNudge}${compactionWarning}\n\n${newsBlock}`,
     );
     appendJournal(dir, {
       kind: "usage",
