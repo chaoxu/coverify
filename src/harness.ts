@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -32,7 +33,6 @@ import {
   CHARGES,
   RUN_MEM_MB,
   RUN_TIMEOUT_MS,
-  createRoleSession,
   createHarnessRoleSession,
   isCliProvider,
   roleModelSpec,
@@ -1057,34 +1057,61 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         : "";
     // Resident coordinator: rebuild only at start or past the context cap
     // (the compaction analog — the launcher's restart rule is the rebuild).
+    let justCompacted = false;
     if (coordinator && coordinator.approxTokens() > COORDINATOR_CONTEXT_TOKENS) {
-      appendJournal(dir, {
-        kind: "note",
-        note: `coordinator context cap (${COORDINATOR_CONTEXT_TOKENS} tok) reached; rebuilding via restart rule`,
-      });
-      coordinator = undefined;
+      if (coordinator.compact) {
+        // Redesign phase 2: real in-place compaction (the launcher's
+        // anticipated "context compaction") instead of session kill+rebuild.
+        // The reread rule fires in the next wake message; the summary is
+        // explicitly subordinated to the ledgers.
+        appendJournal(dir, {
+          kind: "note",
+          note: `coordinator context cap (${COORDINATOR_CONTEXT_TOKENS} tok) reached; compacting (restart rule applies)`,
+        });
+        await coordinator.compact(
+          "The campaign ledgers (STATEMENT.md, CURRENT_FRONTIER.md, REGISTRY.md, FAILED.md, " +
+            "PROVED.md, PROCESS_LESSONS.md) are the durable state and remain authoritative; this " +
+            "summary is soft context only and must never be cited over them. Preserve precisely: " +
+            "live agent assignments and their mechanisms, the verification queue state, dispatch " +
+            "decisions not yet externalized, and open questions from the newest reports.",
+        );
+        justCompacted = true;
+      } else {
+        appendJournal(dir, {
+          kind: "note",
+          note: `coordinator context cap (${COORDINATOR_CONTEXT_TOKENS} tok) reached; rebuilding via restart rule`,
+        });
+        coordinator = undefined;
+      }
     }
     let fresh = false;
     if (coordinator === undefined) {
       fresh = true;
       coordinatorEpoch++;
-      coordinator = createRoleSession({
-        contract,
-        charge: CHARGES.coordinator,
-        workspace: { cwd: dir, scope: coordinatorScope },
-        extraTools: [
-          dispatchReasoner,
-          dispatchTechnician,
-          dispatchGateCritic,
-          requestVerification,
-          recordPromotion,
-          cancelWorker,
-          steerWorker,
-          declareState,
-        ],
-        spec: roleModelSpec("coordinator"),
-        models,
-      });
+      coordinator = await createHarnessRoleSession(
+        {
+          contract,
+          charge: CHARGES.coordinator,
+          workspace: { cwd: dir, scope: coordinatorScope },
+          extraTools: [
+            dispatchReasoner,
+            dispatchTechnician,
+            dispatchGateCritic,
+            requestVerification,
+            recordPromotion,
+            cancelWorker,
+            steerWorker,
+            declareState,
+          ],
+          spec: roleModelSpec("coordinator"),
+          models,
+        },
+        {
+          sessionId: `coord-${coordinatorEpoch}-${randomUUID().slice(0, 8)}`,
+          sessionsRoot: path.join(dir, ".coverify", "sessions"),
+          cwd: dir,
+        },
+      );
     }
     const newsBlock =
       reportSections.length > 0
@@ -1093,15 +1120,22 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     // Pre-compaction warning: past 80% of the cap, remind the coordinator
     // that the next rebuild will start from the ledgers alone.
     const compactionWarning =
-      !fresh && coordinator.approxTokens() > COORDINATOR_CONTEXT_TOKENS * 0.8
-        ? "\nNote: your session is approaching its context cap and will soon be rebuilt from the " +
-          "ledgers alone (the contract's restart rule). Anything living only in this conversation " +
-          "will be lost — ensure CURRENT_FRONTIER.md and the registry capture it now."
+      !fresh && !justCompacted && coordinator.approxTokens() > COORDINATOR_CONTEXT_TOKENS * 0.8
+        ? "\nNote: your session is approaching its context cap and will soon be compacted " +
+          "(the contract's restart rule applies at that boundary). Anything living only in this " +
+          "conversation must be externalized — ensure CURRENT_FRONTIER.md and the registry capture it now."
         : "";
+    // The contract's restart rule, applied at the compaction boundary: the
+    // summary is soft context; the ledgers are what the coordinator re-reads.
+    const rereadNudge = justCompacted
+      ? "\nYour context was just compacted. Per the contract's restart rule, reread STATEMENT.md, " +
+        "CURRENT_FRONTIER.md, actionable lessons, and the registry index before further decisions; " +
+        "the compaction summary never overrides the ledgers.\n"
+      : "";
     lastWakeText = await coordinator.ask(
       fresh
         ? `${resumeBundle(dir)}\n\n---\n\nCampaign directory: ${dir}\n${lostNote}${digest}${idleNudge}\n\n${newsBlock}`
-        : `${lostNote}${digest}${idleNudge}${compactionWarning}\n\n${newsBlock}`,
+        : `${rereadNudge}${lostNote}${digest}${idleNudge}${compactionWarning}\n\n${newsBlock}`,
     );
     appendJournal(dir, {
       kind: "usage",

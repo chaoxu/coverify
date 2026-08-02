@@ -943,6 +943,10 @@ export interface RoleSession {
   /** Per-message request telemetry (what was sent/generated per turn) — for
    *  cache-effectiveness and failure diagnosis; never prompt text itself. */
   turns(): TurnRecord[];
+  /** In-place lossy compaction (harness-backed sessions only): summarize
+   *  older turns, keep a recent tail verbatim. The caller owns the policy
+   *  and the contract's post-compaction reread rule. */
+  compact?(customInstructions?: string): Promise<void>;
   /** Inject a steering message while the session is running. */
   steer(text: string): void;
   /** Abort the session's current run. */
@@ -1218,10 +1222,19 @@ export async function createHarnessRoleSession(
   });
   // Sync RoleSession surface over async session storage: the message cache
   // refreshes after every completed run (telemetry reads between runs).
-  let cachedMessages: AgentMessage[] = [];
+  // Two views on purpose: `allMessages` (every message ever, across all
+  // branches — usage totals and turn telemetry never un-count compacted
+  // spend) vs `contextMessages` (session.buildContext() — what the model
+  // actually sees next call).
+  let allMessages: AgentMessage[] = [];
+  let contextMessages: AgentMessage[] = [];
   const refresh = async () => {
-    const entries = await session.getBranch();
-    cachedMessages = entries.flatMap((e) => (e.type === "message" ? [e.message] : []));
+    // getEntries (not getBranch): compaction moves the leaf to a new branch,
+    // and usage/turn totals must keep counting the abandoned one — spend
+    // doesn't un-happen at a compaction boundary.
+    const entries = await session.getEntries();
+    allMessages = entries.flatMap((e) => (e.type === "message" ? [e.message] : []));
+    contextMessages = (await session.buildContext()).messages;
   };
   return {
     async ask(prompt: string): Promise<string> {
@@ -1234,13 +1247,17 @@ export async function createHarnessRoleSession(
         .join("\n");
     },
     approxTokens(): number {
-      return estimateContextTokens(cachedMessages).tokens;
+      return estimateContextTokens(contextMessages).tokens;
     },
     usage(): RoleUsage {
-      return sumMessagesUsage(cachedMessages);
+      return sumMessagesUsage(allMessages);
     },
     turns(): TurnRecord[] {
-      return messagesToTurns(cachedMessages);
+      return messagesToTurns(allMessages);
+    },
+    async compact(customInstructions?: string): Promise<void> {
+      await harness.compact(customInstructions);
+      await refresh();
     },
     steer(text: string): void {
       void harness.steer(text);
