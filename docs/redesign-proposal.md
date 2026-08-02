@@ -131,6 +131,25 @@ Verified enablers (pi-coding-agent 0.83.0, in our lockfile today):
 - A hard fork of pi (oh-my-pi-style): maximum control, zero upstream flow
   — the exact failure mode this proposal exists to end.
 
+## Verification record (review/simplify loop, 2026-08-02)
+
+Round 1: six-perspective review (adversarial, conformance,
+simplification+reuse, efficiency+altitude) → 96c81b0 (two would-be
+campaign-killers fixed: idle-steer unhandled rejection, uncaught
+CompactionError; telemetry-on-failure, compaction spend counted, cancel
+races guarded, wire log restored, post-compaction bundle re-supplied,
+quadratic turns dump made incremental, session layout unified).
+Round 2: fixes verified against pi source + live smokes → 048f0dd
+(response hook proven never-emitted upstream and removed; coordinator-turn
+provider failure made recoverable; steer text honest). Converged.
+
+Deferred with eyes open: unify runRole onto a MemorySessionRepo harness
+session (deletes the second RoleSession implementation); decide the
+two-transcript-store question by either landing crash-resume from session
+trees or retiring the sidecars for harness sessions; prompt-purity is
+source-verified + constructor-verbatim (no runtime getter exists to
+assert against — revisit on pi upgrade).
+
 ## Follow-ups once decided
 
 - Monthly pi-upstream review routine (release notes, issues touching
