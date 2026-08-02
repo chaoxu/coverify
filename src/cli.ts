@@ -27,9 +27,8 @@ function usage(): never {
   coverify prove "<exact statement>" [--dir campaign] [--agent-limit N] [--max-wakes N]
   coverify resume [--dir campaign] [--agent-limit N] [--max-wakes N]
   coverify status [--dir campaign]
-  coverify trace [--dir campaign] [--out file] [--format html|perfetto]
-                                    render the journal as a timeline: a self-contained HTML page,
-                                    or Chrome Trace Event JSON for ui.perfetto.dev
+  coverify trace [--dir campaign] [--out file]
+                                    render the journal as a self-contained HTML timeline
   coverify turns [--dir campaign] [--session substr]
                                     per-turn telemetry derived from the session trees (sizes/usage/
                                     gaps/stopReason, no content); without --session, one summary
@@ -230,13 +229,8 @@ switch (command) {
       console.error(`no campaign at ${dir}`);
       process.exit(1);
     }
-    const format = flags.get("format") ?? "html";
-    if (format !== "html" && format !== "perfetto") usage();
-    const out = writeTrace(dir, flags.get("out"), format);
-    console.error(
-      `[coverify] trace written: ${out}` +
-        (format === "perfetto" ? " — open it at https://ui.perfetto.dev (parsed locally in the browser)" : ""),
-    );
+    const out = writeTrace(dir, flags.get("out"));
+    console.error(`[coverify] trace written: ${out}`);
     console.log(out);
     break;
   }

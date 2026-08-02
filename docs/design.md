@@ -297,21 +297,12 @@ labelled "not recorded by the harness revision that ran this campaign"
 rather than rendered blank.
 
 The page leads with its own view — summary tiles, the timeline, the table —
-because that is the monitoring read: campaign-shaped, instant, offline. Below
-it, a "deep dive" panel embeds the real Perfetto UI on demand: it hands the trace to
-ui.perfetto.dev over Perfetto's `postMessage` deep-link protocol (PING/PONG,
-then an ArrayBuffer), so opening the page on a host like `artifacts.lab`
-shows the full Perfetto timeline with data already loaded — no download, no
-drag-and-drop. It loads only when asked, so the page stays instant and works
-with no network. Perfetto asks once per origin whether to trust the page
-("Always trust" makes it permanent) and never uploads the trace.
-`--format perfetto` emits the same trace as standalone Chrome Trace Event
-JSON for ui.perfetto.dev or chrome://tracing — agent lifetimes as slices on their own
-track, verdicts and wakes as instants, live-agent count as a counter track.
-Perfetto parses locally in the browser, so campaign data stays on the
-machine unless you explicitly share it; verified against Perfetto's own
-`trace_processor`. Neither format is a second state system: both are
-projections of the journal.
+because that is the monitoring read: campaign-shaped, instant, offline. A
+Perfetto deep-dive surface (embedded ui.perfetto.dev + `--format perfetto`
+export) existed briefly and was removed 2026-08-02: campaign traces are
+dozens of events at minute granularity, and the offline timeline answers
+them. The trace is not a second state system: it is a projection of the
+journal.
 
 Both are read-only by construction — they consume harness audit metadata and
 write one file under `.coverify/`, never campaign state, so they cannot

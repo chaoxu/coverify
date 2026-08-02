@@ -108,10 +108,6 @@ export const STYLES = String.raw`
   .inspect .absent { color: var(--ink-3); font-style: italic; }
   .inspect .pill { display: inline-block; font-family: var(--mono); font-size: 10.5px; padding: 2px 7px; border-radius: 10px; border: 1px solid var(--rule-strong); color: var(--ink-2); }
   .empty-inspect { padding: 16px 18px; color: var(--ink-3); font-size: 13px; border-top: 1px solid var(--rule); }
-  .embed { position: relative; height: 720px; background: var(--surface); }
-  .embed iframe { width: 100%; height: 100%; border: 0; display: block; }
-  .embed .fallback { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; padding: 24px; color: var(--ink-3); font-size: 13px; }
-  .embed .fallback p { margin: 0; max-width: 46ch; }
   .status { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
 
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
@@ -161,22 +157,6 @@ export const BODY = String.raw`
     <div class="legend" id="legend"></div>
     <div id="inspect" class="empty-inspect">Click any bar or mark to inspect it &mdash; the packet it was given, its
       model, and its report.</div>
-  </section>
-
-  <section class="panel">
-    <div class="panel-head">
-      <div>
-        <h2>Deep dive in Perfetto</h2>
-        <p class="note" id="pstatus">The same trace in the full Perfetto UI: microsecond zoom, search across
-          every slice, SQL over the whole run. Loads from ui.perfetto.dev on demand.</p>
-      </div>
-      <div class="controls">
-        <button class="ctl" id="retry">Load Perfetto here</button>
-        <button class="ctl" id="popout">Open in a new tab</button>
-        <button class="ctl" id="download">Download .json</button>
-      </div>
-    </div>
-    <div class="embed hidden" id="embed"></div>
   </section>
 
   <section class="panel">
@@ -477,62 +457,5 @@ export const VIEW = String.raw`
   document.getElementById("findings").innerHTML = findings
     .map(([h, p]) => '<div class="finding"><h3>' + h + "</h3><p>" + p + "</p></div>").join("");
 
-  // ---- hand the same trace to the real Perfetto UI ----
-  // Deep-linking protocol: open (or embed) ui.perfetto.dev, PING until it
-  // answers PONG, then post the trace buffer. Perfetto never uploads it &mdash; the
-  // data stays in the browser, which is why this works for a private campaign.
-  const ORIGIN = "https://ui.perfetto.dev";
-  const status = document.getElementById("pstatus");
-  const buffer = () => new TextEncoder().encode(JSON.stringify(PERFETTO)).buffer;
-  const payload = () => ({
-    perfetto: { buffer: buffer(), title: DATA.title || "coverify campaign", fileName: (DATA.slug || "campaign") + ".perfetto.json" },
-  });
-  function handOff(target, onDone) {
-    let tries = 0;
-    const ping = setInterval(() => {
-      if (++tries > 120) { clearInterval(ping); onDone(false); return; }
-      try { target.postMessage("PING", ORIGIN); } catch (e) { /* not ready */ }
-    }, 250);
-    const onMsg = (e) => {
-      if (e.data !== "PONG") return;
-      clearInterval(ping);
-      window.removeEventListener("message", onMsg);
-      target.postMessage(payload(), ORIGIN);
-      onDone(true);
-    };
-    window.addEventListener("message", onMsg);
-  }
-  function embed() {
-    const host = document.getElementById("embed");
-    if (host.dataset.loaded) return;
-    host.dataset.loaded = "1";
-    host.classList.remove("hidden");
-    const frame = document.createElement("iframe");
-    frame.src = ORIGIN + "/#!/?mode=embedded";
-    frame.title = "Perfetto UI";
-    frame.setAttribute("referrerpolicy", "no-referrer");
-    host.appendChild(frame);
-    status.textContent = "Waiting for ui.perfetto.dev&hellip; it will ask whether to trust this page; " +
-      "choose Always trust. The trace is passed in-browser and never uploaded.";
-    handOff(frame.contentWindow, (ok) => {
-      status.textContent = ok
-        ? "Trace sent to Perfetto &mdash; answer its trust prompt to view it. W/S zoom, A/D pan, / search."
-        : "ui.perfetto.dev did not respond &mdash; no network? The timeline above works offline.";
-    });
-  }
-  document.getElementById("retry").addEventListener("click", embed);
-  document.getElementById("popout").addEventListener("click", () => {
-    const win = window.open(ORIGIN);
-    if (!win) { status.textContent = "Popup blocked &mdash; allow popups, or use the embedded view."; return; }
-    handOff(win, (ok) => { status.textContent = ok ? "Opened in a new tab." : "The new tab did not respond."; });
-  });
-  document.getElementById("download").addEventListener("click", () => {
-    const url = URL.createObjectURL(new Blob([JSON.stringify(PERFETTO)], { type: "application/json" }));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = (DATA.slug || "campaign") + ".perfetto.json";
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
-  });
 })();
 `;

@@ -25,7 +25,6 @@ bun run src/cli.ts status --dir campaign
 bun run src/cli.ts resume --dir campaign
 bun run src/cli.ts amend --dir campaign    # accept an explicit user amendment of STATEMENT.md
 bun run src/cli.ts trace --dir campaign                     # self-contained HTML timeline
-bun run src/cli.ts trace --dir campaign --format perfetto    # Chrome Trace Event JSON
 bun run src/cli.ts turns --dir campaign                      # per-session telemetry summary
 bun run src/cli.ts turns --dir campaign --session <substr>   # TurnRecord JSONL for one session
 ```
