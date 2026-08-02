@@ -169,8 +169,8 @@ Observability layering (redesign phases 1–3): the **pi session JSONL trees**
 under `.coverify/sessions/` are the authoritative per-agent transcripts
 (full content, branchable, crash-survivable) and the single transcript
 store — per-turn telemetry (sizes/usage/gaps/stopReason) is a pure
-function of the stored messages, derived on demand rather than maintained
-as a sidecar; the
+function of the stored messages, derived on demand by `coverify turns`
+(src/turns.ts, read-only) rather than maintained as a sidecar; the
 journal remains the event index. A campaign directory is now openable in
 three harnesses: coverify headless, the raw skill in Codex, and interactive
 pi with `src/pi-extension.ts` loaded.

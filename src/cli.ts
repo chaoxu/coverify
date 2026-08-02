@@ -13,6 +13,7 @@ import {
 } from "./roles.js";
 import { runCampaign } from "./harness.js";
 import { writeTrace } from "./trace.js";
+import { campaignTurns } from "./turns.js";
 
 function usage(): never {
   console.error(`usage:
@@ -22,6 +23,10 @@ function usage(): never {
   coverify trace [--dir campaign] [--out file] [--format html|perfetto]
                                     render the journal as a timeline: a self-contained HTML page,
                                     or Chrome Trace Event JSON for ui.perfetto.dev
+  coverify turns [--dir campaign] [--session substr]
+                                    per-turn telemetry derived from the session trees (sizes/usage/
+                                    gaps/stopReason, no content); without --session, one summary
+                                    line per session; with it, TurnRecord JSONL on stdout
   coverify amend [--dir campaign]   accept an explicit user amendment of STATEMENT.md
   coverify login <provider>         subscription OAuth (anthropic = Claude Pro/Max,
                                     openai-codex = ChatGPT; credential -> ~/.config/coverify/auth.json)
@@ -203,6 +208,34 @@ switch (command) {
         (format === "perfetto" ? " — open it at https://ui.perfetto.dev (parsed locally in the browser)" : ""),
     );
     console.log(out);
+    break;
+  }
+  case "turns": {
+    if (!campaignExists(dir)) {
+      console.error(`no campaign at ${dir}`);
+      process.exit(1);
+    }
+    const filter = flags.get("session");
+    const sessions = campaignTurns(dir).filter(
+      (s) => filter === undefined || s.file.includes(filter) || s.id.includes(filter),
+    );
+    if (sessions.length === 0) {
+      console.error(filter === undefined ? "no sessions recorded" : `no session matches "${filter}"`);
+      process.exit(1);
+    }
+    if (filter === undefined) {
+      for (const s of sessions) {
+        const u = s.usage;
+        const hit = u.input + u.cacheRead > 0 ? u.cacheRead / (u.input + u.cacheRead) : 0;
+        console.log(
+          `${s.file}  messages=${s.turns.length} in=${u.input} out=${u.output} ` +
+            `cacheRead=${u.cacheRead} cacheHit=${(hit * 100).toFixed(0)}%` +
+            (u.costUSD ? ` cost=$${u.costUSD.toFixed(2)}` : ""),
+        );
+      }
+    } else {
+      for (const s of sessions) for (const t of s.turns) console.log(JSON.stringify(t));
+    }
     break;
   }
   default:
