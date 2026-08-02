@@ -122,11 +122,6 @@ export function sha256File(p: string): string {
 }
 
 /**
- * Minimal resume/wake bundle. Launcher: "After restart or context compaction,
- * reread the skill, STATEMENT.md, CURRENT_FRONTIER.md, actionable lessons,
- * the registry index, and every detailed claim actually reused."
- */
-/**
  * Statements-only projection of PROVED.md for prompt contexts: each entry is
  * cut at its provenance metadata (**Dependencies:** / **Audit artifacts:**),
  * keeping the heading, theorem statements, and scope. The ledger itself is
@@ -145,6 +140,11 @@ export function promotedStatementsView(dir: string): string {
     .join("\n\n");
 }
 
+/**
+ * Minimal resume/wake bundle. Launcher: "After restart or context compaction,
+ * reread the skill, STATEMENT.md, CURRENT_FRONTIER.md, actionable lessons,
+ * the registry index, and every detailed claim actually reused."
+ */
 export function resumeBundle(dir: string): string {
   return [
     readLedger(dir, "STATEMENT.md"),

@@ -17,7 +17,8 @@ Codex session running the skill can resume a coverify campaign and vice versa.
 ```bash
 bun install
 
-# default routing needs only a logged-in official `claude` CLI (subscription);
+# default routing needs `coverify login openai-codex` (ChatGPT subscription) plus the
+# `codex` and `claude` binaries (the hostile auditor stays on Claude);
 # API-key env vars are needed only for api-provider role overrides
 bun run src/cli.ts prove "Exact statement to resolve." --dir campaign
 bun run src/cli.ts status --dir campaign
@@ -59,10 +60,12 @@ so every candidate still gets one cross-family (Claude) audit; the journal
 records the model family per call. When ChatGPT quota is exhausted,
 `COVERIFY_MODEL_REASONER=claude-cli/opus` falls back to all-Anthropic, and
 `COVERIFY_MODEL_RECONSTRUCTOR=google/gemini-3.6-flash` remains the cheap
-third-family trial candidate. Override globally with `COVERIFY_MODEL` or per role with
-`COVERIFY_MODEL_{COORDINATOR,REASONER,TECHNICIAN,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}`.
+third-family trial candidate. Override per role with
+`COVERIFY_MODEL_{COORDINATOR,REASONER,TECHNICIAN,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}`
+(the only model override).
 Auth per provider: the logged-in `claude` binary for `claude-bridge`/
-`claude-cli`, env API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`), or
+`claude-cli`, env API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`GEMINI_API_KEY`), or
 OAuth via `coverify login anthropic|openai-codex`
 (`~/.config/coverify/auth.json`, auto-refresh). **Billing caution:**
 third-party OAuth against Anthropic reportedly draws Extra Credits, not the
@@ -86,8 +89,9 @@ The harness (TypeScript, the only persistent process) owns the scheduler and
 the gates; ephemeral model calls own the judgment:
 
 - **Coordinator** — a resident session across wakes (as when the skill runs
-  live in Codex/Claude Code), rebuilt from the campaign files at a context
-  cap — the compaction analog; sole ledger writer; tools:
+  live in Codex/Claude Code); at the context cap it compacts in place — the
+  launcher's anticipated "context compaction", with kill-and-rebuild from
+  the campaign files as the fallback; sole ledger writer; tools:
   `dispatch_reasoner`, `dispatch_technician`, `dispatch_gate_critic`,
   `request_verification`, `record_promotion`, `cancel_agent`, `steer_agent`,
   `declare_campaign_state`, plus read/ls/grep and a scoped prose write tool
@@ -149,5 +153,5 @@ launcher clause) and the adversarial review record, and
 ## Checks
 
 ```bash
-bun run check   # typecheck + launcher-token conformance check
+bun run check   # typecheck + launcher-token conformance check + enforcement tests in tests/
 ```

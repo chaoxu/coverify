@@ -4,3 +4,4 @@ campaign/
 .env.*
 *.log
 .DS_Store
+.claude/

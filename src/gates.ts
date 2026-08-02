@@ -4,8 +4,8 @@ import * as path from "node:path";
 import { appendJournal, sha256File, sha256Text } from "./campaign.js";
 
 /**
- * Gate state store. Gate decisions must not depend on files any role's bash
- * can edit, so the authoritative record lives OUTSIDE the campaign directory
+ * Gate state store. Gate decisions must not depend on files any role's
+ * workspace write tools can edit, so the authoritative record lives OUTSIDE the campaign directory
  * (in ~/.local/state/coverify/<campaign-id>/gates.jsonl) and is mirrored into
  * the campaign journal for auditability. Content hashes recorded here are
  * harness-generated audit metadata, which the launcher explicitly permits.
@@ -283,7 +283,7 @@ export function acceptedStatementHash(store: GateStore): string | undefined {
  * reconstruction to the candidate, not to the blind reconstructor itself)
  * whose hashes still match the files on disk.
  */
-export function verificationState(store: GateStore, dir: string, revision: string) {
+function verificationState(store: GateStore, dir: string, revision: string) {
   const candidatePath = path.join(dir, "EVIDENCE", revision);
   const candidateHash = fs.existsSync(candidatePath) ? sha256File(candidatePath) : undefined;
   const stmtHash = statementHash(dir);

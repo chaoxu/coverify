@@ -71,9 +71,11 @@ const NOOP_WAKE_PAUSE = 3;
 
 /** Coordinator context cap (approx tokens). The coordinator stays resident
  *  across wakes — matching how the skill runs in a live harness session —
- *  until this cap, which is the compaction analog: the session is rebuilt
- *  via the launcher's restart rule (reread statement, frontier, lessons,
- *  registry index). Mechanics: the cap changes cost, not semantics, because
+ *  until this cap, at which point the session compacts in place (the
+ *  launcher's anticipated "context compaction", summary subordinated to the
+ *  ledgers, restart-rule reread in the next wake message); kill-and-rebuild
+ *  via the restart rule remains the fallback when compaction is unavailable
+ *  or fails. Mechanics: the cap changes cost, not semantics, because
  *  every decision must be externalized to the ledgers regardless. */
 const COORDINATOR_CONTEXT_TOKENS = Number(process.env.COVERIFY_COORDINATOR_CONTEXT_TOKENS ?? 300_000);
 
@@ -89,8 +91,8 @@ function harnessRevision(): string {
 
 /**
  * The harness event loop — the only persistent process. Completions wake the
- * resident coordinator session (rebuilt from the ledgers at its context cap —
- * the compaction analog); there is no polling.
+ * resident coordinator session (compacted in place at its context cap, with
+ * ledger rebuild as the fallback); there is no polling.
  */
 export async function runCampaign(opts: CampaignOptions): Promise<string> {
   const dir = path.resolve(opts.campaignDir);
@@ -1076,8 +1078,9 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         ? "\nNothing is live and no new reports arrived. Per the contract the campaign remains " +
           "authorized: dispatch the next materially new fan-out, or explicitly declare_campaign_state."
         : "";
-    // Resident coordinator: rebuild only at start or past the context cap
-    // (the compaction analog — the launcher's restart rule is the rebuild).
+    // Resident coordinator: at the context cap the session compacts in
+    // place; rebuild happens only at start, on compaction failure, or after
+    // a failed coordinator turn (the launcher's restart rule is the rebuild).
     let justCompacted = false;
     if (coordinator && coordinator.approxTokens() > COORDINATOR_CONTEXT_TOKENS) {
       if (coordinator.compact) {

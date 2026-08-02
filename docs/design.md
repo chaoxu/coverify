@@ -141,8 +141,10 @@ rewrites must preserve the existing content as an unchanged prefix
 (launcher: append-only), and `literature-<n>.md` librarian reports are
 immutable. Enforcement tests live in `tests/` and run in `bun run check`. Script writes are OS-sandboxed on macOS (`sandbox-exec`,
 deny-default writes; reads unrestricted) to the same scope. On non-darwin
-platforms the script sandbox is currently instructed-only — say so honestly;
-do not claim platform enforcement there. (A campaign placed under the system
+platforms the same scope is enforced via `@landstrip/landstrip`
+(Landlock + seccomp, deny-default writes and networking); only if the
+landstrip binary is missing does confinement degrade to instructed-only,
+announced loudly at run start. (A campaign placed under the system
 temp tree is inside the sandbox's blanket temp allowance — keep campaigns in
 real project directories.) Long or parallel computation goes through the
 scheduler front door, per the launcher.
@@ -167,7 +169,8 @@ Observability layering (redesign phases 1–3): the **pi session JSONL trees**
 under `.coverify/sessions/` are the authoritative per-agent transcripts
 (full content, branchable, crash-survivable); the `.coverify/turns/`
 sidecars are a derived flat view (sizes/usage/gaps/stopReason, no content)
-kept because they also cover CLI single-shots and are grep-friendly; the
+of harness sessions only — a durable, grep-friendly per-turn transcript
+store (CLI single-shots have no session and emit no turn records); the
 journal remains the event index. A campaign directory is now openable in
 three harnesses: coverify headless, the raw skill in Codex, and interactive
 pi with `src/pi-extension.ts` loaded.
@@ -246,7 +249,9 @@ requires a rebuttal artifact to exist, but its content is never read or
 shown to a verifier; the anti-shopping property is that every attempt stays
 on record and the latest verdict per stage decides, not that a determined
 coordinator cannot resample.
-Non-darwin platforms: write confinement instructed-only. `claude-cli/*`
+Non-darwin platforms: write confinement OS-enforced via landstrip
+(Landlock + seccomp), degrading loudly to instructed-only when the binary
+is absent. `claude-cli/*`
 verdict roles run as `claude -p` subprocesses: fresh process per call, run
 in an empty temp directory, but the CLI carries its own tools (file read,
 web search) — their isolation is instructed-only, and the journal's
@@ -437,7 +442,9 @@ harnesses directly — `claude -p` / `codex exec` — via a harness-provided
 - [ ] Citation lint (mechanics: cited evidence paths exist; never parses content)
 - [x] Per-call token accounting in the journal (provider-reported usage on
       completions, verification records, gate verdicts; cumulative per-wake
-      coordinator entry; CLI backends report none) — unblocks the evals
+      coordinator entry; claude-cli/codex-cli parse usage from JSON output,
+      only chatgpt-cli and env-overridden templates without JSON output
+      report none) — unblocks the evals
       token gauges
 - [x] Per-role model specs (`provider/model[@thinking]`; providers:
       anthropic, openai, openai-codex (subscription OAuth), google,

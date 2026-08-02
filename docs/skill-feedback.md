@@ -66,8 +66,8 @@ convention if it recurs.
 Activation-test status for the deferred items below, after campaign 1:
 tiered verification — no evidence either way; all three promotions were
 load-bearing or final, so full cadence was justified, and the journal
-records no token usage, so the spend half of the test is unmeasurable until
-per-call token accounting lands (design.md roadmap). Idea generation — no
+records no token usage, so the spend half of the test was unmeasurable at
+the time; per-call token accounting has since landed (design.md roadmap). Idea generation — no
 evidence; one mechanism family sufficed at this statement size. Both stay
 deferred.
 
@@ -211,7 +211,8 @@ becoming a visible share of coordinator output tokens.
 2. **Ambient status instead of polling** — add to the adapter if live skill
    runs show coordinators polling workers.
 3. **Compaction-boundary context discipline** — the harness now runs a
-   resident coordinator rebuilt at a context cap via the restart rule; if
+   resident coordinator compacted in place at a context cap (restart-rule
+   rebuild as fallback); if
    live *skill* runs show coordinator bloat between compactions, generalize
    the restart rule to a per-checkpoint discipline in the launcher.
 4. **Gate-verdict location** — the launcher now requires recording every

@@ -24,7 +24,7 @@ import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import { fileCredentialStore } from "./credentials.js";
-import { claudeBridgeProvider } from "./claude-bridge.js";
+import { CLAUDE_BRIDGE_ID, claudeBridgeProvider } from "./claude-bridge.js";
 import { Type } from "typebox";
 
 const OUTPUT_LIMIT = 50_000;
@@ -67,10 +67,7 @@ function positiveEnvNumber(raw: string | undefined, fallback: number): number {
 
 /** Wall limit for one run_script batch / one librarian call. Never a
  *  proof-work timebox (the launcher forbids those) — supervision only. */
-export const RUN_TIMEOUT_MS = positiveEnvNumber(
-  process.env.COVERIFY_RUN_TIMEOUT_MS ?? process.env.COVERIFY_BASH_TIMEOUT_MS,
-  600_000,
-);
+export const RUN_TIMEOUT_MS = positiveEnvNumber(process.env.COVERIFY_RUN_TIMEOUT_MS, 600_000);
 
 export type Models = ReturnType<typeof createModels>;
 
@@ -105,7 +102,7 @@ export interface ModelSpec {
     | "openai"
     | "openai-codex"
     | "google"
-    | "claude-bridge"
+    | typeof CLAUDE_BRIDGE_ID
     | "claude-cli"
     | "codex-cli"
     | "chatgpt-cli";
@@ -144,8 +141,8 @@ const ROLE_ENV: Record<RoleName, string> = {
  *  (the independent audit): it stays on Opus via `claude -p`, so every
  *  candidate still gets one cross-family check. Third-party OAuth against
  *  Anthropic draws Extra Credits, hence the official Claude CLI. Every
- *  role is overridable per-role or globally. */
-const ROLE_DEFAULTS: Partial<Record<RoleName, string>> = {
+ *  role is overridable per-role via COVERIFY_MODEL_<ROLE>. */
+const ROLE_DEFAULTS: Record<RoleName, string> = {
   coordinator: "openai-codex/gpt-5.6-sol@max",
   reasoner: "openai-codex/gpt-5.6-sol@max",
   technician: "openai-codex/gpt-5.6-sol@max",
@@ -156,10 +153,8 @@ const ROLE_DEFAULTS: Partial<Record<RoleName, string>> = {
   comparator: "codex-cli/gpt-5.6-sol",
 };
 
-const BASE_DEFAULT = "anthropic/claude-opus-5@high";
-
 /** Spec format: `provider/model[@thinking]`; bare model id means anthropic. */
-export function parseModelSpec(spec: string): ModelSpec {
+function parseModelSpec(spec: string): ModelSpec {
   const [modelPart, thinking = "high"] = spec.split("@");
   const slash = modelPart.indexOf("/");
   const provider = slash < 0 ? "anthropic" : modelPart.slice(0, slash);
@@ -169,7 +164,7 @@ export function parseModelSpec(spec: string): ModelSpec {
     provider !== "openai" &&
     provider !== "openai-codex" &&
     provider !== "google" &&
-    provider !== "claude-bridge" &&
+    provider !== CLAUDE_BRIDGE_ID &&
     provider !== "claude-cli" &&
     provider !== "codex-cli" &&
     provider !== "chatgpt-cli"
@@ -179,11 +174,9 @@ export function parseModelSpec(spec: string): ModelSpec {
   return { provider, modelId, thinking: thinking as ThinkingLevel };
 }
 
-/** Resolution: COVERIFY_MODEL_<ROLE> > role default > COVERIFY_MODEL > base. */
+/** Resolution: COVERIFY_MODEL_<ROLE> > role default (every role has one). */
 export function roleModelSpec(role: RoleName): ModelSpec {
-  return parseModelSpec(
-    process.env[ROLE_ENV[role]] ?? ROLE_DEFAULTS[role] ?? process.env.COVERIFY_MODEL ?? BASE_DEFAULT,
-  );
+  return parseModelSpec(process.env[ROLE_ENV[role]] ?? ROLE_DEFAULTS[role]);
 }
 
 export function specLabel(spec: ModelSpec): string {
@@ -814,7 +807,8 @@ export interface RoleRun {
 /**
  * Run one fresh, ephemeral role instance (single-shot roles: idea-gate
  * critic, hostile auditor, bundle certifier, reconstructor, comparator).
- * The coordinator and dispatched agents use createRoleSession directly. What each
+ * The coordinator and dispatched agents run as durable sessions via
+ * createHarnessRoleSession (harness.ts). What each
  * instance sees is decided by the bundle its caller builds; the journal
  * records supplied inputs and which restrictions are platform-enforced
  * versus instructed.
@@ -854,7 +848,7 @@ interface CliBackend {
  *  for machine-readable output so per-call token usage reaches the journal
  *  (claude: result JSON on stdout; codex: JSONL events with turn usage);
  *  an env-overridden template without those flags degrades to text-only. */
-export const CLI_BACKENDS: Record<"claude-cli" | "codex-cli" | "chatgpt-cli", CliBackend> = {
+const CLI_BACKENDS: Record<"claude-cli" | "codex-cli" | "chatgpt-cli", CliBackend> = {
   "claude-cli": {
     env: "COVERIFY_CLAUDE_CMD",
     cmd: "claude -p --model {model} --output-format json",
@@ -1002,7 +996,7 @@ function runCliRole(
 
 export interface RoleSession {
   ask(prompt: string): Promise<string>;
-  /** Rough context size in tokens (chars/4 over the message history). */
+  /** Context size in tokens from pi's estimator over the session's context messages. */
   approxTokens(): number;
   /** Cumulative provider-reported token usage across the session's calls. */
   usage(): RoleUsage;
@@ -1057,7 +1051,7 @@ function wireLogPayload(wirePath: string) {
  *  per-request cache-hit rate is cacheRead/(input+cacheRead); `gapMs` from
  *  the previous assistant message exposes cache-TTL effects; `stopReason`
  *  diagnoses truncation/empty-final-text failures. */
-export interface TurnRecord {
+interface TurnRecord {
   i: number;
   role: string;
   ts?: number;
@@ -1145,7 +1139,7 @@ function sumMessagesUsage(messages: readonly unknown[]): RoleUsage {
   return total;
 }
 
-export interface RoleResult {
+interface RoleResult {
   text: string;
   /** Undefined when the backend reported no usage (e.g. an env-overridden CLI template without JSON output). */
   usage?: RoleUsage;
@@ -1155,13 +1149,13 @@ export interface RoleResult {
 }
 
 /**
- * A persistent role session: the same Agent instance across multiple asks,
- * accumulating context like a live harness session does. Used for the
- * coordinator, which stays resident until its context cap — the analog of
- * running the skill in Codex/Claude Code until compaction. Single-shot roles
- * (reasoners, technicians, critics, verifiers) go through runRole and never reuse a session.
+ * In-memory single-use session: one Agent instance, used only by runRole for
+ * single-shot verdict roles on API providers. The coordinator and dispatched
+ * agents run as durable sessions via createHarnessRoleSession (harness.ts).
  */
-export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: string }): RoleSession {
+function createRoleSession(
+  run: Omit<RoleRun, "prompt"> & { prompt?: string },
+): Pick<RoleSession, "ask" | "usage"> {
   if (isCliProvider(run.spec.provider)) {
     throw new Error("CLI backends support single-shot verdict roles only, not sessions");
   }
@@ -1172,6 +1166,9 @@ export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: stri
       })
     : [];
   if (run.extraTools) tools.push(...run.extraTools);
+  // Stable per-call prompt-cache key: pi derives prompt_cache_key from
+  // options.sessionId, so the single-shot's tool-loop turns hit the provider
+  // prefix cache (~80% measured, see f0ad016). 36-char UUID ≤ 64-char limit.
   const cacheSessionId = randomUUID();
   const agent = new Agent({
     initialState: {
@@ -1181,10 +1178,6 @@ export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: stri
       tools,
     },
     streamFn: run.models.streamSimple.bind(run.models),
-    // Prompt-cache identity, forwarded by pi as OpenAI's prompt_cache_key
-    // (0% → ~80% measured hit rate, 2026-08-02); the 36-char UUID stays
-    // under the provider's 64-char key limit. Native Agent options — no
-    // streamFn wrapping needed (pi source review, 2026-08-02).
     sessionId: cacheSessionId,
     ...(process.env.COVERIFY_WIRE_LOG
       ? { onPayload: wireLogPayload(process.env.COVERIFY_WIRE_LOG) }
@@ -1195,23 +1188,8 @@ export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: stri
       await agent.prompt(prompt);
       return finalText(agent);
     },
-    turns(): TurnRecord[] {
-      return messagesToTurns(agent.state.messages);
-    },
-    approxTokens(): number {
-      // pi's estimator uses real provider usage where available plus a
-      // trailing estimate — the old JSON.stringify/4 heuristic over-counted
-      // (base64 + punctuation), making the context cap fire early.
-      return estimateContextTokens(agent.state.messages).tokens;
-    },
     usage(): RoleUsage {
       return sumMessagesUsage(agent.state.messages);
-    },
-    steer(text: string): void {
-      agent.steer({ role: "user", content: text, timestamp: Date.now() });
-    },
-    abort(): void {
-      agent.abort();
     },
   };
 }
@@ -1226,10 +1204,11 @@ export interface HarnessSessionOpts {
 }
 
 /**
- * Durable role session on pi's AgentHarness (redesign phase 1): the same
- * RoleSession surface as createRoleSession, but the transcript is an
- * append-only JSONL session tree on disk — crash-survivable, forkable, and
- * the raw material for telemetry. Chosen over pi-coding-agent's
+ * Durable role session on pi's AgentHarness (redesign phase 1): the durable
+ * analog of createRoleSession, implementing the full RoleSession surface
+ * (telemetry, compaction, steering) that the in-memory single-shot path does
+ * not. The transcript is an append-only JSONL session tree on disk —
+ * crash-survivable, forkable, and the raw material for telemetry. Chosen over pi-coding-agent's
  * createAgentSession because the harness layer takes systemPrompt verbatim
  * (prompt purity by construction), our Models instance directly, and plain
  * AgentTools, with zero disk/env discovery (docs/redesign-proposal.md).

@@ -1,8 +1,16 @@
 #!/usr/bin/env bun
 import * as path from "node:path";
 import { campaignExists, initCampaign, readJournal, readLedger } from "./campaign.js";
+import { CLAUDE_BRIDGE_ID } from "./claude-bridge.js";
 import { GateStore, recordStatement } from "./gates.js";
-import { buildModels, ROLE_NAMES, roleModelSpec, specLabel } from "./roles.js";
+import {
+  buildModels,
+  cliBackendCommand,
+  isCliProvider,
+  ROLE_NAMES,
+  roleModelSpec,
+  specLabel,
+} from "./roles.js";
 import { runCampaign } from "./harness.js";
 import { writeTrace } from "./trace.js";
 
@@ -19,10 +27,12 @@ function usage(): never {
                                     openai-codex = ChatGPT; credential -> ~/.config/coverify/auth.json)
   coverify logout <provider>
 
-env: ANTHROPIC_API_KEY (+ OPENAI_API_KEY for openai/* roles — defaults are OpenAI GPT-5.6 Sol
-       everywhere except the hostile auditor, which stays on claude-cli/opus),
-     COVERIFY_MODEL and per-role COVERIFY_MODEL_{COORDINATOR,REASONER,TECHNICIAN,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}
-       as "provider/model[@thinking]" specs (base default anthropic/claude-opus-5@high),
+auth: defaults need 'coverify login openai-codex' (ChatGPT subscription) plus the 'codex' and
+       'claude' binaries — OpenAI GPT-5.6 Sol everywhere except the hostile auditor, which
+       stays on claude-cli/opus; API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY)
+       only for api-provider role overrides
+env: per-role COVERIFY_MODEL_{COORDINATOR,REASONER,TECHNICIAN,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}
+       as "provider/model[@thinking]" specs (the only model override),
      COVERIFY_LAUNCHER_PATH (default ~/kb/notes/agents/prompts/prompt-math-proof-search-launcher.md)`);
   process.exit(2);
 }
@@ -64,15 +74,14 @@ async function prove(resume: boolean): Promise<void> {
     const provider = roleModelSpec(role).provider;
     // claude-bridge supports exactly one live session; concurrent sessions
     // cross-contaminate (observed in testing). Coordinator only.
-    if (provider === "claude-bridge" && role !== "coordinator") {
+    if (provider === CLAUDE_BRIDGE_ID && role !== "coordinator") {
       console.error(
         `claude-bridge is coordinator-only (single concurrent session); re-point ${role} via COVERIFY_MODEL_* (e.g. claude-cli/opus)`,
       );
       process.exit(1);
     }
     let ok = false;
-    if (provider === "claude-cli" || provider === "codex-cli") {
-      const { cliBackendCommand } = await import("./roles.js");
+    if (isCliProvider(provider)) {
       ok = spawnSync("which", [cliBackendCommand(provider).split(/\s+/)[0]]).status === 0;
     } else {
       try {

@@ -65,12 +65,12 @@ Verified enablers (pi-coding-agent 0.83.0, in our lockfile today):
 
 | Current (ours) | Target |
 | --- | --- |
-| `createRoleSession` (Agent + wrapper) | `createAgentSession` per agent; prompts via resourceLoader |
+| `createRoleSession` (Agent + wrapper) | landed as `createHarnessRoleSession` on pi's AgentHarness — not `createAgentSession`: the harness layer takes systemPrompt verbatim (prompt purity by construction, no resourceLoader/disk discovery), our Models instance, and plain AgentTools (roles.ts rationale; design.md) |
 | Cap-kill coordinator rebuild | pi compaction + a compaction-boundary message enforcing the launcher's reread rule ("after restart or context compaction, reread…") — contract-anticipated, arguably more faithful than cap-kill |
-| turns sidecars (`.coverify/turns/`) | derived view over pi session JSONL (full transcripts, branchable, resumable); keep the extractor for CLI single-shots |
+| turns sidecars (`.coverify/turns/`) | derived view over pi session JSONL (full transcripts, branchable, resumable); kept as a durable per-turn transcript store for harness sessions (CLI single-shots have no session and emit no turn records) |
 | in-memory coordinator state | durable session tree; crash-survivable mid-conversation |
-| ad-hoc error handling in salvage path | `retryAssistantCall` + `isContextOverflow` + `followUp()` |
-| 50k char output slice | `truncateTail` (structured, line-safe) |
+| ad-hoc error handling in salvage path | not taken — `retryAssistantCall`/`isContextOverflow`/`followUp` never landed; the salvage path kept its own error handling |
+| 50k char output slice | not taken — the slice remains `OUTPUT_LIMIT` (roles.ts), no `truncateTail` |
 
 | Stays ours, unchanged | Why |
 | --- | --- |
@@ -90,9 +90,10 @@ Verified enablers (pi-coding-agent 0.83.0, in our lockfile today):
    `session.systemPrompt === contract+charge` (prompt purity as a test,
    not a hope).
 2. **Coordinator on the SDK with compaction.** Configure compaction
-   settings; inject the reread-rule message at the compaction boundary;
-   retire `COORDINATOR_CONTEXT_TOKENS` cap-kill (keep as env fallback one
-   release). Acceptance: a forced-compaction campaign segment shows the
+   settings; inject the reread-rule message at the compaction boundary.
+   (`COORDINATOR_CONTEXT_TOKENS` was not retired — it survives as the
+   compaction trigger in harness.ts, with kill-and-rebuild the fallback for
+   non-compactable sessions.) Acceptance: a forced-compaction campaign segment shows the
    coordinator re-orienting from ledgers per contract; crash + resume
    restores the session mid-conversation.
 3. **Boundary packaging.** Publish the supervisor + campaign tools in pi

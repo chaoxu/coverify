@@ -50,8 +50,9 @@ every deferred skill-feedback item.
 ## Standing gauges (free, every campaign)
 
 From the journal, per campaign: tokens per promoted claim (*measurable for
-API-shaped providers; CLI-backed calls report no usage and are gaps in the
-gauge*) · gate-veto rate ·
+API-shaped providers and for claude-cli/codex-cli, which parse usage from
+their JSON output; only chatgpt-cli and env-overridden CLI templates without
+JSON output report none and are gaps in the gauge*) · gate-veto rate ·
 dispatch-refusal reasons · re-dispatches of registered-failed mechanisms
 (should be ~0) · first-attempt verification pass rate · share of spend in
 verification vs exploration. Gauges diagnose the machine; they are not
