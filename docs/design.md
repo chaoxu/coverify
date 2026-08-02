@@ -410,6 +410,21 @@ harnesses directly — `claude -p` / `codex exec` — via a harness-provided
   STATEMENT DEPENDENCIES EVIDENCE_DIR) plugs into the EVIDENCE layout as-is
   for the Anthropic-side outside review.
 
+**Schema-forced role returns** (omp's typed subagent yields) were considered
+2026-08-02 and **rejected on measurement**. The parsing they would replace is
+`parseFirstLineVerdict`: 11 lines, two call sites, and an
+UNPARSEABLE-not-FAIL failure mode that already recovers by re-running. Across
+the first long campaign it misfired zero times in ~109 verdicts (73 artifacts,
+every verdict line exact; the journal records no UNPARSEABLE). Forcing schemas
+means a submit-tool per role, `RoleResult` becoming a union through every
+dispatch site, and a retry-exhaustion policy — while the CLI-oracle roles
+(critic, certifier, reconstructor, comparator, hostile auditor) have no tool
+loop, so the parser stays anyway and we maintain two verdict paths. Revisit on
+evidence: a single UNPARSEABLE in a journal, or a campaign where the
+coordinator repeatedly bounces workers for status-report output. The second is
+currently unmeasurable — coordinator rejections are not journaled — which is
+the cheaper thing to fix first.
+
 ## Status / roadmap
 
 - [x] Launcher loading with no-fallback rule; conformance token check (`bun run check`)
