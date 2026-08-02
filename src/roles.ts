@@ -4,8 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import {
-  Agent,
   AgentHarness,
+  InMemorySessionRepo,
   JsonlSessionRepo,
   estimateContextTokens,
   type AgentMessage,
@@ -96,16 +96,19 @@ export type RoleName =
   | "reconstructor"
   | "comparator";
 
+const PROVIDERS = [
+  "anthropic",
+  "openai",
+  "openai-codex",
+  "google",
+  CLAUDE_BRIDGE_ID,
+  "claude-cli",
+  "codex-cli",
+  "chatgpt-cli",
+] as const;
+
 export interface ModelSpec {
-  provider:
-    | "anthropic"
-    | "openai"
-    | "openai-codex"
-    | "google"
-    | typeof CLAUDE_BRIDGE_ID
-    | "claude-cli"
-    | "codex-cli"
-    | "chatgpt-cli";
+  provider: (typeof PROVIDERS)[number];
   modelId: string;
   thinking: ThinkingLevel;
 }
@@ -159,19 +162,12 @@ function parseModelSpec(spec: string): ModelSpec {
   const slash = modelPart.indexOf("/");
   const provider = slash < 0 ? "anthropic" : modelPart.slice(0, slash);
   const modelId = slash < 0 ? modelPart : modelPart.slice(slash + 1);
-  if (
-    provider !== "anthropic" &&
-    provider !== "openai" &&
-    provider !== "openai-codex" &&
-    provider !== "google" &&
-    provider !== CLAUDE_BRIDGE_ID &&
-    provider !== "claude-cli" &&
-    provider !== "codex-cli" &&
-    provider !== "chatgpt-cli"
-  ) {
-    throw new Error(`unknown provider "${provider}" in model spec "${spec}"`);
+  if (!(PROVIDERS as readonly string[]).includes(provider)) {
+    throw new Error(
+      `unknown provider "${provider}" in model spec "${spec}" (valid: ${PROVIDERS.join(", ")})`,
+    );
   }
-  return { provider, modelId, thinking: thinking as ThinkingLevel };
+  return { provider: provider as ModelSpec["provider"], modelId, thinking: thinking as ThinkingLevel };
 }
 
 /** Resolution: COVERIFY_MODEL_<ROLE> > role default (every role has one). */
@@ -192,21 +188,6 @@ function getModel(models: Models, spec: ModelSpec) {
     );
   }
   return model;
-}
-
-function finalText(agent: Agent): string {
-  for (let i = agent.state.messages.length - 1; i >= 0; i--) {
-    const m = agent.state.messages[i] as { role?: string; content?: unknown };
-    if (m.role !== "assistant") continue;
-    if (typeof m.content === "string") return m.content;
-    if (Array.isArray(m.content)) {
-      return m.content
-        .filter((b): b is { type: string; text: string } => (b as { type?: string }).type === "text")
-        .map((b) => b.text)
-        .join("\n");
-    }
-  }
-  return "";
 }
 
 export function toolText(text: string) {
@@ -806,25 +787,26 @@ export interface RoleRun {
 
 /**
  * Run one fresh, ephemeral role instance (single-shot roles: idea-gate
- * critic, hostile auditor, bundle certifier, reconstructor, comparator).
- * The coordinator and dispatched agents run as durable sessions via
- * createHarnessRoleSession (harness.ts). What each
+ * critic, hostile auditor, bundle certifier, reconstructor, comparator):
+ * an in-memory harness session on API providers, an official CLI otherwise —
+ * toolless either way. The coordinator and dispatched agents run as durable
+ * sessions via createHarnessRoleSession (harness.ts). What each
  * instance sees is decided by the bundle its caller builds; the journal
  * records supplied inputs and which restrictions are platform-enforced
  * versus instructed.
  */
-export async function runRole(run: RoleRun): Promise<RoleResult> {
+export async function runRole(run: Omit<RoleRun, "workspace" | "extraTools">): Promise<RoleResult> {
   if (isCliProvider(run.spec.provider)) {
-    if (run.workspace || run.extraTools) {
-      throw new Error("CLI backends support single-shot verdict roles only (no tools)");
-    }
     const fullPrompt = `${systemText(run)}\n\n---\n\n${run.prompt}`;
     const started = Date.now();
     const result = await runCliRole(run.spec.provider, run.spec.modelId, fullPrompt);
     return { ...result, promptChars: fullPrompt.length, durationMs: Date.now() - started };
   }
   const started = Date.now();
-  const session = createRoleSession(run);
+  // Stable per-call prompt-cache key: pi derives prompt_cache_key from the
+  // session id, so the single-shot's turns hit the provider prefix cache
+  // (~80% measured, see f0ad016). 36-char UUID ≤ 64-char limit.
+  const session = await createHarnessRoleSession(run, { sessionId: randomUUID(), ephemeral: true });
   const text = await session.ask(run.prompt);
   return { text, usage: session.usage(), promptChars: run.prompt.length, durationMs: Date.now() - started };
 }
@@ -1055,6 +1037,18 @@ export interface RoleUsage {
   costUSD?: number;
 }
 
+/** Field-wise RoleUsage sum (reduce-friendly). */
+export function addUsage(a: RoleUsage, b: RoleUsage): RoleUsage {
+  return {
+    input: a.input + b.input,
+    output: a.output + b.output,
+    cacheRead: a.cacheRead + b.cacheRead,
+    cacheWrite: a.cacheWrite + b.cacheWrite,
+    reasoning: (a.reasoning ?? 0) + (b.reasoning ?? 0),
+    costUSD: (a.costUSD ?? 0) + (b.costUSD ?? 0),
+  };
+}
+
 function sumMessagesUsage(messages: readonly unknown[]): RoleUsage {
   const total: RoleUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   for (const m of messages) {
@@ -1079,67 +1073,29 @@ interface RoleResult {
   durationMs?: number;
 }
 
-/**
- * In-memory single-use session: one Agent instance, used only by runRole for
- * single-shot verdict roles on API providers. The coordinator and dispatched
- * agents run as durable sessions via createHarnessRoleSession (harness.ts).
- */
-function createRoleSession(
-  run: Omit<RoleRun, "prompt"> & { prompt?: string },
-): Pick<RoleSession, "ask" | "usage"> {
-  if (isCliProvider(run.spec.provider)) {
-    throw new Error("CLI backends support single-shot verdict roles only, not sessions");
-  }
-  const tools = run.workspace
-    ? workspaceTools(run.workspace.cwd, run.workspace.scope, {
-        code: run.workspace.code,
-        literature: run.workspace.literature,
-      })
-    : [];
-  if (run.extraTools) tools.push(...run.extraTools);
-  // Stable per-call prompt-cache key: pi derives prompt_cache_key from
-  // options.sessionId, so the single-shot's tool-loop turns hit the provider
-  // prefix cache (~80% measured, see f0ad016). 36-char UUID ≤ 64-char limit.
-  const cacheSessionId = randomUUID();
-  const agent = new Agent({
-    initialState: {
-      systemPrompt: systemText(run),
-      model: getModel(run.models, run.spec),
-      thinkingLevel: run.spec.thinking,
-      tools,
-    },
-    streamFn: run.models.streamSimple.bind(run.models),
-    sessionId: cacheSessionId,
-    ...(process.env.COVERIFY_WIRE_LOG
-      ? { onPayload: wireLogPayload(process.env.COVERIFY_WIRE_LOG) }
-      : {}),
-  });
-  return {
-    async ask(prompt: string): Promise<string> {
-      await agent.prompt(prompt);
-      return finalText(agent);
-    },
-    usage(): RoleUsage {
-      return sumMessagesUsage(agent.state.messages);
-    },
-  };
-}
-
-export interface HarnessSessionOpts {
-  /** Stable session identity: names the JSONL session and becomes the
+export type HarnessSessionOpts = {
+  /** Stable session identity: names the session and becomes the
    *  provider's prompt_cache_key (keep ≤64 chars). */
   sessionId: string;
-  /** Directory for durable session trees (e.g. <campaign>/.coverify/sessions). */
-  sessionsRoot: string;
-  cwd: string;
-}
+} & (
+  | {
+      /** Directory for durable session trees (e.g. <campaign>/.coverify/sessions). */
+      sessionsRoot: string;
+      cwd: string;
+      ephemeral?: false;
+    }
+  /** In-memory session (single-shot roles): same harness surface and cache
+   *  keying, nothing written under .coverify/sessions/. */
+  | { ephemeral: true }
+);
 
 /**
- * Durable role session on pi's AgentHarness (redesign phase 1): the durable
- * analog of createRoleSession, implementing the full RoleSession surface
- * (telemetry, compaction, steering) that the in-memory single-shot path does
- * not. The transcript is an append-only JSONL session tree on disk —
- * crash-survivable, forkable, and the raw material for telemetry. Chosen over pi-coding-agent's
+ * Role session on pi's AgentHarness (redesign phase 1), implementing the full
+ * RoleSession surface (telemetry, compaction, steering). By default the
+ * transcript is an append-only JSONL session tree on disk —
+ * crash-survivable, forkable, and the raw material for telemetry; with
+ * `ephemeral: true` (runRole's single-shot path) the same harness runs over
+ * an in-memory repo and leaves nothing on disk. Chosen over pi-coding-agent's
  * createAgentSession because the harness layer takes systemPrompt verbatim
  * (prompt purity by construction), our Models instance directly, and plain
  * AgentTools, with zero disk/env discovery (docs/redesign-proposal.md).
@@ -1159,9 +1115,12 @@ export async function createHarnessRoleSession(
       })
     : [];
   if (run.extraTools) tools.push(...run.extraTools);
-  const env = new NodeExecutionEnv({ cwd: opts.cwd });
-  const repo = new JsonlSessionRepo({ fs: env, sessionsRoot: opts.sessionsRoot });
-  const session = await repo.create({ cwd: opts.cwd, id: opts.sessionId });
+  const session = opts.ephemeral
+    ? await new InMemorySessionRepo().create({ id: opts.sessionId })
+    : await new JsonlSessionRepo({
+        fs: new NodeExecutionEnv({ cwd: opts.cwd }),
+        sessionsRoot: opts.sessionsRoot,
+      }).create({ cwd: opts.cwd, id: opts.sessionId });
   const harness = new AgentHarness({
     session,
     models: run.models,
@@ -1215,14 +1174,6 @@ export async function createHarnessRoleSession(
     );
     contextMessages = (await session.buildContext()).messages;
   };
-  const addUsage = (a: RoleUsage, b: RoleUsage): RoleUsage => ({
-    input: a.input + b.input,
-    output: a.output + b.output,
-    cacheRead: a.cacheRead + b.cacheRead,
-    cacheWrite: a.cacheWrite + b.cacheWrite,
-    reasoning: (a.reasoning ?? 0) + (b.reasoning ?? 0),
-    costUSD: (a.costUSD ?? 0) + (b.costUSD ?? 0),
-  });
   return {
     async ask(prompt: string): Promise<string> {
       let final;

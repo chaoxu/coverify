@@ -28,6 +28,7 @@ import {
 } from "./gates.js";
 import { loadLauncherContract } from "./launcher.js";
 import {
+  addUsage,
   buildModels,
   CHARGES,
   RUN_MEM_MB,
@@ -549,7 +550,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       const bundleHash = sha256Text(bundle);
       const provedHash = sha256Text(proved);
       const usages: RoleUsage[] = [];
-      const addUsage = (u?: RoleUsage) => {
+      const recordUsage = (u?: RoleUsage) => {
         if (u) usages.push(u);
       };
 
@@ -602,7 +603,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           spec,
           models,
         });
-        addUsage(usage);
+        recordUsage(usage);
         abortIfCancelled();
         const evidence = newEvidencePath(dir, `audits/${slug}.${stage.kind}`);
         fs.writeFileSync(evidence, text);
@@ -758,7 +759,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
             spec: roleModelSpec("reconstructor"),
             models,
           });
-          addUsage(reconTextUsage);
+          recordUsage(reconTextUsage);
           abortIfCancelled();
           reconText = text;
           const reconEvidence = newEvidencePath(dir, `audits/${slug}.reconstruction`);
@@ -820,18 +821,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         promise: cadence(),
         // Summed over the cadence's role calls; undefined when no backend
         // reported usage.
-        usage: () => {
-          if (usages.length === 0) return undefined;
-          const total: RoleUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 };
-          for (const u of usages) {
-            total.input += u.input;
-            total.output += u.output;
-            total.cacheRead += u.cacheRead;
-            total.cacheWrite += u.cacheWrite;
-            total.reasoning = (total.reasoning ?? 0) + (u.reasoning ?? 0);
-          }
-          return total;
-        },
+        usage: () => (usages.length === 0 ? undefined : usages.reduce(addUsage)),
       });
       return toolText(
         `verification ${id} dispatched on ${rel} (${handles.size} live). The verdict arrives at a ` +

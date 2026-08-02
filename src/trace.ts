@@ -159,7 +159,7 @@ export function renderTrace(dir: string): string {
 ${body}
 <script>${vendored(VENDOR_JS)}</script>
 <script>const DATA = ${JSON.stringify({ ...data, title, slug: name })};</script>
-<script>const PERFETTO = ${JSON.stringify(perfettoTrace(dir))};</script>
+<script>const PERFETTO = ${JSON.stringify(perfettoTrace(dir, data))};</script>
 <script>${VIEW}</script>
 </body>
 </html>
@@ -172,8 +172,7 @@ ${body}
  * and wakes as instants, live-agent count as a counter. Perfetto parses the
  * file locally in the browser — nothing is uploaded unless you click Share.
  */
-export function perfettoTrace(dir: string): object {
-  const data = traceData(dir);
+export function perfettoTrace(dir: string, data: TraceData = traceData(dir)): object {
   const us = (t: number) => Math.round(t * 1e6);
   const PID = 1;
   const events: Record<string, unknown>[] = [
