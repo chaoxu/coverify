@@ -203,6 +203,42 @@ G1b: empty packet → correct-but-avoidable FAIL). Two candidate shapes:
 the importedPremises field exists, or per-call premise re-inlining
 becoming a visible share of coordinator output tokens.
 
+## Deferred: derive the frontier's verdict-state from the ledgers (knowledge/operations separation)
+
+Source: comparison against qmd-prover (2026-08-02, single-author QMD
+dependency-graph checker). Its design keeps knowledge (statements, proofs)
+strictly separate from operations, with every operational view *derived*:
+global verified/blocked/open status is a deterministic fold over recorded
+local verdicts, and "where must work happen" is a computed dependency
+frontier — so the operational view cannot drift from the knowledge it
+summarizes. Its one status write-back into knowledge documents is
+display-only and excluded from all hashes.
+
+`CURRENT_FRONTIER.md` is our mixed artifact: it records both what is known
+and what to do next, as coordinator-maintained prose, so it *can* drift
+from REGISTRY.md/gate-record truth (which revisions are promoted, which
+audits stand, which routes died in FAILED.md). Candidate launcher touch:
+split the frontier's content classes — the verdict-state portion (claim
+labels, standing verdicts, open obligations) must be *reproducible from
+the ledgers* and is restated, never freshly asserted, in the frontier;
+frontier prose is reserved for what no ledger can express (route
+priorities, why a direction was chosen or abandoned, next-dispatch
+intent). Complements campaign 2's frontier-sufficiency clause (item 1
+there) and deferred item 3: a rebuilt or compacted coordinator re-orients
+from ledgers + judgment prose, not from prose restatements of ledger
+facts that may be stale.
+
+**Activation test:** any campaign where CURRENT_FRONTIER.md is caught
+contradicting the gate records or REGISTRY.md (a claim listed at the wrong
+label, a dead route still shown live), or a post-rebuild coordinator
+misdirects a dispatch on stale frontier prose.
+
+Harness note (no code change now): the harness already treats the gate
+ledger as the sole verdict authority out of agent reach; if the launcher
+edit lands, a mechanical drift check (frontier labels vs. gate records) in
+the wake digest would be the enforcement hook, per repo rule "prefer
+enforcing a rule in gates.ts over restating it in a prompt".
+
 ## Deferred (earlier entries)
 
 1. **Interop note** — one sentence in SKILL.md that a conformant harness
