@@ -2,30 +2,21 @@
  * Coverify extension for interactive pi sessions (redesign phase 3, the
  * boundary layer): open a campaign directory in vanilla pi and get
  *
- *   1. `run_script` — coverify's supervised batch runner (process-group
- *      leadership, shared wall/RSS caps, survivor sweep, exit reaper) in
- *      place of raw bash, scoped to the current directory; and
- *   2. `campaign_status` — a read-only inspector over the campaign ledgers
- *      and journal.
+ * `run_script` — coverify's supervised batch runner (process-group
+ * leadership, shared wall/RSS caps, survivor sweep, exit reaper) in place
+ * of raw bash, scoped to the current directory. Campaign inspection needs
+ * no dedicated tool: pi's own read/ls/grep cover the ledgers, and
+ * `coverify status`/`trace`/`turns` exist for the terminal.
  *
- * This is the inspection/manual-poking surface only. The full harness —
- * gates, verification cadence, dispatch, promotion — requires the coverify
- * CLI; nothing here can write trusted state.
+ * This is the manual-poking surface only. The full harness — gates,
+ * verification cadence, dispatch, promotion — requires the coverify CLI;
+ * nothing here can write trusted state.
  *
  * Load in interactive pi via an extensions dir or `extensionFactories`:
  *   import coverify from ".../coverify/src/pi-extension.ts";
  */
-import * as fs from "node:fs";
-import * as path from "node:path";
-import { Type } from "typebox";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { promotedStatementsView, readJournal, readLedger } from "./campaign.js";
 import { runScriptTool } from "./roles.js";
-
-function head(text: string, lines: number): string {
-  const parts = text.split("\n");
-  return parts.slice(0, lines).join("\n") + (parts.length > lines ? "\n…" : "");
-}
 
 export default function coverifyExtension(pi: ExtensionAPI): void {
   const cwd = process.cwd();
@@ -46,45 +37,5 @@ export default function coverifyExtension(pi: ExtensionAPI): void {
         signal,
         onUpdate,
       ),
-  } as unknown as ToolDefinition);
-
-  pi.registerTool({
-    name: "campaign_status",
-    label: "Campaign status",
-    description:
-      "Read-only summary of a coverify proof-search campaign directory: statement head, " +
-      "current frontier, promoted theorem headings, and the journal tail. Never writes.",
-    parameters: Type.Object({
-      dir: Type.Optional(Type.String({ description: "Campaign directory (default: current directory)" })),
-    }),
-    executionMode: "sequential",
-    execute: async (_toolCallId: string, params: unknown) => {
-      const d = path.resolve((params as { dir?: string }).dir ?? cwd);
-      if (!fs.existsSync(path.join(d, "STATEMENT.md"))) {
-        return { content: [{ type: "text" as const, text: `no campaign at ${d}` }], details: {} };
-      }
-      const safe = (fn: () => string): string => {
-        try {
-          return fn();
-        } catch (e) {
-          return `(unreadable: ${String(e).slice(0, 120)})`;
-        }
-      };
-      const promotedHeads = safe(() => {
-        const promoted = promotedStatementsView(d);
-        return (promoted.match(/^## .*/gm) ?? []).join("\n") || "(no promotions)";
-      });
-      const tail = safe(() =>
-        readJournal(d)
-          .slice(-8)
-          .map((e) => JSON.stringify(e).slice(0, 160))
-          .join("\n"),
-      );
-      const text =
-        `# Statement (head)\n${safe(() => head(readLedger(d, "STATEMENT.md"), 20))}\n\n` +
-        `# CURRENT_FRONTIER\n${safe(() => head(readLedger(d, "CURRENT_FRONTIER.md"), 60))}\n\n` +
-        `# Promoted entries\n${promotedHeads}\n\n# Journal tail\n${tail}`;
-      return { content: [{ type: "text" as const, text }], details: {} };
-    },
   } as unknown as ToolDefinition);
 }

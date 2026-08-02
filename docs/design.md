@@ -161,8 +161,8 @@ gates.ts         dispatch gate, idea-gate ledger, two-stage verification, promot
 harness.ts       handle table, event loop, wakes; the only persistent process
 trace.ts         journal -> self-contained HTML timeline (read-only observability)
 trace-page.ts    that page's markup, styles, and view code
-pi-extension.ts  interactive-pi boundary layer: supervised run_script +
-                 read-only campaign_status (phase 3; never writes trusted state)
+pi-extension.ts  interactive-pi boundary layer: supervised run_script in
+                 place of raw bash (phase 3; never writes trusted state)
 ```
 
 Observability layering (redesign phases 1–3): the **pi session JSONL trees**

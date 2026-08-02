@@ -1205,17 +1205,6 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     });
     lostNote = "";
 
-    // Frontier history: CURRENT_FRONTIER.md is rewritten by design, so the
-    // harness snapshots each distinct post-wake version under .coverify/.
-    // Pure audit metadata — nothing reads it; deleting it changes nothing.
-    const frontier = readLedger(dir, "CURRENT_FRONTIER.md");
-    const histDir = path.join(dir, ".coverify", "frontier-history");
-    fs.mkdirSync(histDir, { recursive: true });
-    const prev = fs.readdirSync(histDir).sort().at(-1);
-    if (!prev || fs.readFileSync(path.join(histDir, prev), "utf-8") !== frontier) {
-      fs.writeFileSync(path.join(histDir, `wake-${String(wakeCount).padStart(4, "0")}.md`), frontier);
-    }
-
     if (declaration) {
       appendJournal(dir, { kind: "note", note: `declared ${declaration.state}: ${declaration.reason}` });
       return `${lastWakeText}\n\n[coverify: campaign ${declaration.state} — ${declaration.reason}]`;

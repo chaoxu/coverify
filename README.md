@@ -158,8 +158,8 @@ blanket-allows temp).
 
 **Interactive inspection:** load `src/pi-extension.ts` in a vanilla pi
 session (extensions dir or `extensionFactories`) to get coverify's
-supervised `run_script` and a read-only `campaign_status` tool over any
-campaign directory — inspection only; gates, cadence, and promotion always
+supervised `run_script` in place of raw bash; pi's own read/ls/grep cover
+the ledgers. Manual poking only; gates, cadence, and promotion always
 require this CLI.
 
 See `docs/design.md` for the full conformance table (each enforcement →

@@ -36,7 +36,7 @@ interface SessionMessage {
 }
 
 /** Walk a message history into TurnRecords (content sizes only). */
-export function messagesToTurns(messages: readonly SessionMessage[]): TurnRecord[] {
+function messagesToTurns(messages: readonly SessionMessage[]): TurnRecord[] {
   const out: TurnRecord[] = [];
   let prevAssistantTs: number | undefined;
   messages.forEach((msg, i) => {
