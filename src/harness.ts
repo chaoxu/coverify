@@ -5,7 +5,9 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import {
   appendJournal,
+  consumeUserMessages,
   newEvidencePath,
+  peekUserMessages,
   promotedStatementsView,
   readLedger,
   resumeBundle,
@@ -1130,12 +1132,25 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         "follow; the compaction summary never overrides them.\n\n" +
         `${resumeBundle(dir)}\n\n---\n\n`
       : "";
+    // User messages (coverify say): delivered verbatim at the wake boundary —
+    // the headless analog of the user typing to an interactive skill session.
+    // Consumed only after the coordinator's turn succeeds; a failed turn
+    // leaves them queued for the next wake.
+    const userMessages = peekUserMessages(dir);
+    const userBlock =
+      userMessages.length > 0
+        ? `\n\n# Messages from the user (verbatim)\n\n${userMessages.join("\n\n---\n\n")}\n\n` +
+          "These are user guidance, not a statement amendment: STATEMENT.md changes still " +
+          "require 'coverify amend'."
+        : "";
     try {
       lastWakeText = await coordinator.ask(
         fresh
-          ? `${resumeBundle(dir)}\n\n---\n\nCampaign directory: ${dir}\n${lostNote}${digest}${idleNudge}\n\n${newsBlock}`
-          : `${rereadBlock}${lostNote}${digest}${idleNudge}${compactionWarning}\n\n${newsBlock}`,
+          ? `${resumeBundle(dir)}\n\n---\n\nCampaign directory: ${dir}\n${lostNote}${digest}${idleNudge}\n\n${newsBlock}${userBlock}`
+          : `${rereadBlock}${lostNote}${digest}${idleNudge}${compactionWarning}\n\n${newsBlock}${userBlock}`,
       );
+      for (const m of userMessages) appendJournal(dir, { kind: "note", note: `user message: ${m}` });
+      consumeUserMessages(dir, userMessages.length);
     } catch (e) {
       // A hard provider failure on the coordinator's turn must not kill the
       // campaign with workers live: journal it and rebuild from the ledgers

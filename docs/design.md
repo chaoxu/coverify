@@ -231,7 +231,12 @@ audit verdicts, struggle rulings, promotion decisions, lesson content, and
 whether a sequential retry constitutes a "follow-up wave" needing the gate.
 Mechanics-only (rule 2): handle table, event-driven wakes with ambient status
 digests, journal, out-of-tree gate store, write sandbox, verdict-line parsing,
-version stamps.
+version stamps, and the user message inbox (`coverify say` →
+`.coverify/inbox.jsonl`): verbatim transport of user guidance to the next
+wake — the headless analog of typing to an interactive skill session. The
+inbox lives under `.coverify/`, which every role's write scope denies, so a
+role cannot forge user guidance; delivery is journaled, and a statement
+change still requires `coverify amend` (the delivered block says so).
 
 **Honesty ledger** (launcher: record instructed-vs-platform-enforced): the
 candidate withheld from the reconstructor and all write confinement are

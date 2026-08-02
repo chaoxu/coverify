@@ -1,6 +1,13 @@
 #!/usr/bin/env bun
 import * as path from "node:path";
-import { campaignExists, initCampaign, readJournal, readLedger } from "./campaign.js";
+import {
+  campaignExists,
+  initCampaign,
+  peekUserMessages,
+  queueUserMessage,
+  readJournal,
+  readLedger,
+} from "./campaign.js";
 import { CLAUDE_BRIDGE_ID } from "./claude-bridge.js";
 import { GateStore, recordStatement } from "./gates.js";
 import {
@@ -27,6 +34,9 @@ function usage(): never {
                                     per-turn telemetry derived from the session trees (sizes/usage/
                                     gaps/stopReason, no content); without --session, one summary
                                     line per session; with it, TurnRecord JSONL on stdout
+  coverify say "<message>" [--dir campaign]
+                                    queue a verbatim message for the coordinator's next wake
+                                    (delivered like a user turn in an interactive session)
   coverify amend [--dir campaign]   accept an explicit user amendment of STATEMENT.md
   coverify login <provider>         subscription OAuth (anthropic = Claude Pro/Max,
                                     openai-codex = ChatGPT; credential -> ~/.config/coverify/auth.json)
@@ -181,10 +191,30 @@ switch (command) {
     );
     break;
   }
+  case "say": {
+    if (!campaignExists(dir)) {
+      console.error(`no campaign at ${dir}`);
+      process.exit(1);
+    }
+    const message = positional[0];
+    if (!message) usage();
+    queueUserMessage(dir, message);
+    console.error(
+      `[coverify] message queued (${peekUserMessages(dir).length} pending); ` +
+        "delivered verbatim at the coordinator's next wake",
+    );
+    break;
+  }
   case "status": {
     if (!campaignExists(dir)) {
       console.error(`no campaign at ${dir}`);
       process.exit(1);
+    }
+    const pending = peekUserMessages(dir);
+    if (pending.length > 0) {
+      console.log(`## Pending user messages (${pending.length}, next wake)\n`);
+      for (const m of pending) console.log(`- ${m}`);
+      console.log("");
     }
     console.log(readLedger(dir, "STATEMENT.md"));
     console.log(readLedger(dir, "CURRENT_FRONTIER.md"));

@@ -113,6 +113,54 @@ export function readJournal(dir: string): JournalEntry[] {
   return entries;
 }
 
+/**
+ * User→coordinator message channel (`coverify say`). The inbox lives under
+ * .coverify/, which every role's write scope denies, so only the user (via
+ * the CLI, outside any role) can queue a message — a role cannot forge user
+ * guidance. Transport is verbatim: the harness delivers the text unchanged
+ * at the next wake and journals it; it adds no policy of its own. This is
+ * the headless analog of typing to an interactive skill session — the
+ * message arrives at the coordinator's next turn.
+ */
+export function queueUserMessage(dir: string, message: string): void {
+  fs.appendFileSync(
+    path.join(dir, JOURNAL_DIR, "inbox.jsonl"),
+    JSON.stringify({ ts: new Date().toISOString(), message }) + "\n",
+  );
+}
+
+/** Pending user messages, oldest first. Torn trailing line tolerated. */
+export function peekUserMessages(dir: string): string[] {
+  const p = path.join(dir, JOURNAL_DIR, "inbox.jsonl");
+  if (!fs.existsSync(p)) return [];
+  const out: string[] = [];
+  for (const line of fs.readFileSync(p, "utf-8").split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const e = JSON.parse(line) as { message?: unknown };
+      if (typeof e.message === "string") out.push(e.message);
+    } catch {
+      /* torn line from a crash mid-append */
+    }
+  }
+  return out;
+}
+
+/**
+ * Removes the first `count` pending messages, keeping anything queued since
+ * they were peeked. Called only after the coordinator has actually received
+ * them (delivery failure leaves the inbox intact for the next wake).
+ */
+export function consumeUserMessages(dir: string, count: number): void {
+  if (count <= 0) return;
+  const p = path.join(dir, JOURNAL_DIR, "inbox.jsonl");
+  if (!fs.existsSync(p)) return;
+  const lines = fs.readFileSync(p, "utf-8").split("\n").filter((l) => l.trim() !== "");
+  const rest = lines.slice(count);
+  if (rest.length === 0) fs.rmSync(p);
+  else fs.writeFileSync(p, rest.join("\n") + "\n");
+}
+
 export function sha256Text(text: string): string {
   return crypto.createHash("sha256").update(text).digest("hex");
 }

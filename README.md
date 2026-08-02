@@ -40,6 +40,17 @@ trees on demand.
 Optional user limits (the harness imposes none of its own): `--agent-limit N`
 (concurrent workers), `--max-wakes N` (pause after N coordinator wakes).
 
+**Interacting with a running campaign.** `coverify say "<message>"` (from any
+shell) queues guidance the coordinator receives verbatim at its next wake —
+the headless analog of typing to an interactive skill session; `status` lists
+pending messages. Ctrl-C is always safe (state is durable, supervised compute
+is reaped) and `resume` continues; `--max-wakes` chunks a campaign into
+supervised sittings; `amend` accepts a statement change. The campaign folder
+is the skill's own format, so you can also open it in an interactive
+Claude Code/Codex session running the raw skill — full conversational
+control over the same state — or in vanilla pi with `src/pi-extension.ts`
+loaded for read-only inspection plus supervised script runs.
+
 **Models are per-role.** Specs are `provider/model[@thinking]`. API
 providers: `anthropic`, `openai`, `openai-codex`, `google` (Gemini via
 `GEMINI_API_KEY`). CLI-backed providers, all riding official-CLI logins:
