@@ -253,10 +253,11 @@ export function recordGateVerdict(
   mechanism: string,
   verdictText: string,
   usage?: unknown,
+  request?: { promptChars?: number; durationMs?: number },
 ): string {
   const verdict =
     parseFirstLineVerdict(verdictText, ["IDEA PASS", "IDEA FAIL", "IDEA REPAIR"]) ?? "UNPARSEABLE";
-  store.append({ kind: "gate-verdict", mechanism, verdict, text: verdictText, usage });
+  store.append({ kind: "gate-verdict", mechanism, verdict, text: verdictText, usage, ...request });
   return verdict;
 }
 

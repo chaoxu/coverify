@@ -749,11 +749,15 @@ export async function runRole(run: RoleRun): Promise<RoleResult> {
     if (run.workspace || run.extraTools) {
       throw new Error("CLI backends support single-shot verdict roles only (no tools)");
     }
-    return runCliRole(run.spec.provider, run.spec.modelId, `${systemText(run)}\n\n---\n\n${run.prompt}`);
+    const fullPrompt = `${systemText(run)}\n\n---\n\n${run.prompt}`;
+    const started = Date.now();
+    const result = await runCliRole(run.spec.provider, run.spec.modelId, fullPrompt);
+    return { ...result, promptChars: fullPrompt.length, durationMs: Date.now() - started };
   }
+  const started = Date.now();
   const session = createRoleSession(run);
   const text = await session.ask(run.prompt);
-  return { text, usage: session.usage() };
+  return { text, usage: session.usage(), promptChars: run.prompt.length, durationMs: Date.now() - started };
 }
 
 export function isCliProvider(p: string): p is keyof typeof CLI_BACKENDS {
@@ -1031,6 +1035,9 @@ export interface RoleResult {
   text: string;
   /** Undefined when the backend reported no usage (e.g. an env-overridden CLI template without JSON output). */
   usage?: RoleUsage;
+  /** Request-shape telemetry for single-shot roles (their only "turn"). */
+  promptChars?: number;
+  durationMs?: number;
 }
 
 /**
@@ -1051,6 +1058,7 @@ export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: stri
       })
     : [];
   if (run.extraTools) tools.push(...run.extraTools);
+  const cacheSessionId = crypto.randomUUID();
   const agent = new Agent({
     initialState: {
       systemPrompt: systemText(run),
@@ -1058,7 +1066,50 @@ export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: stri
       thinkingLevel: run.spec.thinking,
       tools,
     },
-    streamFn: run.models.streamSimple.bind(run.models),
+    // Wrapped stream: (1) a stable per-session cache identity — pi forwards
+    // sessionId as OpenAI's prompt_cache_key; without it the backend's prefix
+    // cache effectively never hits under concurrency (measured 0% across a
+    // whole coordinator session, 2026-08-02); (2) an opt-in wire log of each
+    // request's SHAPE (sizes and cache fields, never content) via pi's own
+    // onPayload hook: COVERIFY_WIRE_LOG=/path/wire.jsonl.
+    streamFn: (model, context, options) => {
+      const wirePath = process.env.COVERIFY_WIRE_LOG;
+      const merged = {
+        ...options,
+        sessionId: (options as { sessionId?: string } | undefined)?.sessionId ?? cacheSessionId,
+        ...(wirePath
+          ? {
+              onPayload: (params: Record<string, unknown>, m: unknown) => {
+                try {
+                  const input = params.input as unknown[] | undefined;
+                  const instructions = params.instructions as string | undefined;
+                  fs.appendFileSync(
+                    wirePath,
+                    JSON.stringify({
+                      ts: Date.now(),
+                      model: (m as { id?: string })?.id ?? String(params.model ?? ""),
+                      prompt_cache_key: params.prompt_cache_key,
+                      store: params.store,
+                      input_items: Array.isArray(input) ? input.length : undefined,
+                      instructions_chars: typeof instructions === "string" ? instructions.length : undefined,
+                      tools: Array.isArray(params.tools) ? (params.tools as unknown[]).length : undefined,
+                      reasoning: params.reasoning,
+                      keys: Object.keys(params),
+                    }) + "\n",
+                  );
+                } catch {
+                  /* telemetry only */
+                }
+                return (options as { onPayload?: (p: unknown, m: unknown) => unknown } | undefined)?.onPayload?.(
+                  params,
+                  m,
+                );
+              },
+            }
+          : {}),
+      };
+      return run.models.streamSimple(model, context, merged as typeof options);
+    },
   });
   return {
     async ask(prompt: string): Promise<string> {

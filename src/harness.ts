@@ -424,11 +424,11 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           `\n\n# Proposed mechanism\n\n${p.mechanism}\n\n# Claimed first nontrivial implication\n\n${p.firstImplication}`,
         spec: roleModelSpec("gateCritic"),
         models,
-      }).then(({ text, usage: criticUsage }) => {
+      }).then(({ text, usage: criticUsage, promptChars, durationMs }) => {
         // A cancelled gate must not record a verdict (mirrors verification):
         // an unseen verdict could later unlock concurrent workers nobody reviewed.
         if (!handles.has(id)) return `[gate ${id} cancelled; verdict not recorded]`;
-        const verdict = recordGateVerdict(store, p.mechanism, text, criticUsage);
+        const verdict = recordGateVerdict(store, p.mechanism, text, criticUsage, { promptChars, durationMs });
         if (verdict === "UNPARSEABLE") {
           return (
             `UNPARSEABLE verdict (recorded as such; does not unlock concurrent workers). The critic's first ` +
@@ -589,7 +589,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         extra?: Record<string, unknown>;
       }): Promise<{ text: string; pass: boolean; unparseable: boolean; artifact: string }> => {
         const spec = roleModelSpec(stage.role);
-        const { text, usage } = await runRole({
+        const { text, usage, promptChars, durationMs } = await runRole({
           contract,
           charge: CHARGES[stage.role],
           prompt: stage.ctx.prompt,
@@ -622,6 +622,8 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           toolVisibility: toolVisibilityOf(spec.provider),
           modelFamily: specLabel(spec),
           usage,
+          promptChars,
+          durationMs,
         });
         return { text, pass, unparseable: verdictLine === undefined, artifact };
       };
@@ -738,7 +740,12 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           // checked fact for whole-file interpolation, not testimony. Partial
           // paraphrase remains the bundle certifier's judgment.
           assertCandidateWithheld(reconCtx.prompt, candidate);
-          const { text, usage: reconTextUsage } = await runRole({
+          const {
+            text,
+            usage: reconTextUsage,
+            promptChars: reconPromptChars,
+            durationMs: reconDurationMs,
+          } = await runRole({
             contract,
             charge: CHARGES.reconstructor,
             prompt: reconCtx.prompt,
@@ -766,6 +773,8 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
             toolVisibility: toolVisibilityOf(roleModelSpec("reconstructor").provider),
             modelFamily: specLabel(roleModelSpec("reconstructor")),
             usage: reconTextUsage,
+            promptChars: reconPromptChars,
+            durationMs: reconDurationMs,
           });
         }
 
