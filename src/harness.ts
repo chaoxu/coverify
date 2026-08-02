@@ -33,6 +33,7 @@ import {
   RUN_MEM_MB,
   RUN_TIMEOUT_MS,
   createRoleSession,
+  createHarnessRoleSession,
   isCliProvider,
   roleModelSpec,
   runRole,
@@ -284,32 +285,48 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         return r.text;
       });
     } else {
-      session = createRoleSession({
-        contract,
-        charge: isTechnician ? CHARGES.technician : CHARGES.reasoner,
-        workspace: {
-          cwd: evidenceDir,
-          scope: { allow: [evidenceDir], deny: [] },
-          code: isTechnician,
-          literature: literature !== undefined,
+      // Redesign phase 1: workers run on pi's AgentHarness with durable
+      // JSONL session trees under .coverify/sessions/ — crash-survivable
+      // transcripts, prompt_cache_key = the handle id. The session is
+      // created asynchronously; the handle's promise chains behind it so
+      // dispatch stays synchronous for the coordinator.
+      const sessionPromise = createHarnessRoleSession(
+        {
+          contract,
+          charge: isTechnician ? CHARGES.technician : CHARGES.reasoner,
+          workspace: {
+            cwd: evidenceDir,
+            scope: { allow: [evidenceDir], deny: [] },
+            code: isTechnician,
+            literature: literature !== undefined,
+          },
+          spec,
+          models,
         },
-        spec,
-        models,
+        { sessionId: id, sessionsRoot: path.join(dir, ".coverify", "sessions"), cwd: evidenceDir },
+      ).then((s) => {
+        session = s;
+        // The handle was registered before the async session resolved; patch
+        // it in place so steer/cancel/turns-dump see the live session.
+        const h = handles.get(id);
+        if (h) h.session = s;
+        return s;
       });
-      const live = session;
-      promise = live.ask(`Assigned evidence directory: ${evidenceDir}\n\n${packetPrompt}`).then(
+      promise = sessionPromise.then((live) =>
+        live.ask(`Assigned evidence directory: ${evidenceDir}\n\n${packetPrompt}`).then(
         // Salvage nudge: deep-reasoning runs sometimes end without emitting a
         // final message (observed live 2026-08-02: four @max scouts, ~2.6M
         // tokens, empty final text). The session context is intact at this
         // point, so ask once for the report before the settle-side classifier
         // writes the run off as an infrastructure failure.
-        (text) =>
-          text.trim() !== ""
-            ? text
-            : live.ask(
-                "Your previous turn ended with no final message. Emit your complete " +
-                  "conclusion-first report now, per your charge.",
-              ),
+          (text) =>
+            text.trim() !== ""
+              ? text
+              : live.ask(
+                  "Your previous turn ended with no final message. Emit your complete " +
+                    "conclusion-first report now, per your charge.",
+                ),
+        ),
       );
     }
     registerHandle({

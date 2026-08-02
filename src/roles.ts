@@ -3,7 +3,15 @@ import { randomUUID } from "node:crypto";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { Agent, estimateContextTokens, type AgentTool } from "@earendil-works/pi-agent-core";
+import {
+  Agent,
+  AgentHarness,
+  JsonlSessionRepo,
+  estimateContextTokens,
+  type AgentMessage,
+  type AgentTool,
+} from "@earendil-works/pi-agent-core";
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import {
   createGrepTool,
   createLsTool,
@@ -1012,11 +1020,11 @@ export interface TurnRecord {
   usage?: RoleUsage;
 }
 
-/** Walk an agent's message history into TurnRecords (content sizes only). */
-function agentTurns(agent: Agent): TurnRecord[] {
+/** Walk a message history into TurnRecords (content sizes only). */
+function messagesToTurns(messages: readonly unknown[]): TurnRecord[] {
   const out: TurnRecord[] = [];
   let prevAssistantTs: number | undefined;
-  agent.state.messages.forEach((m, i) => {
+  messages.forEach((m, i) => {
     const msg = m as {
       role?: string;
       content?: unknown;
@@ -1072,9 +1080,9 @@ export interface RoleUsage {
   costUSD?: number;
 }
 
-function agentUsage(agent: Agent): RoleUsage {
+function sumMessagesUsage(messages: readonly unknown[]): RoleUsage {
   const total: RoleUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-  for (const m of agent.state.messages) {
+  for (const m of messages) {
     const u = (m as { role?: string; usage?: RoleUsage & { cost?: { total?: number } } }).usage;
     if ((m as { role?: string }).role !== "assistant" || !u) continue;
     total.input += u.input ?? 0;
@@ -1141,7 +1149,7 @@ export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: stri
       return finalText(agent);
     },
     turns(): TurnRecord[] {
-      return agentTurns(agent);
+      return messagesToTurns(agent.state.messages);
     },
     approxTokens(): number {
       // pi's estimator uses real provider usage where available plus a
@@ -1150,13 +1158,95 @@ export function createRoleSession(run: Omit<RoleRun, "prompt"> & { prompt?: stri
       return estimateContextTokens(agent.state.messages).tokens;
     },
     usage(): RoleUsage {
-      return agentUsage(agent);
+      return sumMessagesUsage(agent.state.messages);
     },
     steer(text: string): void {
       agent.steer({ role: "user", content: text, timestamp: Date.now() });
     },
     abort(): void {
       agent.abort();
+    },
+  };
+}
+
+export interface HarnessSessionOpts {
+  /** Stable session identity: names the JSONL session and becomes the
+   *  provider's prompt_cache_key (keep ≤64 chars). */
+  sessionId: string;
+  /** Directory for durable session trees (e.g. <campaign>/.coverify/sessions). */
+  sessionsRoot: string;
+  cwd: string;
+}
+
+/**
+ * Durable role session on pi's AgentHarness (redesign phase 1): the same
+ * RoleSession surface as createRoleSession, but the transcript is an
+ * append-only JSONL session tree on disk — crash-survivable, forkable, and
+ * the raw material for telemetry. Chosen over pi-coding-agent's
+ * createAgentSession because the harness layer takes systemPrompt verbatim
+ * (prompt purity by construction), our Models instance directly, and plain
+ * AgentTools, with zero disk/env discovery (docs/redesign-proposal.md).
+ * prompt_cache_key threads automatically from the session id.
+ */
+export async function createHarnessRoleSession(
+  run: Omit<RoleRun, "prompt"> & { prompt?: string },
+  opts: HarnessSessionOpts,
+): Promise<RoleSession> {
+  if (isCliProvider(run.spec.provider)) {
+    throw new Error("CLI backends support single-shot verdict roles only, not sessions");
+  }
+  const tools: AgentTool[] = run.workspace
+    ? workspaceTools(run.workspace.cwd, run.workspace.scope, {
+        code: run.workspace.code,
+        literature: run.workspace.literature,
+      })
+    : [];
+  if (run.extraTools) tools.push(...run.extraTools);
+  const env = new NodeExecutionEnv({ cwd: opts.cwd });
+  const repo = new JsonlSessionRepo({ fs: env, sessionsRoot: opts.sessionsRoot });
+  const session = await repo.create({ cwd: opts.cwd, id: opts.sessionId });
+  const harness = new AgentHarness({
+    session,
+    models: run.models,
+    model: getModel(run.models, run.spec),
+    thinkingLevel: run.spec.thinking,
+    // Verbatim — the harness layer performs no prompt assembly of its own.
+    systemPrompt: systemText(run),
+    tools,
+    activeToolNames: tools.map((t) => t.name),
+    resources: {},
+  });
+  // Sync RoleSession surface over async session storage: the message cache
+  // refreshes after every completed run (telemetry reads between runs).
+  let cachedMessages: AgentMessage[] = [];
+  const refresh = async () => {
+    const entries = await session.getBranch();
+    cachedMessages = entries.flatMap((e) => (e.type === "message" ? [e.message] : []));
+  };
+  return {
+    async ask(prompt: string): Promise<string> {
+      const final = await harness.prompt(prompt);
+      await refresh();
+      if (typeof final.content === "string") return final.content;
+      return (final.content ?? [])
+        .filter((b): b is { type: "text"; text: string } => (b as { type?: string }).type === "text")
+        .map((b) => b.text)
+        .join("\n");
+    },
+    approxTokens(): number {
+      return estimateContextTokens(cachedMessages).tokens;
+    },
+    usage(): RoleUsage {
+      return sumMessagesUsage(cachedMessages);
+    },
+    turns(): TurnRecord[] {
+      return messagesToTurns(cachedMessages);
+    },
+    steer(text: string): void {
+      void harness.steer(text);
+    },
+    abort(): void {
+      void harness.abort();
     },
   };
 }

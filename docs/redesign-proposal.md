@@ -1,6 +1,19 @@
-# Redesign proposal: pi SDK below the waterline
+# Redesign proposal: pi harness below the waterline
 
-Status: proposal for review (2026-08-02). Decision owner: Chao.
+Status: accepted 2026-08-02 (Chao: "reimplement everything using what
+you've learned"); layer amended same day after an exact API-mapping pass —
+**`AgentHarness` + `JsonlSessionRepo` (pi-agent-core), not
+`createAgentSession` (pi-coding-agent)**. The SDK layer cannot produce a
+byte-exact system prompt (buildSystemPrompt unconditionally appends a cwd
+line; purity needs an inline-extension hook), requires re-deriving model
+routing inside a private-constructor ModelRuntime, and needs
+AgentTool→ToolDefinition conversion via a non-exported adapter — while
+AgentHarness takes systemPrompt verbatim, `models: Models` (our
+createModels({credentials}) instance) directly, plain AgentTool[]s, and
+performs zero disk/env discovery. Trade: manual compaction policy
+(~30 lines over pi's exported shouldCompact/estimateContextTokens/
+prepareCompaction) and our own retry orchestration (pi-ai's
+retryAssistantCall). prompt_cache_key auto-threads from the session id.
 Evidence base: the 2026-08-01/02 live-campaign findings and the two-agent pi
 review (source inventory + ecosystem survey); see design.md review record.
 
