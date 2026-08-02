@@ -437,7 +437,21 @@ export function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
       );
       const sections = jobs.map(({ label }, i) => {
         let out = [outs[i].stdout, outs[i].stderr].filter(Boolean).join("\n--- stderr ---\n");
-        if (out.length > OUTPUT_LIMIT) out = out.slice(0, OUTPUT_LIMIT) + "\n[truncated]";
+        if (out.length > OUTPUT_LIMIT) {
+          // Tee before truncating (ecosystem review 2026-08-02, from hypa's
+          // pattern): the tail was the tool layer's one silently-lost data.
+          // The full output lands in the role's own directory as an ordinary
+          // retrievable artifact.
+          let ref = "";
+          try {
+            const teeName = `run_script-full-${Date.now()}-${i}.log`;
+            fs.writeFileSync(path.join(cwd, teeName), out);
+            ref = `; full output saved to ${teeName}`;
+          } catch {
+            /* tee is best-effort; truncation marker stays honest either way */
+          }
+          out = out.slice(0, OUTPUT_LIMIT) + `\n[truncated${ref}]`;
+        }
         if (outs[i].failure) out = `${out}\n[error: ${outs[i].failure}]`;
         return jobs.length === 1 ? out : `## ${label}\n${out || "(no output)"}`;
       });
