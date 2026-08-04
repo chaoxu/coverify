@@ -491,6 +491,10 @@ the cheaper thing to fix first.
       `run_script` (argv-only, process-group kill on exit/timeout, RSS cap)
       — added 2026-08-01 after detached `setsid nohup python3` search jobs
       from a live campaign memory-exhausted saturn into a kernel panic
+- [ ] Delta auditor (issue #14): the contract's sanctioned carry-forward for a
+      certified non-load-bearing repair, replacing the bundle-keyed shortcut
+      removed in 6997036. Trigger: the next campaign showing the
+      clerical-repair tax again, measured from its trace
 - [ ] Compute handles via the fleet scheduler front door (Nomad)
 - [ ] `run_coding_agent` worker tool (claude/codex CLI, design above)
 - [ ] Independent different-family audit path (fable-review for the Anthropic
