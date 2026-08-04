@@ -1007,6 +1007,9 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       }
       return toolText(
         `Declared: ${p.state}. ` +
+          (harvested.total > 0
+            ? `${harvested.total} finished report(s) harvested and saved to EVIDENCE first. `
+            : "") +
           (p.continueSupervised
             ? `${handles.size} agent(s) left running under supervision. `
             : `${interrupted} live agent(s) interrupted. `) +
