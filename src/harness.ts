@@ -190,6 +190,40 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     activityThisWake++;
   };
 
+  /**
+   * Drain every settled handle: persist its report (or its infrastructure
+   * failure) and journal the completion. A report exists only in memory until
+   * it is harvested, so every path that empties the queue must come through
+   * here — dropping it instead destroys finished work.
+   */
+  const harvestSettled = (): { sections: string[]; total: number; failed: number } => {
+    const settled = settledQueue.splice(0, settledQueue.length);
+    for (const s of settled) handles.delete(s.h.id);
+    // Infrastructure failure is journaled as a failed-flagged completion (the
+    // shape cancellation already uses), never as one with an empty artifact:
+    // the contract says infrastructure failure is never PASS, and a failed run
+    // must not count as a new report anywhere spend accounting reads the journal.
+    const sections = settled.map((s) => {
+      if (s.failed !== undefined) {
+        store.append({ kind: "completion", id: s.h.id, failed: s.failed, usage: s.h.usage?.() });
+        return (
+          `## ${s.h.id} [${s.h.mechanism}] FAILED (infrastructure): ${s.failed}\n\n` +
+          `No report artifact exists. Per the contract this is never PASS and carries no ` +
+          `mathematical content; re-dispatching the assignment is legitimate.`
+        );
+      }
+      const reportPath = newEvidencePath(dir, `${s.h.id}/report`);
+      fs.writeFileSync(reportPath, s.report);
+      store.append({ kind: "completion", id: s.h.id, report: path.relative(dir, reportPath), usage: s.h.usage?.() });
+      return `## ${s.h.id} [${s.h.mechanism}] (saved: ${path.relative(dir, reportPath)})\n\n${s.report}`;
+    });
+    return {
+      sections,
+      total: settled.length,
+      failed: settled.filter((s) => s.failed !== undefined).length,
+    };
+  };
+
   const PACKET_PARAMS = {
     mechanism: Type.String({ description: "Mechanism identifier for the registry" }),
     task: Type.String({ description: "Exact task" }),
@@ -956,6 +990,10 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         );
       }
       declaration = p;
+      // Work that already finished is persisted before anything is
+      // interrupted: a report lives only in memory until it is harvested, and
+      // an agent that ran for an hour must not lose its result to a pause.
+      const harvested = harvestSettled();
       // "cease dispatch, interrupt task agents, cancel task computations
       // unless explicitly authorized to continue under supervision".
       let interrupted = 0;
@@ -966,7 +1004,6 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
           handles.delete(id);
           interrupted++;
         }
-        settledQueue.length = 0;
       }
       return toolText(
         `Declared: ${p.state}. ` +
@@ -1007,33 +1044,14 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         : `Still running (do not interrupt for slowness): ${[...handles.values()]
             .map((h) => `${h.id} [${h.mechanism}]`)
             .join(", ")}`) + (limits.length > 0 ? `\nUser limits: ${limits.join("; ")}.` : "");
-    const reports = settledQueue.splice(0, settledQueue.length);
-    for (const s of reports) handles.delete(s.h.id);
-    // Infrastructure failure is journaled as a failed-flagged completion (the
-    // shape cancellation already uses), never as one with an empty artifact:
-    // the contract says infrastructure failure is never PASS, and a failed run
-    // must not count as a new report anywhere spend accounting reads the journal.
-    const reportSections = reports.map((s) => {
-      if (s.failed !== undefined) {
-        store.append({ kind: "completion", id: s.h.id, failed: s.failed, usage: s.h.usage?.() });
-        return (
-          `## ${s.h.id} [${s.h.mechanism}] FAILED (infrastructure): ${s.failed}\n\n` +
-          `No report artifact exists. Per the contract this is never PASS and carries no ` +
-          `mathematical content; re-dispatching the assignment is legitimate.`
-        );
-      }
-      const reportPath = newEvidencePath(dir, `${s.h.id}/report`);
-      fs.writeFileSync(reportPath, s.report);
-      store.append({ kind: "completion", id: s.h.id, report: path.relative(dir, reportPath), usage: s.h.usage?.() });
-      return `## ${s.h.id} [${s.h.mechanism}] (saved: ${path.relative(dir, reportPath)})\n\n${s.report}`;
-    });
-    const failedCount = reports.filter((s) => s.failed !== undefined).length;
+    const harvested = harvestSettled();
+    const reportSections = harvested.sections;
     appendJournal(dir, {
       kind: "wake",
       wake: wakeCount,
       live: handles.size,
-      newReports: reports.length - failedCount,
-      ...(failedCount > 0 ? { failed: failedCount } : {}),
+      newReports: harvested.total - harvested.failed,
+      ...(harvested.failed > 0 ? { failed: harvested.failed } : {}),
     });
     const idleNudge =
       handles.size === 0 && reportSections.length === 0 && wakeCount > 1
