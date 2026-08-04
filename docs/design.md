@@ -244,6 +244,7 @@ pi with `src/pi-extension.ts` loaded.
 | Worker packet schema requires a finite mathematical deliverable; the deliverable-or-precise-gap report form is charged in the role prompt, not parsed | "Every exploration agent must return a proved lemma, explicit construction, counterexample/certificate, or a precise failing implication" |
 | No harness timeouts on proof/audit/reconstruction work (the per-run_script batch cap is surfaced in the tool description and env-tunable) | "Do not impose a coordinator-created elapsed-time limit…" |
 | Code tools (`run_script` + non-prose writes) exist only on a technician dispatched with a computation declaration with concrete bounds; dispatch gate refuses thin declarations; coordinator is prose-only; the dispatch returns the REGISTRY.md launch record (workload, limits, output paths, cancellation) | "Use computation only for a preregistered finite domain and stopping rule yielding a small witness, certificate, or table." / "Never run unsupervised detached compute." |
+| Mechanism identity for gate keys is normalized (trimmed, whitespace-collapsed, case-folded), so retyping a mechanism neither evades the wave gate nor discards an IDEA PASS already earned | "Do not allow recursive subagent fan-out or a large route wave before the parent mechanism receives `IDEA PASS`…" |
 | Wave gate: a second **concurrent** worker on a mechanism requires `IDEA PASS` on file; sequential retries get an advisory reminder, not a refusal (that judgment is the coordinator's); single first-wave scouts exempt | "Do not allow recursive subagent fan-out or a large route wave before the parent mechanism receives `IDEA PASS`…" |
 | Verification = stage 1 (fresh hostile audit) then stage 2: bundle certification (fresh agent sees candidate + bundle; leaky bundle refused, same-bundle retry hash-blocked) → blind reconstruction (no verdict) → fresh comparison carrying stage 2's verdict with the contract's match semantics; all outputs saved as citable EVIDENCE artifacts, hash-bound; a reusable reconstruction is bound to the candidate hash as well as its own artifact hash, so a repaired candidate always gets a fresh one | "Verification cadence" 1–2 (2026-07-31 revision): bundle certification, "a fresh comparison agent…", explicit PASS/mismatch semantics |
 | Anti-verdict-shopping: a substantive audit/comparison FAIL blocks re-verification of that content — matched by candidate hash, so copying the bytes to a new filename inherits the FAIL — unless a recorded rebuttal artifact is supplied; every attempt stays on record | "A substantive FAIL from any stage stands… Do not rerun a failed stage on an unchanged revision in search of a PASS" |
@@ -463,7 +464,10 @@ the cheaper thing to fix first.
 - [x] Four-call verification cadence (audit / bundle certification / blind reconstruction / comparison), hash-bound, artifacts in EVIDENCE
 - [x] `record_promotion` as sole PROVED.md writer; OS write sandbox (macOS)
 - [x] Out-of-tree gate store; statement freeze + `coverify amend`; run version stamps
-- [ ] Retraction bookkeeping helper (registry relabel + dependent demotion)
+- [~] Retraction bookkeeping: the harness now *detects* a promoted revision
+      with a later substantive FAIL and says so at every wake; the relabel,
+      FAILED.md append, historical marking and dependent demotion remain the
+      coordinator's judgment
 - [x] Verification runs async as a handle (was: synchronous inside the
       coordinator's tool call, blocking all gating/dispatch for the length of
       a blind reconstruction — observed 27 min in a live campaign)
@@ -483,7 +487,7 @@ the cheaper thing to fix first.
 - [ ] `run_coding_agent` worker tool (claude/codex CLI, design above)
 - [ ] Independent different-family audit path (fable-review for the Anthropic
       side; codex CLI as the different-family reviewer)
-- [ ] Citation lint (mechanics: cited evidence paths exist; never parses content)
+- [x] Citation lint (mechanics: cited evidence paths exist; never parses content)
 - [x] Per-call token accounting in the journal (provider-reported usage on
       completions, verification records, gate verdicts; cumulative per-wake
       coordinator entry; claude-cli/codex-cli parse usage from JSON output,

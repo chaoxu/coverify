@@ -5,8 +5,9 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const { GateStore, checkDispatch, checkPromotion, statementHash } = await import("../src/gates.ts");
-const { sha256File, sha256Text } = await import("../src/campaign.ts");
+const { GateStore, checkDispatch, checkPromotion, statementHash, promotionsNeedingRetraction } =
+  await import("../src/gates.ts");
+const { sha256File, sha256Text, danglingCitations } = await import("../src/campaign.ts");
 
 function campaign(label: string) {
   const dir = fs.mkdtempSync(`/private/tmp/coverify-gates-${label}-`);
@@ -166,5 +167,55 @@ describe("delivery is durable, not one-shot", () => {
       .filter((e) => e.kind === "completion" && !e.cancelled)
       .map((e) => e.id as string);
     expect(pending).toEqual([]);
+  });
+});
+
+describe("bookkeeping the harness should own", () => {
+  test("mechanism identity survives retyping", () => {
+    // The same mechanism written with different spacing or capitalisation must
+    // not evade the wave gate, nor discard an IDEA PASS already paid for.
+    const { store } = campaign("mechid");
+    store.append({ kind: "gate-verdict", mechanism: "Spectral  Bound", verdict: "IDEA PASS" });
+    const dispatch = (mechanism: string) =>
+      checkDispatch(
+        store,
+        "reasoner",
+        { mechanism, task: "t", context: "c", deliverable: "d", failedCheck: "no close prior route" } as any,
+        undefined,
+        1,
+        1,
+      ).allowed;
+    expect(dispatch("Spectral  Bound")).toBe(true);
+    expect(dispatch("spectral bound")).toBe(true); // same mechanism, retyped
+    expect(dispatch(" spectral   BOUND ")).toBe(true);
+    expect(dispatch("a genuinely different mechanism")).toBe(false);
+  });
+
+  test("a promoted claim contradicted by a later FAIL is surfaced", () => {
+    const { dir, store } = campaign("retract");
+    const f = path.join(dir, "EVIDENCE", "thm.r1.md");
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, "# theorem\n");
+    const h = { candidateHash: sha256File(f), statementHash: statementHash(dir) };
+    store.append({ kind: "promotion", revision: "thm.r1.md", ...h });
+    expect(promotionsNeedingRetraction(store)).toEqual([]);
+    store.append({ kind: "comparison", revision: "thm.r1.md", verdict: "FAIL", ...h });
+    const needed = promotionsNeedingRetraction(store);
+    expect(needed.length).toBe(1);
+    expect(needed[0].revision).toBe("thm.r1.md");
+  });
+
+  test("a ledger citing a missing artifact is caught", () => {
+    const { dir } = campaign("citations");
+    fs.mkdirSync(path.join(dir, "EVIDENCE", "r001"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "EVIDENCE", "r001", "report.r1.md"), "# real\n");
+    fs.writeFileSync(
+      path.join(dir, "FAILED.md"),
+      "# FAILED\n\n- route A closed, see EVIDENCE/r001/report.r1.md\n" +
+        "- route B closed, see EVIDENCE/r009/report.r1.md\n",
+    );
+    const dangling = danglingCitations(dir);
+    expect(dangling.length).toBe(1);
+    expect(dangling[0].citation).toBe("EVIDENCE/r009/report.r1.md");
   });
 });

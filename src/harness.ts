@@ -6,6 +6,7 @@ import { Type } from "typebox";
 import {
   appendJournal,
   consumeUserMessages,
+  danglingCitations,
   newEvidencePath,
   peekUserMessages,
   readJournal,
@@ -20,6 +21,7 @@ import {
   recordStatement,
   checkPromotion,
   checkDispatch,
+  promotionsNeedingRetraction,
   sameRevision,
   GateStore,
   parseFirstLineVerdict,
@@ -1212,6 +1214,22 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       pendingDelivery: pending.length,
       ...(harvested.failed > 0 ? { failed: harvested.failed } : {}),
     });
+    // Bookkeeping the harness can check, so the coordinator does not have to
+    // remember it: a citation that points at nothing, and a promoted claim a
+    // later verdict has contradicted.
+    const dangling = danglingCitations(dir);
+    const retractions = promotionsNeedingRetraction(store);
+    const bookkeeping =
+      (dangling.length > 0
+        ? `\n\nLEDGER CITATIONS THAT POINT AT NOTHING (fix or remove them):\n` +
+          dangling.map((d) => `- ${d.ledger} cites ${d.citation}, which does not exist`).join("\n")
+        : "") +
+      (retractions.length > 0
+        ? `\n\nPROMOTED CLAIMS WITH A LATER SUBSTANTIVE FAIL — the contract requires a retraction ` +
+          `(relabel in REGISTRY.md, append to FAILED.md, mark the PROVED.md entry historical, ` +
+          `demote dependents):\n` +
+          retractions.map((r) => `- ${r.revision} (later ${r.stage} FAIL)`).join("\n")
+        : "");
     const idleNudge =
       handles.size === 0 && reportSections.length === 0 && wakeCount > 1
         ? "\nNothing is live and no new reports arrived. Per the contract the campaign remains " +
@@ -1367,8 +1385,8 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     try {
       lastWakeText = await coordinator.ask(
         fresh
-          ? `${resumeBundle(dir)}${guidanceBlock}\n\n---\n\nCampaign directory: ${dir}\n${lostNote}${digest}${idleNudge}\n\n${newsBlock}${userBlock}`
-          : `${rereadBlock}${guidanceBlock}${lostNote}${digest}${idleNudge}${compactionWarning}\n\n${newsBlock}${userBlock}`,
+          ? `${resumeBundle(dir)}${guidanceBlock}\n\n---\n\nCampaign directory: ${dir}\n${lostNote}${digest}${bookkeeping}${idleNudge}\n\n${newsBlock}${userBlock}`
+          : `${rereadBlock}${guidanceBlock}${lostNote}${digest}${bookkeeping}${idleNudge}${compactionWarning}\n\n${newsBlock}${userBlock}`,
       );
       for (const m of userMessages) appendJournal(dir, { kind: "note", note: `user message: ${m}` });
       consumeUserMessages(dir, userMessages.length + steeredCount);

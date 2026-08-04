@@ -102,6 +102,32 @@ export function newEvidencePath(dir: string, base: string): string {
   }
 }
 
+/**
+ * Evidence paths cited in the ledgers that do not exist on disk.
+ *
+ * Purely mechanical: it looks for `EVIDENCE/...` tokens and checks the
+ * filesystem, never reading or judging content. A ledger citing an artifact
+ * that is not there is either a typo or a hallucinated citation, and both are
+ * invisible to a reader who trusts the ledger — which is exactly the kind of
+ * bookkeeping the model should not have to hold in its head.
+ */
+export function danglingCitations(dir: string): { ledger: string; citation: string }[] {
+  const out: { ledger: string; citation: string }[] = [];
+  for (const ledger of ["PROVED.md", "FAILED.md", "REGISTRY.md", "CURRENT_FRONTIER.md"]) {
+    const p = path.join(dir, ledger);
+    if (!fs.existsSync(p)) continue;
+    const text = fs.readFileSync(p, "utf-8");
+    const seen = new Set<string>();
+    for (const m of text.matchAll(/EVIDENCE\/[A-Za-z0-9._\/-]+/g)) {
+      const cited = m[0].replace(/[.,;:)\]]+$/, "");
+      if (seen.has(cited)) continue;
+      seen.add(cited);
+      if (!fs.existsSync(path.join(dir, cited))) out.push({ ledger, citation: cited });
+    }
+  }
+  return out;
+}
+
 /** Harness-generated audit metadata — permitted by the launcher's EVIDENCE bullet. */
 export function appendJournal(
   dir: string,

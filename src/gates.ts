@@ -220,6 +220,35 @@ export function sameRevision(a: unknown, b: string): boolean {
   return typeof a === "string" && (a === b || a.toLowerCase() === b.toLowerCase());
 }
 
+/**
+ * Promoted revisions that have since received a substantive FAIL.
+ *
+ * The contract requires a retraction when this happens — relabel in
+ * REGISTRY.md, append to FAILED.md, mark the PROVED.md entry historical,
+ * demote dependents. Deciding all that is model judgment, but *noticing* it is
+ * arithmetic over records the harness already holds, and a promoted claim
+ * quietly contradicted by a later verdict is the worst thing this ledger can
+ * contain.
+ */
+export function promotionsNeedingRetraction(store: GateStore): { revision: string; stage: string }[] {
+  const records = store.all();
+  const out: { revision: string; stage: string }[] = [];
+  records.forEach((p, i) => {
+    if (p.kind !== "promotion") return;
+    const hash = p.candidateHash;
+    // Record order, not timestamps: two records written in the same
+    // millisecond compare equal, and this must not depend on clock resolution.
+    for (const f of records.slice(i + 1)) {
+      if ((f.kind !== "audit" && f.kind !== "comparison") || f.verdict !== "FAIL") continue;
+      const sameContent = hash !== undefined && f.candidateHash === hash;
+      if (sameContent || sameRevision(f.revision, String(p.revision))) {
+        out.push({ revision: String(p.revision), stage: String(f.kind) });
+      }
+    }
+  });
+  return out;
+}
+
 export interface GateDecision {
   allowed: boolean;
   reason?: string;
@@ -230,11 +259,26 @@ const FAILED_CHECK_RE = /^(no close prior route|closest prior route is .+; this 
 
 /** Latest verdict wins: a mechanism re-gated to IDEA FAIL/REPAIR loses fan-out
  *  permission it earned earlier, or the gate could never be re-armed. */
+/**
+ * Gate keys are compared on this, not on the raw string.
+ *
+ * A mechanism name is free text the coordinator retypes across turns, and it
+ * decides two launcher rules: whether a wave needs the idea gate, and whether
+ * an IDEA PASS already exists. Raw comparison fails in both directions — a
+ * trailing space or a capital letter both evades the wave gate (the harness
+ * sees no concurrent worker on "that" mechanism) and discards an IDEA PASS the
+ * campaign already paid for.
+ */
+export function normalizeMechanism(mechanism: string): string {
+  return mechanism.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 function ideaGatePassed(store: GateStore, mechanism: string): boolean {
+  const key = normalizeMechanism(mechanism);
   return (
     store
       .all()
-      .filter((e) => e.kind === "gate-verdict" && e.mechanism === mechanism)
+      .filter((e) => e.kind === "gate-verdict" && normalizeMechanism(String(e.mechanism ?? "")) === key)
       .at(-1)?.verdict === "IDEA PASS"
   );
 }
@@ -312,7 +356,10 @@ export function checkDispatch(
 }
 
 function wasDispatchedBefore(store: GateStore, mechanism: string): boolean {
-  return store.all().some((e) => e.kind === "dispatch" && e.mechanism === mechanism);
+  const key = normalizeMechanism(mechanism);
+  return store
+    .all()
+    .some((e) => e.kind === "dispatch" && normalizeMechanism(String(e.mechanism ?? "")) === key);
 }
 
 export function recordGateVerdict(
