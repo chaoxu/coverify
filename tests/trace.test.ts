@@ -124,6 +124,20 @@ describe("a trace must not misreport a campaign", () => {
     expect(() => renderTrace(hostile)).not.toThrow();
   });
 
+  test("refuses to write a trace over campaign state", () => {
+    const d = campaign([
+      { ts: T2(0), kind: "wake", wake: 1, live: 0, newReports: 0 },
+      gate(T2(1), { kind: "dispatch", id: "r001", role: "reasoner", mechanism: "m", task: "t" }),
+    ]);
+    const journal = path.join(d, ".coverify", "journal.jsonl");
+    const before = fs.readFileSync(journal, "utf8");
+    expect(() => writeTrace(d, journal)).toThrow(/refusing to write/);
+    expect(() => writeTrace(d, path.join(d, "PROVED.md"))).toThrow(/refusing to write/);
+    expect(fs.readFileSync(journal, "utf8")).toBe(before);
+    // A trace file inside the campaign is still fine.
+    expect(writeTrace(d, path.join(d, ".coverify", "trace.html"))).toContain("trace.html");
+  });
+
   test("a report path escaping the campaign is not inlined", () => {
     const outside = fs.mkdtempSync("/private/tmp/coverify-outside-");
     fs.writeFileSync(path.join(outside, "secret.md"), "SECRET-CONTENT");

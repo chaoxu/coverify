@@ -146,7 +146,8 @@ export const BODY = String.raw`
     <div class="panel-head">
       <div>
         <h2>Agent lifetimes and verification calls</h2>
-        <p class="note" id="hint">Shaded bands are coordinator wakes.</p>
+        <p class="note" id="hint">Shaded bands mark coordinator wakes (hover for live/report counts;
+          the band's width is a fixed marker, not the turn's duration).</p>
       </div>
       <div class="controls">
         <button class="ctl" id="fit">Fit all</button>
@@ -400,11 +401,6 @@ export const VIEW = String.raw`
     } else if (item.kind === "promotion") {
       parts.push(row("promotion", "<b>" + esc(e.revision) + "</b>"));
       parts.push(row("recorded", clock(e.t), "mono"));
-    } else if (item.kind === "wake") {
-      parts.push(row("coordinator wake", "<b>#" + e.n + "</b>"));
-      parts.push(row("at", clock(e.t), "mono"));
-      parts.push(row("live agents", String(e.live), "mono"));
-      parts.push(row("new reports", String(e.reports), "mono"));
     }
     box.className = "inspect";
     box.innerHTML = parts.join("");

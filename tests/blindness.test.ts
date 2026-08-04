@@ -24,6 +24,14 @@ describe("assertCandidateWithheld", () => {
     expect(() => assertCandidateWithheld(prompt, `\n\n${candidate}\n`)).toThrow(/blindness violation/);
   });
 
+  test("refuses a candidate reformatted on its way into the prompt", () => {
+    // Re-indented, re-wrapped, CRLF: same text, same leak.
+    const reflowed = candidate.replace(/\n\n/g, "\r\n").replace(/\. /g, ".\n    ");
+    expect(() => assertCandidateWithheld(`# Key ideas\n\n${reflowed}`, candidate)).toThrow(
+      /blindness violation/,
+    );
+  });
+
   test("an empty candidate never blocks (degenerate file, other gates catch it)", () => {
     expect(() => assertCandidateWithheld("# Statement\n\nAnything.", "  \n ")).not.toThrow();
   });

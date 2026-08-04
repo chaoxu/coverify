@@ -110,8 +110,14 @@ export function parseFirstLineVerdict(
  * paraphrase inside keyIdeas remains the bundle certifier's judgment.
  */
 export function assertCandidateWithheld(renderedPrompt: string, candidate: string): void {
-  const c = candidate.trim();
-  if (c.length > 0 && renderedPrompt.includes(c)) {
+  // Compared with whitespace collapsed: a candidate that reaches the prompt
+  // re-indented, re-wrapped, or with CRLF endings is the same leak, and an
+  // exact-substring check would wave it through while the journal still
+  // claims the candidate was withheld. This catches verbatim inclusion under
+  // reformatting; paraphrase remains model judgment (see the honesty ledger).
+  const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+  const c = norm(candidate);
+  if (c.length > 0 && norm(renderedPrompt).includes(c)) {
     throw new Error(
       "blindness violation: the reconstruction prompt contains the candidate text; refusing to dispatch",
     );

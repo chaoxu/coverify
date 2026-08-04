@@ -200,9 +200,24 @@ ${body}
 `;
 }
 
+/**
+ * Campaign files a trace must never overwrite. `--out` is a user-typed path,
+ * and one typo aimed at the journal or a ledger would destroy the campaign
+ * this tool exists to observe.
+ */
+function assertSafeOutput(dir: string, target: string): void {
+  const root = path.resolve(dir);
+  const p = path.resolve(target);
+  const inCampaign = p === root || p.startsWith(root + path.sep);
+  if (inCampaign && !/\.html$/i.test(p)) {
+    throw new Error(`refusing to write a trace over campaign state: ${target}`);
+  }
+}
+
 /** Writes the trace HTML and returns the output path. */
 export function writeTrace(dir: string, out?: string): string {
   const target = out ?? path.join(dir, ".coverify", "trace.html");
+  assertSafeOutput(dir, target);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, renderTrace(dir));
   return target;
