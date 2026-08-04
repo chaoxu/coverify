@@ -36,7 +36,22 @@ describe("user message inbox", () => {
     expect(peekUserMessages(dir)).toEqual(["c"]);
     consumeUserMessages(dir, 1);
     expect(peekUserMessages(dir)).toEqual([]);
-    expect(fs.existsSync(path.join(dir, ".coverify", "inbox.jsonl"))).toBe(false);
+  });
+
+  test("a message appended during consumption is not lost", () => {
+    // `coverify say` is a separate process appending whenever the user types,
+    // so consumption must not rewrite the log: a read-modify-write drops
+    // anything that lands between the read and the write.
+    const dir = campaign();
+    queueUserMessage(dir, "a");
+    const peeked = peekUserMessages(dir);
+    const inbox = path.join(dir, ".coverify", "inbox.jsonl");
+    const before = fs.readFileSync(inbox, "utf8");
+    queueUserMessage(dir, "raced in");
+    consumeUserMessages(dir, peeked.length);
+    expect(peekUserMessages(dir)).toEqual(["raced in"]);
+    // The log itself is append-only: every earlier entry is still on disk.
+    expect(fs.readFileSync(inbox, "utf8").startsWith(before)).toBe(true);
   });
 
   test("failed delivery consumes nothing; torn trailing line tolerated", () => {

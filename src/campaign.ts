@@ -129,8 +129,8 @@ export function queueUserMessage(dir: string, message: string): void {
   );
 }
 
-/** Pending user messages, oldest first. Torn trailing line tolerated. */
-export function peekUserMessages(dir: string): string[] {
+/** Every inbox entry ever queued, oldest first. Torn trailing line tolerated. */
+function readInbox(dir: string): string[] {
   const p = path.join(dir, JOURNAL_DIR, "inbox.jsonl");
   if (!fs.existsSync(p)) return [];
   const out: string[] = [];
@@ -146,19 +146,31 @@ export function peekUserMessages(dir: string): string[] {
   return out;
 }
 
+/** How many inbox entries the harness has already delivered. */
+function inboxCursor(dir: string): number {
+  const p = path.join(dir, JOURNAL_DIR, "inbox.cursor");
+  if (!fs.existsSync(p)) return 0;
+  const n = Number(fs.readFileSync(p, "utf-8").trim());
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+/** Pending user messages, oldest first. */
+export function peekUserMessages(dir: string): string[] {
+  return readInbox(dir).slice(inboxCursor(dir));
+}
+
 /**
- * Removes the first `count` pending messages, keeping anything queued since
- * they were peeked. Called only after the coordinator has actually received
- * them (delivery failure leaves the inbox intact for the next wake).
+ * Mark the first `count` pending messages delivered.
+ *
+ * The inbox is never rewritten: `coverify say` runs in another process and
+ * appends whenever the user types, so a read-modify-write here would drop any
+ * message that landed between the read and the write — silently, and exactly
+ * when the user is most likely to be typing. Advancing a separate cursor makes
+ * the two writers independent.
  */
 export function consumeUserMessages(dir: string, count: number): void {
   if (count <= 0) return;
-  const p = path.join(dir, JOURNAL_DIR, "inbox.jsonl");
-  if (!fs.existsSync(p)) return;
-  const lines = fs.readFileSync(p, "utf-8").split("\n").filter((l) => l.trim() !== "");
-  const rest = lines.slice(count);
-  if (rest.length === 0) fs.rmSync(p);
-  else fs.writeFileSync(p, rest.join("\n") + "\n");
+  fs.writeFileSync(path.join(dir, JOURNAL_DIR, "inbox.cursor"), String(inboxCursor(dir) + count) + "\n");
 }
 
 export function sha256Text(text: string): string {
