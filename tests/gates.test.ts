@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 const { GateStore, checkDispatch, checkPromotion, statementHash } = await import("../src/gates.ts");
-const { sha256File } = await import("../src/campaign.ts");
+const { sha256File, sha256Text } = await import("../src/campaign.ts");
 
 function campaign(label: string) {
   const dir = fs.mkdtempSync(`/private/tmp/coverify-gates-${label}-`);
@@ -71,5 +71,61 @@ describe("promotion follows the latest verdict", () => {
   test("editing the candidate invalidates promotion", () => {
     fs.appendFileSync(candidate, "\nedit\n");
     expect(checkPromotion(store, dir, rel).allowed).toBe(false);
+  });
+});
+
+describe("revision-impact rules the launcher states", () => {
+  test("a FAIL follows the content, not the filename", () => {
+    // "A substantive FAIL from any stage stands against the revision that
+    // received it" — copying identical bytes to a new name is that revision.
+    const { dir, store } = campaign("failinherit");
+    const a = path.join(dir, "EVIDENCE", "cand.r1.md");
+    fs.writeFileSync(a, "# candidate\n\nsame bytes\n");
+    const hashes = { candidateHash: sha256File(a), statementHash: statementHash(dir) };
+    store.append({ kind: "comparison", revision: "cand.r1.md", verdict: "FAIL", ...hashes });
+    const b = path.join(dir, "EVIDENCE", "cand-copy.md");
+    fs.copyFileSync(a, b);
+    const priorFailFor = (rev: string, file: string) =>
+      store.all().some(
+        (e) =>
+          (e.kind === "audit" || e.kind === "comparison") &&
+          e.candidateHash === sha256File(file) &&
+          e.statementHash === statementHash(dir) &&
+          e.verdict === "FAIL",
+      );
+    expect(priorFailFor("cand.r1.md", a)).toBe(true);
+    expect(priorFailFor("cand-copy.md", b)).toBe(true); // the rename must not clear it
+  });
+
+  test("a reconstruction is reusable only for the identical candidate", () => {
+    // The contract: a repair invalidates both stages and must never reuse a
+    // verifier response that influenced it. Only a re-run on identical bytes
+    // (protocol/infrastructure failure) may reuse the reconstruction.
+    const { dir, store } = campaign("carryfwd");
+    const r1 = path.join(dir, "EVIDENCE", "d.r1.md");
+    fs.writeFileSync(r1, "# proof v1\n");
+    const art = path.join(dir, "EVIDENCE", "recon.md");
+    fs.writeFileSync(art, "# reconstruction\n");
+    const common = {
+      statementHash: statementHash(dir),
+      bundleHash: sha256Text("bundle"),
+      provedHash: sha256Text("proved"),
+      artifact: path.relative(dir, art),
+      artifactHash: sha256File(art),
+    };
+    store.append({ kind: "reconstruction", revision: "d.r1.md", candidateHash: sha256File(r1), ...common });
+    const reusableFor = (file: string) =>
+      store.all().some(
+        (e) =>
+          e.kind === "reconstruction" &&
+          e.candidateHash === sha256File(file) &&
+          e.statementHash === common.statementHash &&
+          e.bundleHash === common.bundleHash &&
+          e.provedHash === common.provedHash,
+      );
+    expect(reusableFor(r1)).toBe(true); // identical candidate: a legitimate re-run
+    const r2 = path.join(dir, "EVIDENCE", "d.r2.md");
+    fs.writeFileSync(r2, "# proof v2, hypothesis added\n");
+    expect(reusableFor(r2)).toBe(false); // repaired candidate: must regenerate
   });
 });

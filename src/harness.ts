@@ -77,6 +77,11 @@ interface Handle {
  *  operational pause (campaign stays authorized), never a completion. */
 const NOOP_WAKE_PAUSE = 3;
 
+/** Consecutive failed coordinator turns before the harness pauses. A failing
+ *  turn is retried with exponential backoff; a backend that is simply broken
+ *  should stop the campaign loudly instead of spinning. */
+const TURN_FAILURE_LIMIT = 5;
+
 /** Coordinator context cap (approx tokens). The coordinator stays resident
  *  across wakes — matching how the skill runs in a live harness session —
  *  until this cap, at which point the session compacts in place (the
@@ -534,9 +539,9 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       "reconstruction from statement + key ideas + allowed sources + promoted premises (never the " +
       "proof), then a fresh comparison mapping the reconstruction to the candidate's conclusions and " +
       "dependencies. Runs async like a worker: returns a handle immediately, verdict at a later " +
-      "wake. When statement, bundle, and promoted premises are unchanged since a prior run, the " +
-      "blind reconstruction is carried forward automatically (it never sees the candidate) and only " +
-      "audit, certification, and comparison rerun. Code records all verdicts bound to content " +
+      "wake. A re-run on the identical candidate (after a protocol or infrastructure failure) reuses " +
+      "the blind reconstruction; any change to the candidate regenerates it, because the contract " +
+      "forbids reusing a verifier response that influenced the repair. Code records all verdicts bound to content " +
       "hashes; promotion (record_promotion) is only legal after both stages PASS on the exact revision.",
     parameters: Type.Object({
       revision: Type.String({ description: "EVIDENCE-relative candidate filename (revision identity)" }),
@@ -604,13 +609,18 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
             "candidate argument. Revise keyIdeas/allowedSources before retrying.",
         );
       }
+      // Matched on content, not on filename. "A substantive FAIL from any
+      // stage stands against the revision that received it" — and identical
+      // bytes under a different name are that revision, so copying a FAILed
+      // candidate to a new path must not clear the requirement for a repair,
+      // a retraction, or a recorded rebuttal.
       const priorFail = store
         .all()
         .some(
           (e) =>
             (e.kind === "audit" || e.kind === "comparison") &&
-            sameRevision(e.revision, rel) &&
             e.candidateHash === candidateHash &&
+            e.statementHash === stmtHash &&
             e.verdict === "FAIL",
         );
       if (priorFail) {
@@ -773,16 +783,27 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         }
 
         // Stage 2a — blind reconstruction (no verdict; the PASS belongs to
-        // the comparison). Carried forward when statement, bundle, and
-        // promoted premises are byte-identical to a prior reconstruction's
-        // inputs: the reconstructor never sees any candidate, so a candidate
-        // repair cannot invalidate it (delta carry-forward; the contract's
-        // full-re-verification was harness strictness, not a clause).
+        // the comparison).
+        //
+        // Reuse is allowed ONLY for the identical candidate — a re-run after a
+        // protocol or infrastructure failure. The contract is explicit for a
+        // repaired candidate: "Invalidate both stages; rerun a fresh hostile
+        // audit and then a fresh reconstruction. Never reuse a verifier
+        // response that influenced the repair." Keying reuse on the bundle
+        // alone broke exactly that: the comparator's FAIL is quoted verbatim
+        // into the coordinator's wake, the repair is written to address it,
+        // and the same reconstruction then judges the candidate written
+        // against it — independence in name only. Carrying stages forward for
+        // a *non-load-bearing* diff is legal, but the contract requires a
+        // fresh delta auditor's PASS to authorize it, and there is no delta
+        // auditor here yet (roadmap), so anything but identical bytes
+        // regenerates.
         const priorRecon = [...store.all()]
           .reverse()
           .find(
             (e) =>
               e.kind === "reconstruction" &&
+              e.candidateHash === candidateHash &&
               e.statementHash === stmtHash &&
               e.bundleHash === bundleHash &&
               e.provedHash === provedHash &&
@@ -1074,6 +1095,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
 
   let wakeCount = 0;
   let noopWakes = 0;
+  let turnFailures = 0;
   let coordinator: RoleSession | undefined;
   let coordinatorEpoch = 0;
   while (true) {
@@ -1268,12 +1290,32 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     } catch (e) {
       // A hard provider failure on the coordinator's turn must not kill the
       // campaign with workers live: journal it and rebuild from the ledgers
-      // (the restart rule is already the recovery path).
+      // (the restart rule is already the recovery path). But a *persistent*
+      // failure — expired token, retired model id, quota exhausted — fails in
+      // milliseconds, so retrying immediately spins: measured 2610 rebuilds a
+      // second, one session tree each, while the campaign silently does
+      // nothing. Back off, and give up into a pause rather than burn a
+      // bounded run's whole wake budget on one broken credential.
+      turnFailures++;
       appendJournal(dir, {
         kind: "note",
         note: `coordinator turn failed (${String(e).slice(0, 200)}); rebuilding via restart rule`,
+        consecutiveFailures: turnFailures,
       });
       coordinator = undefined;
+      wakeCount--; // a failed turn is not a wake the user asked to spend
+      if (turnFailures >= TURN_FAILURE_LIMIT) {
+        appendJournal(dir, {
+          kind: "note",
+          note: `pausing after ${turnFailures} consecutive coordinator failures`,
+        });
+        return (
+          `${lastWakeText}\n\n[coverify: paused after ${turnFailures} consecutive coordinator turn ` +
+          `failures — the last was: ${String(e).slice(0, 200)}. Live agents keep their work (reports ` +
+          `are persisted as they finish). Fix the backend and 'coverify resume']`
+        );
+      }
+      await new Promise((r) => setTimeout(r, Math.min(30_000, 1000 * 2 ** (turnFailures - 1))));
       continue;
     } finally {
       clearInterval(inboxWatcher);
@@ -1319,7 +1361,27 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       // any live agent) would reject the race and kill the whole campaign,
       // including every other live agent. registerHandle already turns a
       // rejection into a failure report.
-      await Promise.race([...handles.values()].map((h) => h.settled));
+      //
+      // The inbox is raced too. Without it, `coverify say` — the operator's
+      // one lever over a running campaign — waits for the next agent
+      // completion, which with three multi-hour reasoners live means hours,
+      // while the CLI has already reported the message as queued.
+      const pending = peekUserMessages(dir).length;
+      let stopPolling = () => {};
+      const inboxArrival = new Promise<void>((resolve) => {
+        const timer = setInterval(() => {
+          if (peekUserMessages(dir).length > pending) {
+            clearInterval(timer);
+            resolve();
+          }
+        }, 1000);
+        stopPolling = () => {
+          clearInterval(timer);
+          resolve();
+        };
+      });
+      await Promise.race([...[...handles.values()].map((h) => h.settled), inboxArrival]);
+      stopPolling();
     }
   }
 }
