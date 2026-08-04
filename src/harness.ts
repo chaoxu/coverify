@@ -240,6 +240,14 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     role: "reasoner" | "technician",
     packet: ReasonerPacket | TechnicianPacket,
   ) => {
+    // "cease dispatch": once the campaign is declared, new work would run in a
+    // process that is about to return, and its report would be discarded.
+    if (declaration) {
+      return toolText(
+        `DISPATCH REFUSED: the campaign is already declared ${declaration.state}; the contract says ` +
+          "cease dispatch. Checkpoint the ledgers and finish this turn.",
+      );
+    }
     const decision = checkDispatch(
       store,
       role,
@@ -441,6 +449,11 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     }),
     executionMode: "sequential",
     execute: async (_id: string, params: unknown) => {
+      if (declaration) {
+        return toolText(
+          `GATE REFUSED: the campaign is already declared ${declaration.state}; cease dispatch and checkpoint.`,
+        );
+      }
       const p = params as { mechanism: string; firstImplication: string; importedPremises?: string };
       const statement = readLedger(dir, "STATEMENT.md");
       const proved = promotedStatementsView(dir);
@@ -524,6 +537,12 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     }),
     executionMode: "sequential",
     execute: async (_id: string, params: unknown) => {
+      if (declaration) {
+        return toolText(
+          `VERIFICATION REFUSED: the campaign is already declared ${declaration.state}; cease dispatch ` +
+            "and checkpoint. Re-request verification after resuming.",
+        );
+      }
       const p = params as {
         revision: string;
         declaredDependencies: string;
@@ -535,8 +554,12 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       if (!rel) return toolText(`revision must be a path inside EVIDENCE/ (got: ${p.revision})`);
       const candidatePath = path.join(dir, "EVIDENCE", rel);
       if (!fs.existsSync(candidatePath)) return toolText(`no such evidence revision: ${rel}`);
-      const candidate = fs.readFileSync(candidatePath, "utf-8");
-      const candidateHash = sha256File(candidatePath);
+      // One read, one hash: a candidate can live in a live worker's evidence
+      // directory and be rewritten between two reads, which would record a
+      // hash of bytes no verifier ever saw.
+      const candidateBytes = fs.readFileSync(candidatePath);
+      const candidate = candidateBytes.toString("utf-8");
+      const candidateHash = sha256Text(candidate);
       const stmtHash = statementHash(dir);
 
       // Anti-verdict-shopping (contract): a substantive FAIL stands against
@@ -1034,10 +1057,27 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   while (true) {
     wakeCount++;
     if (opts.maxWakes !== undefined && wakeCount > opts.maxWakes) {
-      appendJournal(dir, { kind: "note", note: `user wake limit ${opts.maxWakes} reached; pausing` });
-      return `${lastWakeText}\n\n[coverify: user wake limit reached; campaign paused, resume with 'coverify resume']`;
+      // Harvest before returning: what unblocked this loop is usually an agent
+      // finishing, and its report lives only in the queue until persisted.
+      const atLimit = harvestSettled();
+      appendJournal(dir, {
+        kind: "note",
+        note: `user wake limit ${opts.maxWakes} reached; pausing`,
+        ...(atLimit.total > 0 ? { harvested: atLimit.total } : {}),
+      });
+      return (
+        `${lastWakeText}\n\n[coverify: user wake limit reached; campaign paused` +
+        (atLimit.total > 0 ? `; ${atLimit.total} finished report(s) saved to EVIDENCE` : "") +
+        `. Resume with 'coverify resume']`
+      );
     }
     activityThisWake = 0;
+    // Harvest first: the digest and the live-agent limits must describe the
+    // world the coordinator is about to act in, not the one before completions
+    // landed — otherwise a finished agent is reported as still running in the
+    // same message that delivers its report.
+    const harvested = harvestSettled();
+    const reportSections = harvested.sections;
     const limits: string[] = [];
     if (opts.userAgentLimit !== undefined) limits.push(`workers ${liveWorkers()}/${opts.userAgentLimit}`);
     if (opts.maxWakes !== undefined) limits.push(`wakes ${wakeCount}/${opts.maxWakes}`);
@@ -1047,8 +1087,6 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         : `Still running (do not interrupt for slowness): ${[...handles.values()]
             .map((h) => `${h.id} [${h.mechanism}]`)
             .join(", ")}`) + (limits.length > 0 ? `\nUser limits: ${limits.join("; ")}.` : "");
-    const harvested = harvestSettled();
-    const reportSections = harvested.sections;
     appendJournal(dir, {
       kind: "wake",
       wake: wakeCount,
@@ -1227,8 +1265,19 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     lostNote = "";
 
     if (declaration) {
-      appendJournal(dir, { kind: "note", note: `declared ${declaration.state}: ${declaration.reason}` });
-      return `${lastWakeText}\n\n[coverify: campaign ${declaration.state} — ${declaration.reason}]`;
+      // Anything that settled during the rest of the turn (including agents
+      // left running under supervision) is persisted before the process ends.
+      const finalHarvest = harvestSettled();
+      appendJournal(dir, {
+        kind: "note",
+        note: `declared ${declaration.state}: ${declaration.reason}`,
+        ...(finalHarvest.total > 0 ? { harvested: finalHarvest.total } : {}),
+      });
+      return (
+        `${lastWakeText}\n\n[coverify: campaign ${declaration.state} — ${declaration.reason}` +
+        (finalHarvest.total > 0 ? `; ${finalHarvest.total} late report(s) saved to EVIDENCE` : "") +
+        `]`
+      );
     }
     if (handles.size === 0 && settledQueue.length === 0) {
       noopWakes = activityThisWake === 0 ? noopWakes + 1 : 0;
