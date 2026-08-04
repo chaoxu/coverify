@@ -306,6 +306,21 @@ function realResolve(p: string): string {
       /* raced away; fall through to the ancestor walk */
     }
   }
+  // A symlink whose target does not exist yet: existsSync follows links and
+  // says false, so the link would be judged as itself while the kernel writes
+  // through it. Resolve the link by hand — a dangling link pointed at
+  // PROVED.md is exactly how a write escapes its scope.
+  try {
+    if (fs.lstatSync(abs).isSymbolicLink()) {
+      const target = fs.readlinkSync(abs);
+      const resolved = path.resolve(path.dirname(abs), target);
+      // Bounded: a link chain is followed by recursion, and a cycle throws
+      // ELOOP from lstat/readlink long before this matters.
+      return resolved === abs ? resolved : realResolve(resolved);
+    }
+  } catch {
+    /* not a link, or unreadable: fall through to the ancestor walk */
+  }
   let dir = path.dirname(abs);
   const tail: string[] = [path.basename(abs)];
   while (!fs.existsSync(dir) && dir !== path.dirname(dir)) {
@@ -343,6 +358,24 @@ function assertInScope(scope: WriteScope, target: string): void {
 export const RUN_MEM_MB = positiveEnvNumber(process.env.COVERIFY_RUN_MEM_MB, 4096);
 
 /**
+ * Does this command line name one of the batch's scripts as an argument?
+ *
+ * Whole-token only. A substring test would adopt — and then SIGKILL — any
+ * unrelated process whose arguments merely mention the path, which on a shared
+ * working directory means other agents, editors, and dev servers.
+ */
+function namesAMark(args: string, marks: readonly string[]): boolean {
+  if (marks.length === 0) return false;
+  for (const token of args.split(/\s+/)) {
+    const bare = token.replace(/^["']|["'],?$/g, "");
+    for (const m of marks) {
+      if (bare === m || bare.startsWith(m + "/")) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * One `ps` sweep: every process that belongs to this batch — descended from
  * `roots` by parent chain, sharing one of their process groups, or still
  * running one of the batch's script paths on its command line. The last test
@@ -378,7 +411,7 @@ function processSweep(
       const members = new Map<number, Proc>();
       for (const [pid, r] of rows) {
         if (pid === process.pid) continue;
-        if (roots.has(pid) || roots.has(r.pgid) || marks.some((m) => r.args.includes(m))) {
+        if (roots.has(pid) || roots.has(r.pgid) || namesAMark(r.args, marks)) {
           members.set(pid, r);
         }
       }
@@ -407,7 +440,11 @@ function processSweep(
  * setsid-nohup search jobs memory-exhausted saturn into a kernel panic on
  * 2026-08-01.
  */
-export function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
+export function runScriptTool(
+  cwd: string,
+  scope: WriteScope,
+  opts?: { exclusiveDir?: boolean },
+): AgentTool {
   return {
     name: "run_script",
     label: "Run scripts",
@@ -455,11 +492,18 @@ export function runScriptTool(cwd: string, scope: WriteScope): AgentTool {
           }
         }
       }
-      // Sweep marks: the working directory plus each script path, so a
-      // survivor that left the process group is still found by command line.
+      // Sweep marks. The batch's own script paths are always safe to match.
+      // The working directory is added only when it belongs exclusively to
+      // this batch (a dispatched agent's own evidence directory): that is what
+      // catches a helper launched in a new session running a *different* file
+      // there. On a shared directory — vanilla pi opened on a project — the
+      // same match would adopt and kill other agents' processes, so it is
+      // omitted and that recall is given up deliberately.
+      const marks = jobs.map((j) => j.script);
+      if (opts?.exclusiveDir) marks.push(cwd);
       const { outs, fate } = await supervise(
         jobs.map(({ argv }) => sandboxedArgv(argv, scope)),
-        { cwd, marks: [cwd, ...jobs.map((j) => j.script)], signal },
+        { cwd, marks, signal },
       );
       const sections = jobs.map(({ label }, i) => {
         let out = [outs[i].stdout, outs[i].stderr].filter(Boolean).join("\n--- stderr ---\n");
@@ -505,9 +549,10 @@ interface SupervisedOut {
  */
 async function supervise(
   specs: { file: string; args: string[] }[],
-  opts: { cwd: string; marks: string[]; signal?: AbortSignal; outputLimit?: number },
+  opts: { cwd: string; marks?: readonly string[]; signal?: AbortSignal; outputLimit?: number },
 ): Promise<{ outs: SupervisedOut[]; fate?: string }> {
   const limit = opts.outputLimit ?? OUTPUT_LIMIT;
+  const marks = opts.marks ?? [];
   const children = specs.map(({ file, args }) =>
     spawn(file, args, { cwd: opts.cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] }),
   );
@@ -539,7 +584,7 @@ async function supervise(
     // second sweep catches anything spawned between sweep and kill.
     for (let pass = 0; pass < 2; pass++) {
       killGroups();
-      const sweep = await processSweep(roots, opts.marks).catch(() => undefined);
+      const sweep = await processSweep(roots, marks).catch(() => undefined);
       for (const pid of sweep?.members.keys() ?? []) {
         try {
           process.kill(pid, "SIGKILL");
@@ -566,7 +611,7 @@ async function supervise(
   else opts.signal?.addEventListener("abort", onAbort, { once: true });
   const memWatch = setInterval(() => {
     if (fate || finished) return;
-    processSweep(roots, opts.marks).then(
+    processSweep(roots, marks).then(
       ({ rssKb }) => {
         // `finished` is re-read here: a sweep in flight when the batch ended
         // must not report a completed run as killed.
@@ -690,7 +735,6 @@ function literatureSearchTool(cwd: string, scope: WriteScope): AgentTool {
       });
       const { outs, fate } = await supervise([spec], {
         cwd,
-        marks: [cwd],
         signal,
         outputLimit: OUTPUT_LIMIT * 4,
       });
@@ -766,7 +810,7 @@ export function workspaceTools(
     },
   });
   const tools = [createReadTool(cwd), createLsTool(cwd), createGrepTool(cwd), scopedWrite] as AgentTool[];
-  if (code) tools.push(runScriptTool(cwd, scope));
+  if (code) tools.push(runScriptTool(cwd, scope, { exclusiveDir: true }));
   if (opts?.literature === true) tools.push(literatureSearchTool(cwd, scope));
   return tools;
 }

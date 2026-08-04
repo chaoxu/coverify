@@ -7,7 +7,7 @@ import * as path from "node:path";
 
 process.env.COVERIFY_RUN_MEM_MB = "200";
 process.env.COVERIFY_LITERATURE_CMD = "/bin/echo";
-const { workspaceTools } = await import("../src/roles.ts");
+const { workspaceTools, runScriptTool } = await import("../src/roles.ts");
 const { checkDispatch } = await import("../src/gates.ts");
 
 const store = { all: () => [] } as any;
@@ -240,6 +240,29 @@ describe("enforcement bypasses (regression)", () => {
     expect(out).not.toContain("SHELL_REACHED");
     expect(out).toContain("inside your assigned directory");
   });
+  test("a shared working directory does not adopt unrelated processes", async () => {
+    // pi-extension opens vanilla pi on an arbitrary directory, so the sweep
+    // must not match by that directory: other agents, editors and dev servers
+    // legitimately mention it on their command lines.
+    const shared = tmp("shared-cwd");
+    const bare = runScriptTool(shared, { allow: [shared], deny: [] }) as any;
+    fs.writeFileSync(path.join(shared, "quick.py"), "print('ok')\n");
+    const victim = Bun.spawn(["python3", "-c", "import time; time.sleep(30)", `${shared}/some-file`], {
+      stdout: "ignore",
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    await bare.execute("t", { runs: [{ path: "quick.py" }] });
+    await new Promise((r) => setTimeout(r, 400));
+    let alive = true;
+    try {
+      process.kill(victim.pid, 0);
+    } catch {
+      alive = false;
+    }
+    if (alive) process.kill(victim.pid, 9);
+    expect(alive).toBe(true);
+  }, 20000);
+
   test("a helper launched in a new session is still reaped", async () => {
     fs.writeFileSync(path.join(ws, "helper.py"), "import time\ntime.sleep(300)\n");
     fs.writeFileSync(
