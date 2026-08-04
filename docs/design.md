@@ -125,9 +125,13 @@ default 4096). At batch end (or when a cap trips) the harness kills the
 groups and then sweeps `ps` for survivors — processes still descended from
 the batch, sharing its groups, or still running one of its script paths —
 because a child that calls `setpgrp()` and is reparented to pid 1 is
-invisible to a group kill alone. The sweep matches the batch's script paths and its
-working directory, so a helper launched in a new session — even one running
-a different file in the same directory — is still found. A survivor that
+invisible to a group kill alone. The sweep matches whole argv tokens naming the batch's own script paths, plus
+its working directory when that directory belongs exclusively to the batch (a
+dispatched agent's evidence directory) — which is what catches a helper
+launched in a new session running a different file there. On a shared
+directory (vanilla pi through the extension) the directory is not matched:
+killing by it would reap other agents' and tools' processes, so that recall is
+given up deliberately. A survivor that
 leaves its session *and* `exec`s a binary naming nothing in the workspace
 would evade it; the technician is a supervised role, not an adversary, so
 that residual is stated rather than claimed away. If `ps` itself fails, the batch is killed and the failure
