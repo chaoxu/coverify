@@ -43,13 +43,28 @@ export class GateStore {
     const dir = path.join(stateDir, id);
     fs.mkdirSync(dir, { recursive: true });
     this.file = path.join(dir, "gates.jsonl");
-    this.records = fs.existsSync(this.file)
-      ? fs
-          .readFileSync(this.file, "utf-8")
-          .split("\n")
-          .filter(Boolean)
-          .map((l) => JSON.parse(l) as GateRecord)
-      : [];
+    // A torn line (crash or full disk mid-append) must not make the campaign
+    // unresumable: gate records are append-only, so the salvageable prefix is
+    // authoritative and a damaged line is dropped loudly. Failing hard here
+    // would brick every prove/resume/amend with a raw SyntaxError.
+    this.records = [];
+    if (fs.existsSync(this.file)) {
+      let dropped = 0;
+      for (const line of fs.readFileSync(this.file, "utf-8").split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          this.records.push(JSON.parse(line) as GateRecord);
+        } catch {
+          dropped++;
+        }
+      }
+      if (dropped > 0) {
+        console.error(
+          `[coverify] warning: skipped ${dropped} unparseable line(s) in ${this.file} ` +
+            "(torn write from a crash); gate history before them is intact.",
+        );
+      }
+    }
   }
 
   append(record: { kind: GateRecord["kind"] } & Record<string, unknown>): GateRecord {

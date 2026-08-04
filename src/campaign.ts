@@ -15,6 +15,18 @@ export function initCampaign(dir: string, statement: string): void {
   if (fs.existsSync(statementPath)) {
     throw new Error(`campaign already exists at ${dir}; use resume or status`);
   }
+  // STATEMENT.md alone is not proof of an empty directory. If it was renamed,
+  // moved aside, or restored from a partial backup while the ledgers survived,
+  // writing the templates would destroy every promotion and closed route.
+  const survivors = ["PROVED.md", "FAILED.md", "REGISTRY.md", "PROCESS_LESSONS.md", "CURRENT_FRONTIER.md"]
+    .filter((f) => fs.existsSync(path.join(dir, f)));
+  if (survivors.length > 0) {
+    throw new Error(
+      `refusing to initialize over existing campaign ledgers at ${dir} (${survivors.join(", ")}): ` +
+        "STATEMENT.md is missing, so this is a damaged campaign rather than a new one. Restore " +
+        "STATEMENT.md and use resume, or move these files aside deliberately.",
+    );
+  }
   fs.mkdirSync(path.join(dir, "EVIDENCE"), { recursive: true });
   fs.mkdirSync(path.join(dir, JOURNAL_DIR), { recursive: true });
   // Launcher: "verbatim user statement, conventions, method constraints, and
@@ -89,6 +101,9 @@ export function appendJournal(
   entry: { kind: JournalEntry["kind"] } & Record<string, unknown>,
 ): JournalEntry {
   const full: JournalEntry = { ts: new Date().toISOString(), ...entry };
+  // An adopted campaign (created by a skill session) has no .coverify/ yet,
+  // and the first thing every command does is journal.
+  fs.mkdirSync(path.join(dir, JOURNAL_DIR), { recursive: true });
   fs.appendFileSync(
     path.join(dir, JOURNAL_DIR, "journal.jsonl"),
     JSON.stringify(full) + "\n",
@@ -101,14 +116,20 @@ export function readJournal(dir: string): JournalEntry[] {
   if (!fs.existsSync(p)) return [];
   const lines = fs.readFileSync(p, "utf-8").split("\n").filter(Boolean);
   const entries: JournalEntry[] = [];
+  let skipped = 0;
   for (let i = 0; i < lines.length; i++) {
     try {
       entries.push(JSON.parse(lines[i]) as JournalEntry);
     } catch {
-      // Tolerate a torn trailing line from a crash mid-append; anything else is corruption.
-      if (i === lines.length - 1) break;
-      throw new Error(`corrupt journal line ${i + 1} in ${p}`);
+      // The journal is a write-only audit mirror that gates never read, so a
+      // line torn by a crash costs observability at most. Skipping keeps
+      // `status` and `trace` working on a campaign that is otherwise healthy;
+      // failing hard would take them away when they are most wanted.
+      skipped++;
     }
+  }
+  if (skipped > 0) {
+    console.error(`[coverify] warning: skipped ${skipped} unparseable journal line(s) in ${p}`);
   }
   return entries;
 }
@@ -123,6 +144,7 @@ export function readJournal(dir: string): JournalEntry[] {
  * message arrives at the coordinator's next turn.
  */
 export function queueUserMessage(dir: string, message: string): void {
+  fs.mkdirSync(path.join(dir, JOURNAL_DIR), { recursive: true });
   fs.appendFileSync(
     path.join(dir, JOURNAL_DIR, "inbox.jsonl"),
     JSON.stringify({ ts: new Date().toISOString(), message }) + "\n",
