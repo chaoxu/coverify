@@ -83,3 +83,62 @@ describe("renderTrace", () => {
   });
 });
 
+
+describe("a trace must not misreport a campaign", () => {
+  const T2 = (min: number) => new Date(Date.UTC(2026, 7, 1, 4, min)).toISOString();
+  const hostile = campaign([
+    { ts: T2(0), kind: "wake", wake: 1, live: 0, newReports: 0 },
+    // Model-authored text that closes the data script would blank the page.
+    gate(T2(1), { kind: "dispatch", id: "r001", role: "reasoner", mechanism: "m", task: "quote </script><div id=PWNED>x</div> here" }),
+    gate(T2(2), { kind: "dispatch", id: "r002", role: "reasoner", mechanism: "m", task: "t" }),
+    gate(T2(3), { kind: "dispatch", id: "r003", role: "reasoner", mechanism: "m", task: "t" }),
+    gate(T2(4), { kind: "completion", id: "r002", cancelled: true, reason: "campaign pause" }),
+    gate(T2(5), { kind: "completion", id: "r003", failed: "spawn ENOENT" }),
+    { ts: "not-a-timestamp", kind: "wake", wake: 2, live: 1, newReports: 0 },
+  ]);
+
+  test("script-closing text cannot break out of the data block", () => {
+    const html = renderTrace(hostile);
+    const blob = html.slice(html.indexOf("const DATA ="), html.indexOf("</script>", html.indexOf("const DATA =")));
+    expect(blob).not.toContain("</script");
+    expect(blob).toContain("\\u003c/script");
+    // and it is still valid JSON the page can parse
+    const json = blob.slice(blob.indexOf("{"), blob.lastIndexOf("}") + 1);
+    expect(JSON.parse(json.replace(/\\u003c/g, "<")).agents.length).toBe(3);
+  });
+
+  test("cancelled and failed runs are not reported as completions", () => {
+    const d = traceData(hostile);
+    expect(d.agents.find((a) => a.id === "r002")!.cancelled).toBe(true);
+    expect(d.agents.find((a) => a.id === "r003")!.failed).toBe("spawn ENOENT");
+  });
+
+  test("an unparseable timestamp neither crashes nor produces NaN geometry", () => {
+    const d = traceData(hostile);
+    expect(Number.isFinite(d.span)).toBe(true);
+    expect(d.span).toBeGreaterThan(0);
+    for (const a of d.agents) {
+      expect(Number.isFinite(a.start)).toBe(true);
+      if (a.end != null) expect(a.end).toBeGreaterThanOrEqual(a.start);
+    }
+    expect(() => renderTrace(hostile)).not.toThrow();
+  });
+
+  test("a report path escaping the campaign is not inlined", () => {
+    const outside = fs.mkdtempSync("/private/tmp/coverify-outside-");
+    fs.writeFileSync(path.join(outside, "secret.md"), "SECRET-CONTENT");
+    // An absolute-escaping relative path: ../../<tmp>/secret.md
+    const dir = campaign([
+      { ts: T2(0), kind: "wake", wake: 1, live: 0, newReports: 0 },
+      gate(T2(1), { kind: "dispatch", id: "r001", role: "reasoner", mechanism: "m", task: "t" }),
+      gate(T2(2), { kind: "completion", id: "r001", report: "PLACEHOLDER" }),
+    ]);
+    const journal = path.join(dir, ".coverify", "journal.jsonl");
+    fs.writeFileSync(
+      journal,
+      fs.readFileSync(journal, "utf8").replace("PLACEHOLDER", path.relative(dir, path.join(outside, "secret.md"))),
+    );
+    expect(renderTrace(dir)).not.toContain("SECRET-CONTENT");
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+});

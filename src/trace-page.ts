@@ -185,10 +185,23 @@ export const VIEW = String.raw`
   const verifies = ev.filter((e) => e.type === "verify");
   const gates = ev.filter((e) => e.type === "gate");
   const proms = ev.filter((e) => e.type === "promotion");
-  const done = agents.filter((a) => a.end != null);
-  const ROLES = { reasoner: "Reasoner", technician: "Technician", verification: "Verification", worker: "Worker (pre-rename)" };
+  // "Reported back" means a report exists. A cancelled run and an
+  // infrastructure failure both have an end time and no report; counting them
+  // as completions inflates the tile and poisons the lifetime stats.
+  const ended = agents.filter((a) => a.end != null);
+  const done = ended.filter((a) => !a.cancelled && a.failed == null);
+  const stopped = ended.filter((a) => a.cancelled || a.failed != null);
+  const openAgents = agents.filter((a) => a.end == null);
+  const ROLES = {
+    reasoner: "Reasoner", technician: "Technician", verification: "Verification",
+    "gate-critic": "Gate critic", worker: "Worker (pre-rename)",
+  };
   const roleOf = (a) => (ROLES[a.role] ? a.role : "worker");
-  const clock = (t) => new Date(ms(t)).toISOString().slice(11, 16) + "Z";
+  const multiDay = DATA.span > 86400;
+  const clock = (t) => {
+    const iso = new Date(ms(t)).toISOString();
+    return multiDay ? iso.slice(5, 16).replace("T", " ") + "Z" : iso.slice(11, 16) + "Z";
+  };
   const fmtH = (h) => (h < 1 ? Math.round(h * 60) + "m" : h.toFixed(1) + "h");
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
   const STAGE = { audit: "hostile audit", "bundle-cert": "bundle certification", reconstruction: "blind reconstruction", comparison: "comparison" };
@@ -199,10 +212,13 @@ export const VIEW = String.raw`
   const verdicts = verifies.filter((v) => v.verdict);
   const tiles = [
     ["Agents dispatched", agents.length, Object.keys(ROLES).filter((r) => agents.some((a) => roleOf(a) === r)).map((r) => ROLES[r].toLowerCase()).join(", ")],
-    ["Reported back", done.length, agents.length - done.length ? agents.length - done.length + " with no completion record" : "all accounted for"],
+    ["Reported back", done.length,
+      [stopped.length ? stopped.length + " cancelled/failed" : "",
+       openAgents.length ? openAgents.length + " with no completion record" : ""].filter(Boolean).join(", ") || "all accounted for"],
     ["Median lifetime", lifetimes.length ? fmtH(med(lifetimes)) : "&mdash;", lifetimes.length ? "longest " + fmtH(Math.max(...lifetimes)) : ""],
     ["Coordinator wakes", wakes.length, "event-driven, never polling"],
-    ["Verification calls", verifies.length, verdicts.filter((v) => v.verdict === "FAIL").length + " FAIL verdicts"],
+    ["Verification calls", verifies.length,
+      verdicts.filter((v) => v.verdict === "FAIL").length + " FAIL of " + verdicts.length + " verdicts"],
     ["Idea gates", gates.length, gates.filter((g) => g.verdict === "IDEA PASS").length + " passed"],
     ["Promotions", proms.length, "reached PROVED.md"],
   ];
@@ -233,7 +249,7 @@ export const VIEW = String.raw`
       title:
         "<strong class='t-mono'>" + esc(a.id) + "</strong> " + ROLES[role] +
         "<div class='t-mono'>" + clock(a.start) + " &rarr; " +
-        (lost ? "no completion recorded (lost to a restart)" : clock(a.end) + " &middot; " + fmtH((a.end - a.start) / H)) + "</div>" +
+        (lost ? "no completion recorded (still running, or lost to a restart)" : clock(a.end) + " &middot; " + fmtH((a.end - a.start) / H)) + "</div>" +
         (a.mechanism ? "<div class='t-task'><b>" + esc(a.mechanism) + "</b></div>" : "") +
         (a.task ? "<div class='t-task'>" + esc(a.task.slice(0, 150)) + (a.task.length > 150 ? "&hellip;" : "") + "</div>" : "") +
         "<div class='t-mono'>click to inspect</div>",
@@ -263,7 +279,7 @@ export const VIEW = String.raw`
       group: "gates",
       start: ms(g.t),
       type: "point",
-      className: "stage " + (g.verdict === "IDEA PASS" ? "stage-pass" : "stage-fail"),
+      className: "stage " + (g.verdict === "IDEA PASS" ? "stage-pass" : g.verdict === "IDEA FAIL" ? "stage-fail" : "stage-none"),
       content: "",
       kind: "gate",
       ev: g,
@@ -353,7 +369,15 @@ export const VIEW = String.raw`
     if (a.computation) parts.push(row("preregistered computation", block(a.computation)));
     if (a.literature) parts.push(row("literature question", block(a.literature)));
     parts.push(row("evidence", a.evidenceDir ? esc(a.evidenceDir) + "/" : absent(NOT_RECORDED), "mono"));
-    parts.push(row("report", a.report ? esc(a.report) : lost ? absent("never returned") : absent("not recorded"), "mono"));
+    parts.push(row("report", a.report
+      ? esc(a.report)
+      : a.failed != null
+        ? absent("infrastructure failure: " + esc(a.failed) + " &mdash; no report artifact by design")
+        : a.cancelled
+          ? absent("cancelled before it reported")
+          : lost
+            ? absent("no report yet")
+            : absent("not recorded"), "mono"));
     if (a.reportText) parts.push(row("report text", block(a.reportText)));
     box.className = "inspect";
     box.innerHTML = parts.join("");
@@ -416,7 +440,8 @@ export const VIEW = String.raw`
     usedRoles.map((r) => '<span class="key"><span class="swatch" style="background:var(--' + r + ')"></span>' + ROLES[r] + "</span>").join("") +
     '<span class="key"><span class="swatch hollow"></span>No completion recorded</span>' +
     '<span class="key"><span class="swatch dot" style="background:var(--pass)"></span>PASS</span>' +
-    '<span class="key"><span class="swatch dot" style="background:var(--fail)"></span>FAIL</span>';
+    '<span class="key"><span class="swatch dot" style="background:var(--fail)"></span>FAIL</span>' +
+    '<span class="key"><span class="swatch dot" style="background:var(--ink-3)"></span>repair / no verdict</span>';
 
   // ---- table view (accessibility + copy/paste) ----
   const agentRows = agents.map((a) =>
@@ -439,7 +464,7 @@ export const VIEW = String.raw`
   // ---- what the trace shows ----
   const gaps = wakes.slice(1).map((w, i) => (w.t - wakes[i].t) / H);
   const failPct = verdicts.length ? Math.round((verdicts.filter((v) => v.verdict === "FAIL").length / verdicts.length) * 100) : 0;
-  const lost = agents.length - done.length;
+  const lost = openAgents.length;
   const findings = [
     ["Where the calls went", "<b>" + verifies.length + " verification calls</b> against " + agents.length +
       " dispatches &mdash; the cadence, not exploration, is where a campaign spends itself. " + failPct +
@@ -450,9 +475,10 @@ export const VIEW = String.raw`
       : "Only one wake is on record."],
   ];
   if (lost > 0) {
-    findings.push(["Dispatches lost to a restart", "<b>" + lost + " of " + agents.length +
-      "</b> dispatches have no completion record &mdash; they were live when the harness restarted. " +
-      "The next wake surfaces exactly this list so the coordinator can re-dispatch."]);
+    findings.push(["Dispatches without a completion", "<b>" + lost + " of " + agents.length +
+      "</b> dispatches have no completion record: they were either still running when this trace was " +
+      "taken, or lost to a restart. The harness surfaces the same list at the next wake, where " +
+      "genuinely lost work can be re-dispatched."]);
   }
   document.getElementById("findings").innerHTML = findings
     .map(([h, p]) => '<div class="finding"><h3>' + h + "</h3><p>" + p + "</p></div>").join("");

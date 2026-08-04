@@ -57,21 +57,53 @@ function vendored(rel: string): string {
   return fs.readFileSync(p, "utf-8");
 }
 
+/**
+ * JSON safe to inline in a <script> block. Journal text is model-authored: a
+ * report quoting HTML, or a technician pasting a snippet, would otherwise
+ * close the tag — and the page then renders as a campaign in which nothing
+ * happened, which is worse than an error. U+2028/9 are newlines to a JS
+ * parser but not to JSON.
+ */
+function jsonForScript(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
 function esc(s: string): string {
   return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string);
+}
+
+/** Cut long text at a boundary the reader can see, so a stump is never
+ *  mistaken for the whole value. */
+function clip(s: string, max: number): string {
+  return s.length > max ? s.slice(0, max) + "\u2026 [truncated]" : s;
 }
 
 /** Journal → plot data. Times are seconds elapsed from the first record. */
 export function traceData(dir: string): TraceData {
   const rows = readJournal(dir) as unknown as Record<string, any>[];
   if (rows.length === 0) throw new Error(`no journal entries under ${dir}/.coverify/`);
-  const at = (s: string) => Date.parse(s) / 1000;
-  const t0 = rows[0].ts as string;
-  const base = at(t0);
+  // A malformed ts must not become NaN geometry (or crash the render): rows
+  // whose timestamp does not parse are skipped, and the span falls back to the
+  // last one that did.
+  const at = (s: unknown): number | undefined => {
+    const ms = Date.parse(String(s));
+    return Number.isFinite(ms) ? ms / 1000 : undefined;
+  };
+  const firstValid = rows.find((r) => at(r.ts) !== undefined);
+  if (!firstValid) throw new Error(`no parseable timestamps in ${dir}/.coverify/journal.jsonl`);
+  const t0 = firstValid.ts as string;
+  const base = at(t0) as number;
+  let last = 0;
   const agents = new Map<string, TraceAgent>();
   const events: TraceEvent[] = [];
   for (const row of rows) {
-    const t = at(row.ts as string) - base;
+    const at_ = at(row.ts);
+    if (at_ === undefined) continue;
+    const t = at_ - base;
+    if (t > last) last = t;
     const g = row.gate && typeof row.gate === "object" ? (row.gate as Record<string, any>) : undefined;
     if (row.kind === "wake") {
       events.push({ type: "wake", t, n: row.wake, live: row.live ?? 0, reports: row.newReports ?? 0 });
@@ -80,8 +112,8 @@ export function traceData(dir: string): TraceData {
         id: g.id,
         role: g.role ?? "worker",
         start: t,
-        mechanism: String(g.mechanism ?? ""),
-        task: String(g.task ?? ""),
+        mechanism: clip(String(g.mechanism ?? ""), 200),
+        task: clip(String(g.task ?? ""), 400),
         deliverable: g.deliverable,
         context: g.context,
         failedCheck: g.failedCheck,
@@ -93,8 +125,9 @@ export function traceData(dir: string): TraceData {
     } else if (g?.kind === "completion") {
       const a = agents.get(g.id);
       if (a) {
-        a.end = t;
+        a.end = Math.max(t, a.start); // never render a negative lifetime
         a.cancelled = Boolean(g.cancelled);
+        if (typeof g.failed === "string") a.failed = g.failed;
         a.report = g.report;
         if (g.failed !== undefined) a.failed = String(g.failed);
       }
@@ -123,12 +156,14 @@ export function traceData(dir: string): TraceData {
   const CAP = 12_000;
   for (const a of agents.values()) {
     if (!a.report) continue;
-    const p = path.join(dir, a.report);
-    if (!fs.existsSync(p)) continue;
+    const root = path.resolve(dir);
+    const p = path.resolve(root, a.report);
+    // The harness writes this field itself, but the trace must not become a
+    // way to read (and publish) a file outside the campaign.
+    if (!p.startsWith(root + path.sep) || !fs.existsSync(p)) continue;
     const text = fs.readFileSync(p, "utf-8");
     a.reportText = text.length > CAP ? text.slice(0, CAP) + "\n\n[truncated - open the artifact for the rest]" : text;
   }
-  const last = at(rows[rows.length - 1].ts as string) - base;
   return { t0, span: Math.max(last, 60), agents: [...agents.values()], events };
 }
 
@@ -158,7 +193,7 @@ export function renderTrace(dir: string): string {
 <body>
 ${body}
 <script>${vendored(VENDOR_JS)}</script>
-<script>const DATA = ${JSON.stringify({ ...data, title, slug: name })};</script>
+<script>const DATA = ${jsonForScript({ ...data, title, slug: name })};</script>
 <script>${VIEW}</script>
 </body>
 </html>
