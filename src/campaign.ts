@@ -128,6 +128,71 @@ export function danglingCitations(dir: string): { ledger: string; citation: stri
   return out;
 }
 
+/**
+ * Exclusive access to a campaign, for as long as the returned release lives.
+ *
+ * Every mechanism here assumes one writer: handle ids come from a counter each
+ * process computes once, `GateStore` snapshots its records at construction and
+ * never re-reads, and evidence directories are handed to agents by name. Two
+ * runs therefore mint the same `r001`, give one directory to two agents, and
+ * each gate against a record set that is missing the other's FAILs. Starting a
+ * second run is easy to do by accident — an idle campaign parked on a handle
+ * looks dead.
+ */
+export function acquireCampaignLock(dir: string): () => void {
+  const lock = path.join(dir, JOURNAL_DIR, "lock.json");
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+  const mine = { pid: process.pid, startedAt: new Date().toISOString() };
+  const claim = () => fs.writeFileSync(lock, JSON.stringify(mine) + "\n", { flag: "wx" });
+  try {
+    claim();
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    let held: { pid?: number; startedAt?: string } = {};
+    try {
+      held = JSON.parse(fs.readFileSync(lock, "utf-8"));
+    } catch {
+      /* torn lock file: treat as stale */
+    }
+    let alive = false;
+    if (typeof held.pid === "number") {
+      try {
+        process.kill(held.pid, 0);
+        alive = true;
+      } catch {
+        alive = false; // no such process
+      }
+    }
+    if (alive) {
+      throw new Error(
+        `campaign at ${dir} is already running (pid ${held.pid}, started ${held.startedAt}). Two runs ` +
+          "would mint the same agent ids, share evidence directories, and gate against each other's " +
+          "stale records. Stop that run, or use 'coverify status'/'trace' to watch it.",
+      );
+    }
+    // The holder is gone (crash, kill): take over and say so.
+    fs.rmSync(lock, { force: true });
+    claim();
+    appendJournal(dir, {
+      kind: "note",
+      note: `took over a stale campaign lock from pid ${held.pid ?? "unknown"}`,
+    });
+  }
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    try {
+      const cur = JSON.parse(fs.readFileSync(lock, "utf-8")) as { pid?: number };
+      if (cur.pid === process.pid) fs.rmSync(lock, { force: true });
+    } catch {
+      /* already gone */
+    }
+  };
+  process.once("exit", release);
+  return release;
+}
+
 /** Harness-generated audit metadata — permitted by the launcher's EVIDENCE bullet. */
 export function appendJournal(
   dir: string,

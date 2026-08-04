@@ -75,7 +75,17 @@ const dir = path.resolve(flags.get("dir") ?? "campaign");
 
 function optionalInt(name: string): number | undefined {
   const v = flags.get(name);
-  return v === undefined ? undefined : Number(v);
+  if (v === undefined) return undefined;
+  const n = Number(v);
+  // NaN would pass every `!== undefined` check and lose every comparison, so a
+  // typo'd limit silently meant *no* limit while the coordinator was still
+  // told one was in force. This is the user's only budget control; a bad value
+  // must stop the run, not disable itself.
+  if (!Number.isInteger(n) || n < 1) {
+    console.error(`--${name} must be a positive whole number (got: ${v})`);
+    process.exit(2);
+  }
+  return n;
 }
 
 async function prove(resume: boolean): Promise<void> {

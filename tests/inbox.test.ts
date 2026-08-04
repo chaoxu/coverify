@@ -13,6 +13,7 @@ const {
   readJournal,
   appendJournal,
   newEvidencePath,
+  acquireCampaignLock,
 } = await import("../src/campaign.ts");
 const { GateStore } = await import("../src/gates.ts");
 
@@ -176,5 +177,39 @@ describe("campaign identity travels with the campaign", () => {
     expect(fs.existsSync(cursor)).toBe(true);
     expect(fs.readFileSync(cursor, "utf8").trim()).toBe("1");
     expect(peekUserMessages(dir)).toEqual([]);
+  });
+});
+
+describe("one writer per campaign", () => {
+  test("a second run on a live campaign is refused", () => {
+    const dir = fs.mkdtempSync("/private/tmp/coverify-lock-");
+    fs.mkdirSync(path.join(dir, ".coverify"), { recursive: true });
+    const release = acquireCampaignLock(dir);
+    expect(() => acquireCampaignLock(dir)).toThrow(/already running/);
+    release();
+    // released: a later run may proceed
+    const again = acquireCampaignLock(dir);
+    again();
+  });
+
+  test("a lock left by a dead process is taken over, not obeyed forever", () => {
+    const dir = fs.mkdtempSync("/private/tmp/coverify-stale-");
+    fs.mkdirSync(path.join(dir, ".coverify"), { recursive: true });
+    // pid 999999 does not exist; a crashed run must not strand the campaign.
+    fs.writeFileSync(
+      path.join(dir, ".coverify", "lock.json"),
+      JSON.stringify({ pid: 999999, startedAt: "2026-01-01T00:00:00.000Z" }) + "\n",
+    );
+    const release = acquireCampaignLock(dir);
+    expect(readJournal(dir).some((e) => String((e as any).note).includes("stale campaign lock"))).toBe(true);
+    release();
+  });
+
+  test("a torn lock file does not strand the campaign", () => {
+    const dir = fs.mkdtempSync("/private/tmp/coverify-tornlock-");
+    fs.mkdirSync(path.join(dir, ".coverify"), { recursive: true });
+    fs.writeFileSync(path.join(dir, ".coverify", "lock.json"), '{"pid":1');
+    const release = acquireCampaignLock(dir);
+    release();
   });
 });

@@ -4,6 +4,7 @@ import * as path from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import {
+  acquireCampaignLock,
   appendJournal,
   consumeUserMessages,
   danglingCitations,
@@ -112,6 +113,18 @@ function harnessRevision(): string {
  */
 export async function runCampaign(opts: CampaignOptions): Promise<string> {
   const dir = path.resolve(opts.campaignDir);
+  // Held for the whole run and released on every exit path, including the
+  // throwing ones — this is exactly the shape of obligation that produced
+  // three lost-report bugs when it was left to each return statement.
+  const release = acquireCampaignLock(dir);
+  try {
+    return await runLockedCampaign(opts, dir);
+  } finally {
+    release();
+  }
+}
+
+async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<string> {
   const contract = loadLauncherContract();
   const models = await buildModels();
   const store = new GateStore(dir);

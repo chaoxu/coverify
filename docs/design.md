@@ -207,6 +207,14 @@ pi with `src/pi-extension.ts` loaded.
   the keyIdeas/allowedSources bundle is coordinator-authored and gated by
   certification (see honesty ledger). The journal records supplied inputs,
   visibility, and model family per call.
+- **One writer per campaign**: a run holds `.coverify/lock.json` for its whole
+  life and releases it on every exit path. Handle ids come from a counter each
+  process computes once, `GateStore` snapshots its records at construction, and
+  evidence directories are handed out by name — so two runs would mint the same
+  `r001`, give one directory to two agents, and each gate against records
+  missing the other's FAILs. A lock whose holder is gone is taken over and the
+  takeover journaled; an idle campaign parked on a handle looks dead, which is
+  exactly when a second run gets started by accident.
 - **Delivery is recorded, not assumed**: showing a report to the coordinator
   is a second obligation after persisting it, and it is journaled as a
   `delivery` record only once the turn that showed it succeeded. A wake that
