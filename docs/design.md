@@ -207,6 +207,17 @@ pi with `src/pi-extension.ts` loaded.
   the keyIdeas/allowedSources bundle is coordinator-authored and gated by
   certification (see honesty ledger). The journal records supplied inputs,
   visibility, and model family per call.
+- **Delivery is recorded, not assumed**: showing a report to the coordinator
+  is a second obligation after persisting it, and it is journaled as a
+  `delivery` record only once the turn that showed it succeeded. A wake that
+  throws, or a run that ends at its wake limit, therefore re-offers the report
+  at the next wake or the next run — without it, a persisted completion is
+  excluded from the lost-work list and no coordinator ever sees it.
+- **Standing user guidance is replayed**: delivered `coverify say` directives
+  are journaled and re-sent on any prompt that rebuilds context (first wake of
+  a run, and after an in-place compaction), because a delivered message
+  otherwise lives only in the coordinator's conversation and silently stops
+  applying at the next restart.
 - **Durability is at settle, not at harvest**: when a dispatch's promise
   settles, its report is written to `EVIDENCE/<id>/report.rN.md` and its
   completion journaled immediately; the settled queue then carries only a

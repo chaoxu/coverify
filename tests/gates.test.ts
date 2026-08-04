@@ -129,3 +129,42 @@ describe("revision-impact rules the launcher states", () => {
     expect(reusableFor(r2)).toBe(false); // repaired candidate: must regenerate
   });
 });
+
+describe("delivery is durable, not one-shot", () => {
+  test("a completion stays pending until a delivery record exists", () => {
+    // Persistence and delivery are separate: a wake that fails after
+    // harvesting must not consume the only chance to show a report.
+    const { dir, store } = campaign("delivery");
+    fs.mkdirSync(path.join(dir, "EVIDENCE", "r001"), { recursive: true });
+    const report = path.join(dir, "EVIDENCE", "r001", "report.r1.md");
+    fs.writeFileSync(report, "# findings\n");
+    store.append({ kind: "dispatch", id: "r001", role: "reasoner", mechanism: "route-A", task: "t" });
+    store.append({ kind: "completion", id: "r001", report: path.relative(dir, report) });
+
+    const undelivered = () => {
+      const delivered = new Set<string>();
+      for (const e of store.all()) {
+        if (e.kind === "delivery") for (const id of (e.ids as string[]) ?? []) delivered.add(id);
+      }
+      return store
+        .all()
+        .filter((e) => e.kind === "completion" && !e.cancelled && !delivered.has(e.id as string))
+        .map((e) => e.id as string);
+    };
+    expect(undelivered()).toEqual(["r001"]); // turn failed: still pending
+    expect(undelivered()).toEqual(["r001"]); // and still pending on the next wake
+    store.append({ kind: "delivery", ids: ["r001"] });
+    expect(undelivered()).toEqual([]); // shown once, not re-offered forever
+  });
+
+  test("a cancelled agent is not re-offered as an undelivered report", () => {
+    const { dir, store } = campaign("delivery-cancel");
+    store.append({ kind: "dispatch", id: "r002", role: "reasoner", mechanism: "m", task: "t" });
+    store.append({ kind: "completion", id: "r002", cancelled: true, reason: "struggle" });
+    const pending = store
+      .all()
+      .filter((e) => e.kind === "completion" && !e.cancelled)
+      .map((e) => e.id as string);
+    expect(pending).toEqual([]);
+  });
+});

@@ -8,6 +8,7 @@ import {
   consumeUserMessages,
   newEvidencePath,
   peekUserMessages,
+  readJournal,
   promotedStatementsView,
   readLedger,
   resumeBundle,
@@ -247,6 +248,75 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       total: settled.length,
       failed: settled.filter((s) => s.failed !== undefined).length,
     };
+  };
+
+  /**
+   * Completions the coordinator has not been shown yet.
+   *
+   * Persistence and delivery are separate obligations: a report is written the
+   * moment it settles, but if the wake that would show it throws (a provider
+   * error) or the run ends at its wake limit, the in-memory sections are gone
+   * and the completion record already excludes it from the lost-work list — so
+   * no coordinator would ever see it, in this run or any later one. Delivery is
+   * therefore recorded too, and anything unmarked is re-offered, including
+   * across restarts.
+   */
+  /**
+   * Every user directive delivered so far, oldest first.
+   *
+   * A delivered `coverify say` used to live only in the coordinator's
+   * conversation: the resume bundle has no user channel and the compaction
+   * preserve-list names ledgers, so "never spend on route B" silently stopped
+   * applying at the next rebuild while the campaign ran on. Directives are
+   * journaled on delivery, so they can simply be replayed.
+   */
+  const standingGuidance = (): string[] => {
+    const out: string[] = [];
+    for (const e of readJournal(dir) as unknown as Record<string, unknown>[]) {
+      const note = typeof e.note === "string" ? e.note : "";
+      if (note.startsWith("user message: ")) out.push(note.slice("user message: ".length));
+      else if (note.startsWith("user message steered mid-turn: ")) {
+        out.push(note.slice("user message steered mid-turn: ".length));
+      }
+    }
+    return out.slice(-20);
+  };
+
+  const undeliveredCompletions = (): { id: string; mechanism: string; section: string }[] => {
+    const delivered = new Set<string>();
+    const mechanisms = new Map<string, string>();
+    for (const e of store.all()) {
+      if (e.kind === "delivery") for (const id of (e.ids as string[]) ?? []) delivered.add(id);
+      if (e.kind === "dispatch" && typeof e.id === "string") {
+        mechanisms.set(e.id, String(e.mechanism ?? ""));
+      }
+    }
+    const out: { id: string; mechanism: string; section: string }[] = [];
+    for (const e of store.all()) {
+      if (e.kind !== "completion" || typeof e.id !== "string") continue;
+      if (e.cancelled || delivered.has(e.id)) continue;
+      const mechanism = mechanisms.get(e.id) ?? "";
+      if (typeof e.failed === "string") {
+        out.push({
+          id: e.id,
+          mechanism,
+          section:
+            `## ${e.id} [${mechanism}] FAILED (infrastructure): ${e.failed}\n\n` +
+            `No report artifact exists. Per the contract this is never PASS and carries no ` +
+            `mathematical content; re-dispatching the assignment is legitimate.`,
+        });
+        continue;
+      }
+      if (typeof e.report !== "string") continue;
+      const p = path.join(dir, e.report);
+      if (!fs.existsSync(p)) continue;
+      out.push({
+        id: e.id,
+        mechanism,
+        section: `## ${e.id} [${mechanism}] (saved: ${e.report})\n\n${fs.readFileSync(p, "utf-8")}`,
+      });
+    }
+    return out;
   };
 
   const PACKET_PARAMS = {
@@ -1121,7 +1191,10 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     // landed — otherwise a finished agent is reported as still running in the
     // same message that delivers its report.
     const harvested = harvestSettled();
-    const reportSections = harvested.sections;
+    // Delivered from the record, not from the queue: a report the previous
+    // wake failed to show is still pending here.
+    const pending = undeliveredCompletions();
+    const reportSections = pending.map((p) => p.section);
     const limits: string[] = [];
     if (opts.userAgentLimit !== undefined) limits.push(`workers ${liveWorkers()}/${opts.userAgentLimit}`);
     if (opts.maxWakes !== undefined) limits.push(`wakes ${wakeCount}/${opts.maxWakes}`);
@@ -1136,6 +1209,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       wake: wakeCount,
       live: handles.size,
       newReports: harvested.total - harvested.failed,
+      pendingDelivery: pending.length,
       ...(harvested.failed > 0 ? { failed: harvested.failed } : {}),
     });
     const idleNudge =
@@ -1232,6 +1306,17 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     // Post-compaction the contract's reread is SUPPLIED, not merely
     // instructed — the same resume bundle a rebuilt coordinator gets, so the
     // compaction branch enforces the identical clause (review 2026-08-02).
+    // Replayed on any prompt that rebuilds context (first wake of a run, and
+    // after an in-place compaction): standing guidance is not re-sent on an
+    // ordinary continuing wake, where the coordinator already has it.
+    const guidance = fresh || justCompacted ? standingGuidance() : [];
+    const guidanceBlock =
+      guidance.length > 0
+        ? `\n\n## Standing user guidance (delivered earlier in this campaign)\n\n` +
+          guidance.map((m) => `- ${m}`).join("\n") +
+          `\n\nThese remain in force unless the user withdraws them. They are guidance, not a ` +
+          `statement amendment.\n`
+        : "";
     const rereadBlock = justCompacted
       ? "Your context was just compacted. Per the contract's restart rule, the current ledgers " +
         "follow; the compaction summary never overrides them.\n\n" +
@@ -1282,11 +1367,12 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     try {
       lastWakeText = await coordinator.ask(
         fresh
-          ? `${resumeBundle(dir)}\n\n---\n\nCampaign directory: ${dir}\n${lostNote}${digest}${idleNudge}\n\n${newsBlock}${userBlock}`
-          : `${rereadBlock}${lostNote}${digest}${idleNudge}${compactionWarning}\n\n${newsBlock}${userBlock}`,
+          ? `${resumeBundle(dir)}${guidanceBlock}\n\n---\n\nCampaign directory: ${dir}\n${lostNote}${digest}${idleNudge}\n\n${newsBlock}${userBlock}`
+          : `${rereadBlock}${guidanceBlock}${lostNote}${digest}${idleNudge}${compactionWarning}\n\n${newsBlock}${userBlock}`,
       );
       for (const m of userMessages) appendJournal(dir, { kind: "note", note: `user message: ${m}` });
       consumeUserMessages(dir, userMessages.length + steeredCount);
+      if (pending.length > 0) store.append({ kind: "delivery", ids: pending.map((p) => p.id) });
     } catch (e) {
       // A hard provider failure on the coordinator's turn must not kill the
       // campaign with workers live: journal it and rebuild from the ledgers

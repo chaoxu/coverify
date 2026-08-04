@@ -22,7 +22,8 @@ export interface GateRecord {
     | "reconstruction"
     | "comparison"
     | "rebuttal"
-    | "promotion";
+    | "promotion"
+    | "delivery";
   [key: string]: unknown;
 }
 
