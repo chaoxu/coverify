@@ -200,6 +200,14 @@ pi with `src/pi-extension.ts` loaded.
   the keyIdeas/allowedSources bundle is coordinator-authored and gated by
   certification (see honesty ledger). The journal records supplied inputs,
   visibility, and model family per call.
+- **Durability is at settle, not at harvest**: when a dispatch's promise
+  settles, its report is written to `EVIDENCE/<id>/report.rN.md` and its
+  completion journaled immediately; the settled queue then carries only a
+  pointer for delivery to the coordinator. Three defects (pause, the
+  wake-limit exit, the declaration return) each lost finished work because an
+  exit path skipped a harvest step — with the write at settle time, no exit
+  path can lose a report. A report that arrives after `cancel_agent` is still
+  written, journaled as a late artifact rather than a second completion.
 - **Handles are the async primitive**: worker/technician dispatches and
   verification cadences are handles in one table; completions wake the
   coordinator — no polling. Gate critics run synchronously inside the

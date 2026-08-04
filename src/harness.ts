@@ -128,7 +128,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   }
 
   const handles = new Map<string, Handle>();
-  const settledQueue: { h: Handle; report: string; failed?: string }[] = [];
+  const settledQueue: { h: Handle; report: string; failed?: string; reportPath?: string }[] = [];
   let nextId = store.maxHandleId() + 1;
   let activityThisWake = 0;
   let declaration: { state: "pause" | "complete"; reason: string } | undefined;
@@ -173,18 +173,41 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   /** Registers a settled-queue handle: the one async pattern every dispatch shares. */
   const registerHandle = (h: Omit<Handle, "settled">) => {
     const handle = h as Handle;
-    // A cancelled handle is removed from the table; its late report (or
-    // failure) must not resurface at a later wake. Failure is classified here,
-    // where the promise settles — a rejected call or empty final text is an
-    // infrastructure failure — so `failed` is the single source of truth and
-    // `failed` set ⟺ no usable report.
-    const queue = (report: string, failed?: string) => {
-      if (handles.has(handle.id)) settledQueue.push({ h: handle, report, failed });
+    // Durability happens here, at the moment work settles — not later, when
+    // some exit path remembers to harvest. Three separate bugs (pause, the
+    // wake-limit exit, the declaration return) each lost an hour of an agent's
+    // work because the report lived only in this queue until harvested; with
+    // the write at settle time that class cannot recur, and the queue carries
+    // nothing but a pointer to bytes already on disk.
+    //
+    // Failure is classified here too — a rejected call or empty final text is
+    // an infrastructure failure — so `failed` is the single source of truth
+    // and `failed` set ⟺ no report artifact exists.
+    const persist = (report: string, failed?: string) => {
+      const live = handles.has(handle.id);
+      if (failed !== undefined) {
+        store.append({ kind: "completion", id: handle.id, failed, usage: handle.usage?.() });
+        if (live) settledQueue.push({ h: handle, report: "", failed });
+        return;
+      }
+      const reportPath = newEvidencePath(dir, `${handle.id}/report`);
+      fs.writeFileSync(reportPath, report);
+      const rel = path.relative(dir, reportPath);
+      if (live) {
+        store.append({ kind: "completion", id: handle.id, report: rel, usage: handle.usage?.() });
+        settledQueue.push({ h: handle, report, failed: undefined, reportPath: rel });
+      } else {
+        // Cancelled while running: its completion is already recorded, so this
+        // is journaled as a late artifact rather than a second completion —
+        // the work is kept, the accounting is not double-counted, and it never
+        // resurfaces to the coordinator as a new report.
+        appendJournal(dir, { kind: "note", note: `late report after cancellation`, id: handle.id, report: rel });
+      }
     };
     handle.settled = handle.promise.then(
       (report) =>
-        queue(report, report.trim() === "" ? "empty report (no final text returned)" : undefined),
-      (err: unknown) => queue("", String(err)),
+        persist(report, report.trim() === "" ? "empty report (no final text returned)" : undefined),
+      (err: unknown) => persist("", String(err)),
     );
     handles.set(handle.id, handle);
     activityThisWake++;
@@ -199,24 +222,16 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   const harvestSettled = (): { sections: string[]; total: number; failed: number } => {
     const settled = settledQueue.splice(0, settledQueue.length);
     for (const s of settled) handles.delete(s.h.id);
-    // Infrastructure failure is journaled as a failed-flagged completion (the
-    // shape cancellation already uses), never as one with an empty artifact:
-    // the contract says infrastructure failure is never PASS, and a failed run
-    // must not count as a new report anywhere spend accounting reads the journal.
-    const sections = settled.map((s) => {
-      if (s.failed !== undefined) {
-        store.append({ kind: "completion", id: s.h.id, failed: s.failed, usage: s.h.usage?.() });
-        return (
-          `## ${s.h.id} [${s.h.mechanism}] FAILED (infrastructure): ${s.failed}\n\n` +
+    // Delivery only: the artifact and its completion record were written when
+    // the work settled, so nothing here can be lost by an exit path that skips
+    // this call.
+    const sections = settled.map((s) =>
+      s.failed !== undefined
+        ? `## ${s.h.id} [${s.h.mechanism}] FAILED (infrastructure): ${s.failed}\n\n` +
           `No report artifact exists. Per the contract this is never PASS and carries no ` +
           `mathematical content; re-dispatching the assignment is legitimate.`
-        );
-      }
-      const reportPath = newEvidencePath(dir, `${s.h.id}/report`);
-      fs.writeFileSync(reportPath, s.report);
-      store.append({ kind: "completion", id: s.h.id, report: path.relative(dir, reportPath), usage: s.h.usage?.() });
-      return `## ${s.h.id} [${s.h.mechanism}] (saved: ${path.relative(dir, reportPath)})\n\n${s.report}`;
-    });
+        : `## ${s.h.id} [${s.h.mechanism}] (saved: ${s.reportPath})\n\n${s.report}`,
+    );
     return {
       sections,
       total: settled.length,
