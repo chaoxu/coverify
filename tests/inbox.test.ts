@@ -5,8 +5,15 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const { queueUserMessage, peekUserMessages, consumeUserMessages, initCampaign, readJournal, appendJournal } =
-  await import("../src/campaign.ts");
+const {
+  queueUserMessage,
+  peekUserMessages,
+  consumeUserMessages,
+  initCampaign,
+  readJournal,
+  appendJournal,
+  newEvidencePath,
+} = await import("../src/campaign.ts");
 const { GateStore } = await import("../src/gates.ts");
 
 function campaign(): string {
@@ -105,5 +112,69 @@ describe("adopted campaigns and damaged state", () => {
     appendJournal(dir, { kind: "note", note: "second" });
     const entries = readJournal(dir);
     expect(entries.map((e) => (e as any).note)).toEqual(["first", "second"]);
+  });
+});
+
+describe("campaign identity travels with the campaign", () => {
+  function ranBefore(dir: string) {
+    appendJournal(dir, { kind: "note", note: "run-start" });
+  }
+
+  test("moving a campaign keeps its gate history", () => {
+    process.env.COVERIFY_STATE_DIR = fs.mkdtempSync("/private/tmp/coverify-idstate-");
+    const a = fs.mkdtempSync("/private/tmp/coverify-move-");
+    fs.mkdirSync(path.join(a, ".coverify"), { recursive: true });
+    fs.writeFileSync(path.join(a, "STATEMENT.md"), "# S\n\nX.\n");
+    const store = new GateStore(a);
+    store.append({ kind: "audit", revision: "cand.md", verdict: "FAIL", candidateHash: "h" });
+    ranBefore(a);
+    const moved = a + "-renamed";
+    fs.renameSync(a, moved);
+    // Renaming a project folder is an ordinary action; it must not disarm the
+    // statement freeze or erase recorded FAILs.
+    const after = new GateStore(moved);
+    expect(after.all().length).toBe(1);
+    expect(after.all()[0].verdict).toBe("FAIL");
+    fs.rmSync(moved, { recursive: true, force: true });
+  });
+
+  test("a campaign that ran before but has no gate history refuses to adopt", () => {
+    process.env.COVERIFY_STATE_DIR = fs.mkdtempSync("/private/tmp/coverify-idstate2-");
+    const dir = fs.mkdtempSync("/private/tmp/coverify-lost-");
+    fs.mkdirSync(path.join(dir, ".coverify"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "STATEMENT.md"), "# S\n\nX.\n");
+    ranBefore(dir);
+    expect(() => new GateStore(dir)).toThrow(/no gate history/);
+    process.env.COVERIFY_ADOPT = "1";
+    expect(() => new GateStore(dir)).not.toThrow();
+    delete process.env.COVERIFY_ADOPT;
+  });
+
+  test("a fresh campaign is not mistaken for lost state", () => {
+    process.env.COVERIFY_STATE_DIR = fs.mkdtempSync("/private/tmp/coverify-idstate3-");
+    const dir = fs.mkdtempSync("/private/tmp/coverify-fresh-");
+    initCampaign(dir, "a brand new statement");
+    expect(() => new GateStore(dir)).not.toThrow();
+  });
+
+  test("evidence names are reserved, so two callers cannot take the same one", () => {
+    const dir = fs.mkdtempSync("/private/tmp/coverify-eviname-");
+    fs.mkdirSync(path.join(dir, "EVIDENCE"), { recursive: true });
+    const first = newEvidencePath(dir, "v001/report");
+    const second = newEvidencePath(dir, "v001/report");
+    expect(first).not.toBe(second);
+    expect(first.endsWith("report.r1.md")).toBe(true);
+    expect(second.endsWith("report.r2.md")).toBe(true);
+  });
+
+  test("a torn cursor does not redeliver every message ever sent", () => {
+    const dir = campaign();
+    queueUserMessage(dir, "old guidance");
+    consumeUserMessages(dir, 1);
+    // A crash mid-write used to leave a truncated cursor reading as 0.
+    const cursor = path.join(dir, ".coverify", "inbox.cursor");
+    expect(fs.existsSync(cursor)).toBe(true);
+    expect(fs.readFileSync(cursor, "utf8").trim()).toBe("1");
+    expect(peekUserMessages(dir)).toEqual([]);
   });
 });

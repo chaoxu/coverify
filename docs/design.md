@@ -42,7 +42,14 @@ EVIDENCE/             revision-suffixed artifacts; identity = filename (harness-
 
 Gate-authoritative state lives OUTSIDE the campaign directory
 (`~/.local/state/coverify/<campaign-id>/gates.jsonl`), so no role's workspace tools can
-forge or erase gate records; the in-tree journal is an audit mirror. Audit,
+forge or erase gate records. The campaign id is stored in
+`.coverify/campaign-id` (role-write-denied) rather than derived from the
+directory's path: identity has to survive a rename, a restore to another
+path, or a different mount, because a campaign with intact ledgers and no
+gate history would otherwise re-arm the statement freeze on whatever
+`STATEMENT.md` now says and lose every recorded FAIL. A campaign that has run
+before but whose gate history is missing is refused rather than adopted
+(`COVERIFY_ADOPT=1` accepts a new baseline deliberately); the in-tree journal is an audit mirror. Audit,
 reconstruction, and comparison records are content-hash-bound (sha256 of the
 candidate and of `STATEMENT.md` at verification time) — a file edited after
 its PASS is no longer verifier-backed, and a statement edit without

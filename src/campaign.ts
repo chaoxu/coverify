@@ -88,9 +88,16 @@ export function newEvidencePath(dir: string, base: string): string {
     if (!p.startsWith(path.join(dir, "EVIDENCE") + path.sep)) {
       throw new Error(`evidence path escapes EVIDENCE/: ${base}`);
     }
-    if (!fs.existsSync(p)) {
-      fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    try {
+      // O_EXCL, not existsSync-then-return: the caller writes later, and two
+      // concurrent cadences on one revision compute the same slug. Reserving
+      // the name here is what makes "a cited artifact is never overwritten"
+      // true by construction rather than by timing.
+      fs.closeSync(fs.openSync(p, "wx"));
       return p;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
     }
   }
 }
@@ -192,7 +199,12 @@ export function peekUserMessages(dir: string): string[] {
  */
 export function consumeUserMessages(dir: string, count: number): void {
   if (count <= 0) return;
-  fs.writeFileSync(path.join(dir, JOURNAL_DIR, "inbox.cursor"), String(inboxCursor(dir) + count) + "\n");
+  const target = path.join(dir, JOURNAL_DIR, "inbox.cursor");
+  const tmp = `${target}.${process.pid}.tmp`;
+  // Written atomically: a truncated cursor reads as 0, which would redeliver
+  // every message ever queued — days of contradictory guidance at once.
+  fs.writeFileSync(tmp, String(inboxCursor(dir) + count) + "\n");
+  fs.renameSync(tmp, target);
 }
 
 export function sha256Text(text: string): string {

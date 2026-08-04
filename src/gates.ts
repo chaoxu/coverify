@@ -26,23 +26,68 @@ export interface GateRecord {
   [key: string]: unknown;
 }
 
+/**
+ * A campaign's identity, stored inside the campaign so it survives being moved.
+ *
+ * It used to be `sha256(realpath(dir))`, which meant renaming a folder — or
+ * restoring a backup elsewhere, or mounting it at another path — produced a
+ * campaign with intact ledgers and zero gate history: the statement freeze
+ * re-armed on whatever the file now said, and every recorded FAIL vanished.
+ * Existing campaigns keep their id by writing the legacy path hash into the
+ * file on first read, so nothing in flight is disturbed.
+ */
+function campaignIdentity(campaignDir: string, stateDir: string): string {
+  const idFile = path.join(campaignDir, ".coverify", "campaign-id");
+  if (fs.existsSync(idFile)) {
+    const id = fs.readFileSync(idFile, "utf-8").trim();
+    if (/^[0-9a-f]{16}$/.test(id)) return id;
+  }
+  const legacy = sha256Text(campaignDir).slice(0, 16);
+  // Adopt the legacy id when its store exists, otherwise mint a fresh one.
+  const id = fs.existsSync(path.join(stateDir, legacy, "gates.jsonl"))
+    ? legacy
+    : sha256Text(`${campaignDir}:${Date.now()}:${Math.random()}`).slice(0, 16);
+  try {
+    fs.mkdirSync(path.dirname(idFile), { recursive: true });
+    fs.writeFileSync(idFile, id + "\n");
+  } catch {
+    /* read-only checkout or a race: the legacy lookup still works */
+  }
+  return id;
+}
+
 export class GateStore {
   private records: GateRecord[];
   private file: string;
   readonly campaignDir: string;
 
   constructor(campaignDir: string) {
-    // realpath, not just resolve: /tmp/c and /private/tmp/c are one campaign
-    // on darwin, and a fresh gate store would silently reset the statement
-    // freeze, every prior FAIL, and the handle counter.
     const resolved = path.resolve(campaignDir);
     this.campaignDir = fs.existsSync(resolved) ? fs.realpathSync.native(resolved) : resolved;
-    const id = sha256Text(this.campaignDir).slice(0, 16);
     const stateDir =
       process.env.COVERIFY_STATE_DIR ?? path.join(os.homedir(), ".local/state/coverify");
+    const id = campaignIdentity(this.campaignDir, stateDir);
     const dir = path.join(stateDir, id);
     fs.mkdirSync(dir, { recursive: true });
     this.file = path.join(dir, "gates.jsonl");
+    // A campaign that has run before (its journal exists) but has no gate
+    // history has lost its authoritative state — moved before ids travelled
+    // with it, or ~/.local/state wiped. Adopting silently would re-arm the
+    // statement freeze on whatever STATEMENT.md now says and erase every
+    // recorded FAIL, so this stops instead. A first run has no journal yet,
+    // and neither does a fresh campaign, so both proceed normally.
+    if (
+      !fs.existsSync(this.file) &&
+      fs.existsSync(path.join(this.campaignDir, ".coverify", "journal.jsonl")) &&
+      !process.env.COVERIFY_ADOPT
+    ) {
+      throw new Error(
+        `campaign at ${this.campaignDir} has ledgers but no gate history at ${dir}. Its verification ` +
+          "records, statement freeze and FAIL history are not where its id points. Restore the state " +
+          "directory, or re-run with COVERIFY_ADOPT=1 to accept the current STATEMENT.md as a new " +
+          "baseline (earlier verification evidence will not carry over).",
+      );
+    }
     // A torn line (crash or full disk mid-append) must not make the campaign
     // unresumable: gate records are append-only, so the salvageable prefix is
     // authoritative and a damaged line is dropped loudly. Failing hard here

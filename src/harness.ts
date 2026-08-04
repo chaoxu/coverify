@@ -56,6 +56,11 @@ export interface CampaignOptions {
 
 interface Handle {
   id: string;
+  /** What this handle is. The user's --agent-limit caps workers only, and the
+   *  wave gate counts workers on a mechanism — both were previously decided by
+   *  string prefixes on the id and a `gate:` prefix stuffed into `mechanism`,
+   *  so a change of id spelling would have silently moved a launcher limit. */
+  kind: "worker" | "gate" | "verification";
   mechanism: string;
   promise: Promise<string>;
   /** Absent for single-shot CLI workers (oracle attempts) — not steerable/abortable. */
@@ -159,14 +164,14 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   };
 
   const liveOnMechanism = (mechanism: string): number =>
-    [...handles.values()].filter((h) => h.mechanism === mechanism).length;
+    [...handles.values()].filter((h) => h.kind === "worker" && h.mechanism === mechanism).length;
 
   // The user's --agent-limit caps concurrent WORKERS (reasoners r*, technicians
   // t*). Judges — gate critics g* and verification cadences v* — are also
   // handles but must not consume the workers' budget: ten pending verdicts
   // should never block a dispatch.
   const liveWorkers = (): number =>
-    [...handles.keys()].filter((id) => id.startsWith("r") || id.startsWith("t")).length;
+    [...handles.values()].filter((h) => h.kind === "worker").length;
 
   const sessionsRoot = path.join(dir, ".coverify", "sessions");
 
@@ -380,6 +385,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
     }
     registerHandle({
       id,
+      kind: "worker",
       mechanism: packet.mechanism,
       promise,
       session,
@@ -508,9 +514,9 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
         }
         return `${verdict}\n\n${text}`;
       });
-      // `gate:` prefix keeps liveOnMechanism from counting a pending gate as a
-      // live worker on the mechanism it is judging.
-      registerHandle({ id, mechanism: `gate:${p.mechanism.slice(0, 60)}`, promise });
+      // liveOnMechanism counts workers only, so the mechanism is recorded as
+      // itself — a pending gate no longer has to disguise its own subject.
+      registerHandle({ id, kind: "gate", mechanism: p.mechanism.slice(0, 60), promise });
       return toolText(
         `gate ${id} dispatched (${handles.size} live). The verdict arrives at a later wake; ` +
           `gate other mechanisms or continue ledger work meanwhile.`,
@@ -891,6 +897,7 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
       cancelled = () => !handles.has(id);
       registerHandle({
         id,
+        kind: "verification",
         mechanism: `verification:${rel}`,
         promise: cadence(),
         // Summed over the cadence's role calls; undefined when no backend
