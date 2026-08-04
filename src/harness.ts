@@ -67,8 +67,13 @@ interface Handle {
   kind: "worker" | "gate" | "verification";
   mechanism: string;
   promise: Promise<string>;
-  /** Absent for single-shot CLI workers (oracle attempts) — not steerable/abortable. */
+  /** Present when the work can be redirected mid-flight (a pi session).
+   *  A spawned CLI has no such surface — it can be stopped, not steered. */
   session?: RoleSession;
+  /** Stop this work, whatever substrate runs it: abort a session, kill a
+   *  spawned child, or make a composite cadence notice it was cancelled.
+   *  Idempotent; safe to call on work that has already finished. */
+  stop?: () => void;
   /** Provider- or CLI-reported usage, read at completion (undefined when the
    *  backend reported none). */
   usage?: () => RoleUsage | undefined;
@@ -405,6 +410,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     let session: RoleSession | undefined;
     let promise: Promise<string>;
     let oracleUsage: RoleUsage | undefined;
+    const cliStop = new AbortController();
     if (isCliProvider(spec.provider)) {
       // Single-shot oracle reasoner (e.g. chatgpt-cli → gpt-5.6-pro): one
       // deep attempt, no tools; the reply IS the deliverable.
@@ -416,7 +422,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
         prompt: packetPrompt,
         spec,
         models,
-      }).then((r) => {
+      }, cliStop.signal).then((r) => {
         oracleUsage = r.usage;
         return r.text;
       });
@@ -476,6 +482,9 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     registerHandle({
       id,
       kind: "worker",
+      // One verb for both substrates: a pi session aborts, a spawned CLI is
+      // killed. Callers stop work without knowing which it is.
+      stop: () => (session ? session.abort() : cliStop.abort()),
       mechanism: packet.mechanism,
       promise,
       session,
@@ -580,6 +589,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
         task: p.firstImplication,
         importedPremises: p.importedPremises,
       });
+      const gateStop = new AbortController();
       const promise = runRole({
         contract,
         charge: CHARGES.gateCritic,
@@ -591,7 +601,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           `\n\n# Proposed mechanism\n\n${p.mechanism}\n\n# Claimed first nontrivial implication\n\n${p.firstImplication}`,
         spec: roleModelSpec("gateCritic"),
         models,
-      }).then(({ text, usage: criticUsage, promptChars, durationMs }) => {
+      }, gateStop.signal).then(({ text, usage: criticUsage, promptChars, durationMs }) => {
         // A cancelled gate must not record a verdict (mirrors verification):
         // an unseen verdict could later unlock concurrent workers nobody reviewed.
         if (!handles.has(id)) return `[gate ${id} cancelled; verdict not recorded]`;
@@ -606,7 +616,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       });
       // liveOnMechanism counts workers only, so the mechanism is recorded as
       // itself — a pending gate no longer has to disguise its own subject.
-      registerHandle({ id, kind: "gate", mechanism: p.mechanism.slice(0, 60), promise });
+      registerHandle({ id, kind: "gate", mechanism: p.mechanism.slice(0, 60), promise, stop: () => gateStop.abort() });
       return toolText(
         `gate ${id} dispatched (${handles.size} live). The verdict arrives at a later wake; ` +
           `gate other mechanisms or continue ledger work meanwhile.`,
@@ -735,7 +745,8 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       // Set once the handle exists; a cancelled cadence must stop recording
       // verdicts — otherwise cancel_agent would hide a verification that keeps
       // running and can still authorize promotion off an unseen PASS.
-      let cancelled: () => boolean = () => false;
+      const cadenceStop = new AbortController();
+      let cancelled: () => boolean = () => cadenceStop.signal.aborted;
       const abortIfCancelled = () => {
         if (cancelled()) throw new Error(`verification cancelled; no verdict recorded for ${rel}`);
       };
@@ -1000,10 +1011,13 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       // Journaled like an agent dispatch so ids stay unique across restarts
       // (maxHandleId reads dispatch records only).
       store.append({ kind: "dispatch", id, role: "verification", mechanism: `verification:${rel}`, task: rel });
-      cancelled = () => !handles.has(id);
+      cancelled = () => cadenceStop.signal.aborted || !handles.has(id);
       registerHandle({
         id,
         kind: "verification",
+        // A cadence is composite work: stopping it means its stage calls stop
+        // recording, which abortIfCancelled already enforces between stages.
+        stop: () => cadenceStop.abort(),
         mechanism: `verification:${rel}`,
         promise: cadence(),
         // Summed over the cadence's role calls; undefined when no backend
@@ -1077,7 +1091,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       handles.delete(p.id);
       const queued = settledQueue.findIndex((s) => s.h.id === p.id);
       if (queued >= 0) settledQueue.splice(queued, 1);
-      handle.session?.abort();
+      handle.stop?.();
       store.append({ kind: "completion", id: p.id, cancelled: true, reason: p.reason });
       activityThisWake++;
       return toolText(`cancelled ${p.id}. Record the route state in the ledgers per the contract.`);
@@ -1150,7 +1164,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       let interrupted = 0;
       if (!p.continueSupervised) {
         for (const [id, handle] of [...handles]) {
-          handle.session?.abort();
+          handle.stop?.();
           store.append({ kind: "completion", id, cancelled: true, reason: `campaign ${p.state}` });
           handles.delete(id);
           interrupted++;

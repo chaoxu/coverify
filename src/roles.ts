@@ -839,11 +839,14 @@ export interface RoleRun {
  * records supplied inputs and which restrictions are platform-enforced
  * versus instructed.
  */
-export async function runRole(run: Omit<RoleRun, "workspace" | "extraTools">): Promise<RoleResult> {
+export async function runRole(
+  run: Omit<RoleRun, "workspace" | "extraTools">,
+  signal?: AbortSignal,
+): Promise<RoleResult> {
   if (isCliProvider(run.spec.provider)) {
     const fullPrompt = `${systemText(run)}\n\n---\n\n${run.prompt}`;
     const started = Date.now();
-    const result = await runCliRole(run.spec.provider, run.spec.modelId, fullPrompt);
+    const result = await runCliRole(run.spec.provider, run.spec.modelId, fullPrompt, signal);
     return { ...result, promptChars: fullPrompt.length, durationMs: Date.now() - started };
   }
   const started = Date.now();
@@ -963,6 +966,7 @@ function runCliRole(
   provider: keyof typeof CLI_BACKENDS,
   modelId: string,
   fullPrompt: string,
+  signal?: AbortSignal,
 ): Promise<{ text: string; usage?: RoleUsage }> {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "coverify-cli-"));
   const outFile = path.join(cwd, "last-message.txt");
@@ -973,6 +977,33 @@ function runCliRole(
     .split(/\s+/);
   return new Promise((resolve, reject) => {
     const child = spawn(parts[0], parts.slice(1), { cwd, stdio: ["pipe", "pipe", "pipe"] });
+    // A spawned verdict role is work like any other: it must die when the
+    // harness dies, and stop when the campaign stops. Without this an
+    // in-flight `claude -p` audit outlives a pause, bills a full Opus run,
+    // and its verdict lands nowhere because no live process is waiting.
+    const kill = () => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    };
+    installReaperHooks();
+    liveReapers.add(kill);
+    const onAbort = () => kill();
+    if (signal?.aborted) kill();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+    const cleanup = () => {
+      liveReapers.delete(kill);
+      signal?.removeEventListener("abort", onAbort);
+      try {
+        fs.rmSync(cwd, { recursive: true, force: true });
+      } catch {
+        /* best effort */
+      }
+    };
+    child.once("close", cleanup);
+    child.once("error", cleanup);
     let out = "";
     let err = "";
     child.stdout.on("data", (d: Buffer) => (out += d));

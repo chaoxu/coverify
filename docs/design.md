@@ -207,6 +207,15 @@ pi with `src/pi-extension.ts` loaded.
   the keyIdeas/allowedSources bundle is coordinator-authored and gated by
   certification (see honesty ledger). The journal records supplied inputs,
   visibility, and model family per call.
+- **Dispatched work is stoppable through one verb**, whatever runs it: a
+  handle carries `stop()`, which aborts a pi session, kills a spawned CLI, or
+  makes a composite verification cadence stop recording. `cancel_agent` and a
+  campaign declaration no longer ask what substrate a handle is — previously
+  they called `session?.abort()`, which was a silent no-op for every
+  CLI-backed role, so an in-flight `claude -p` audit outlived a pause, billed
+  a full run, and landed its verdict nowhere. Spawned CLIs are also registered
+  with the exit reaper and clean up their temp directories, so a dying harness
+  takes them with it.
 - **One writer per campaign**: a run holds `.coverify/lock.json` for its whole
   life and releases it on every exit path. Handle ids come from a counter each
   process computes once, `GateStore` snapshots its records at construction, and
@@ -421,7 +430,8 @@ exists); (2) an unparseable verdict reply is recorded `UNPARSEABLE`, never
 permanently hash-block a legitimate bundle (previously a garbled certifier
 reply was a permanent trap); (3) a `toolVisibility` journal field on
 verification records (the launcher's previously-unrecorded honesty limb —
-CLI backends may expose their own tools, instructed-only); (4) reconstruction
+CLI backends may expose their own tools, instructed-only, and a CLI role can
+be stopped but not steered); (4) reconstruction
 blindness is platform-enforced: `assertCandidateWithheld` refuses a rendered
 reconstructor prompt containing the candidate text (tests/blindness.test.ts),
 upgrading the journal's "(enforced)" from testimony to checked fact; (5) the
