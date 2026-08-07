@@ -438,6 +438,38 @@ upgrading the journal's "(enforced)" from testimony to checked fact; (5) the
 user `--agent-limit` counts workers (r*/t*) only — judge handles (g*/v*)
 no longer consume the workers' budget.
 
+**Danus adoption review (2026-08-07, five independent measured
+evaluations).** Each major design element of frenzymath's Danus was
+evaluated for adoption against measured data from a real Danus campaign
+(`directed-cut-union`, 2026-07-22 on jupiter: 7 workers, 74 verified facts,
+~618M input tokens in ~4h, terminated by quota exhaustion) and the lin3cut
+coverify campaigns. **Rejected:** per-lemma admission verification with a
+fact DAG (composition already works at promotion grain — one lin3cut
+promotion is imported by 5 later ones with revision-exact prose citations;
+per-lemma cadence would have cost ~2.5–3× campaign 2's 91 verification
+calls, and 63/74 Danus facts (85%) lie outside the answer theorems'
+dependency ancestry); typed global-memory channels with search retrieval
+(Danus workers ran 2,175 `gm_search` calls, but only because
+fresh-per-round self-directed workers must rebuild context — coverify's
+resume bundle measured ~5k tokens, ~2% of peak coordinator context, zero
+strain; revisit only if FAILED.md passes ~150–200 entries, and then as
+indexed search over the existing ledgers, never as new channels);
+self-directed always-on workers (6 of 7 Danus workers independently
+formalized the same 4-label encoding; workers contributing zero answer
+ancestry burned 48% of worker spend); glossary mechanics (Danus's project
+glossary accumulated 103 conflicting symbol definitions and prevented no
+drift; zero of its 9 verifier rejections were notation-caused;
+reconstruction+comparison already verify convention agreement
+semantically). **Exposed about coverify:** campaign 2's journal shows
+workers idle ~59% of the worker window behind serialized coordinator
+judgment — measured on a run predating the async-verification handle, so
+re-measure via the idle metric (issue #15) before pipelining dispatch.
+**Adopted:** trace dead-weight and worker-idle metrics (issue #15);
+structured premise references in `record_promotion` for mechanical
+retraction-closure enumeration (issue #16). Launcher-shaped candidates
+(stalled-route dichotomy; stall-triggered different-family strategy
+consult) are filed in `docs/skill-feedback.md`.
+
 ## Planned capability: CLI coding agents (design reserved, not built)
 
 Workers will be able to run coding experiments through the subscription

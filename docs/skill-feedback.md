@@ -313,6 +313,54 @@ computations per the reporting clause; a technician dispatch returns the
 the computation clause requires; the librarian charge carries the
 public-search scope limit verbatim.
 
+## Evidence from the Danus comparison study (2026-08-07)
+
+Source: measured analysis of a real frenzymath-Danus campaign
+(`directed-cut-union`, 2026-07-22 on jupiter: 7 self-directed workers, 74
+verified facts, ~618M input tokens, terminated by quota exhaustion
+mid-consolidation) side by side with the lin3cut campaigns, via five
+independent adoption evaluations. Harness-side outcomes (four rejections,
+two issues) are recorded in design.md's review record; two candidates are
+launcher-shaped and wait here:
+
+1. **Stalled-route dichotomy at checkpoints.** Danus's strategy loop forces
+   every stalled line to be classified *method failure* or *evidence
+   against the target statement*; the launcher's checkpoint discipline
+   records obstructions but never forces the second reading — which is the
+   mechanism that turns a failing proof campaign into a counterexample
+   hunt. Candidate launcher touch (checkpoint section): "classify every
+   stalled route as method failure or as evidence against the statement;
+   recurring evidence-against classifications must move the frontier's
+   working hypothesis."
+   *Activation test:* a campaign whose FAILED.md accumulates ≥3
+   same-mechanism closures with no recorded update to the frontier's
+   working hypothesis (campaign 2 already shows the shape: 28 closed
+   routes, hypothesis unchanged across 12 wakes).
+
+2. **Stall-triggered strategy consult (different family or strictly
+   stronger; advice-never-fact).** Evidence for: campaign 2 circled — the
+   per-gadget-selector mechanism class closed in FAILED.md with retries
+   failing the materially-new bar, and after 12 wakes the frontier held
+   neither an algorithm candidate nor a hardness candidate; in the Danus
+   run, a single 28-second gpt-5.6-pro consult converted the main agent's
+   seed into the complete prioritized plan whose dispatch produced the
+   answer within an hour, while the subsequent 618M-token swarm added no
+   further ideas. Evidence bounding it: the consult did not *originate*
+   the key idea (the consult prompt already contained the seed), and
+   Danus's second consult — same model family as its workers — produced
+   zero new mathematics: value requires a genuinely different-family or
+   strictly stronger backend (the `chatgpt-cli` reasoner backend already
+   reaches gpt-5.6-pro). Candidate launcher touch (stall handling): "when
+   a mechanism class is closed in FAILED.md and further retries fail the
+   materially-new bar, the coordinator may dispatch one consult to a
+   different-family or strictly stronger backend, prompt = frozen
+   statement + failed-mechanism digest; the reply is logged verbatim as a
+   tagged guidance artifact, and ideas taken from it enter only as
+   ordinarily gated packets, never citable as evidence." No mandated
+   cadence — the evidence justifies availability, not a schedule.
+   *Activation test:* the next stalled campaign; measure whether a
+   consult-derived packet opens a route the campaign had not proposed.
+
 ## Rejected candidates
 
 - Numeric thresholds for "substantial wave" — prose judgment is the right
