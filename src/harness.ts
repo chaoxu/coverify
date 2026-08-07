@@ -22,7 +22,8 @@ import {
   recordStatement,
   checkPromotion,
   checkDispatch,
-  promotionsNeedingRetraction,
+  resolvePremises,
+  retractionClosure,
   sameRevision,
   GateStore,
   parseFirstLineVerdict,
@@ -139,6 +140,9 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   appendJournal(dir, {
     kind: "note",
     note: "run-start",
+    // Structural marker: trace epoch-caps open dispatches on this, so it must
+    // not depend on the prose note's exact wording.
+    runStart: true,
     harnessRev: harnessRevision(),
     launcherSha256: sha256Text(contract),
   });
@@ -1041,14 +1045,37 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       revision: Type.String({ description: "EVIDENCE-relative candidate filename" }),
       exactStatement: Type.String({ description: "The exact promoted statement" }),
       dependencies: Type.String({ description: "Dependency identities (promoted premises, imports)" }),
+      premises: Type.Optional(
+        Type.Array(Type.String(), {
+          description:
+            "Revisions of THIS campaign's earlier promotions this result stands on " +
+            "(machine-resolvable internal premises; external sources and imported theorems stay " +
+            "in the dependencies prose). A later retraction of a premise mechanically enumerates " +
+            "this promotion as a dependent.",
+        }),
+      ),
     }),
     executionMode: "sequential",
     execute: async (_id: string, params: unknown) => {
-      const p = params as { revision: string; exactStatement: string; dependencies: string };
+      const p = params as {
+        revision: string;
+        exactStatement: string;
+        dependencies: string;
+        premises?: string[];
+      };
       const rel = evidenceRelative(p.revision);
       if (!rel) return toolText(`revision must be a path inside EVIDENCE/ (got: ${p.revision})`);
       const decision = checkPromotion(store, dir, rel);
       if (!decision.allowed) return toolText(`PROMOTION REFUSED: ${decision.reason}`);
+      const resolved = resolvePremises(store, p.premises ?? []);
+      if ("unresolved" in resolved) {
+        return toolText(
+          `PROMOTION REFUSED: premise "${resolved.unresolved}" matches no recorded promotion in ` +
+            "this campaign. Premises name earlier promoted revisions exactly; external sources " +
+            "belong in the dependencies prose.",
+        );
+      }
+      const premises = resolved.premises;
       const artifacts = store
         .all()
         .filter((e) => sameRevision(e.revision, rel) && typeof e.artifact === "string")
@@ -1059,14 +1086,27 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       // revision's content hash at least makes an over-claim auditable
       // against the exact artifact the verifiers saw.
       const verifiedHash = sha256File(path.join(dir, "EVIDENCE", rel));
+      const premisesLine =
+        premises.length > 0
+          ? `**Premises (machine-resolvable):** ${premises
+              .map((pr) => `${pr.revision}${pr.candidateHash ? ` (sha256 ${pr.candidateHash})` : ""}`)
+              .join("; ")}\n\n`
+          : "";
       const entry =
         `\n## ${rel} — promoted ${new Date().toISOString()}\n\n` +
         `**Statement (coordinator-authored):** ${p.exactStatement}\n\n` +
         `**Dependencies:** ${p.dependencies}\n\n` +
+        premisesLine +
         `**Verified candidate:** ${rel} (sha256 ${verifiedHash})\n\n` +
         `**Audit artifacts:** ${artifacts}\n`;
       fs.appendFileSync(path.join(dir, "PROVED.md"), entry);
-      store.append({ kind: "promotion", revision: rel, candidateHash: verifiedHash, statement: p.exactStatement });
+      store.append({
+        kind: "promotion",
+        revision: rel,
+        candidateHash: verifiedHash,
+        statement: p.exactStatement,
+        ...(premises.length > 0 ? { premises: premises.map((pr) => pr.revision) } : {}),
+      });
       activityThisWake++;
       return toolText(`Promotion recorded in PROVED.md for ${rel}. Update REGISTRY.md to label it 'promoted'.`);
     },
@@ -1183,6 +1223,20 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     },
   } as AgentTool;
 
+  // Reading discipline for a coordinator whose context was just built or
+  // compacted. Measured on the 2026-08-01 lin3cut campaign (issue #17): a
+  // rebuilt coordinator voluntarily re-read PROVED.md, FAILED.md, and old
+  // candidates wholesale — 143–208k tokens of onboarding against a ~5k
+  // bundle — which is why only ~3 wakes fit per context window. The restart
+  // clause already scopes the reread; this note makes the scope explicit at
+  // the moment of temptation. Mechanics: it forbids nothing.
+  const readingDiscipline =
+    "\n\nReading discipline (context economy): the bundle above is the contract's scoped reread — " +
+    "statement, frontier, registry index, and lessons. PROVED.md, FAILED.md, and EVIDENCE/ are " +
+    "on-demand references: consult the specific entries a decision turns on (grep, or read with " +
+    "offset/limit), and read in full only a detailed claim you are actually reusing. Wholesale " +
+    "ledger reads accelerate the next compaction without adding durable state.";
+
   // Surface work lost to a previous crash: dispatched, never completed.
   const lost = store.dispatchesWithoutCompletion();
   let lostNote =
@@ -1197,6 +1251,13 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   let turnFailures = 0;
   let coordinator: RoleSession | undefined;
   let coordinatorEpoch = 0;
+  // Per-wake context growth, surfaced when large (issue #17): the measured
+  // campaign grew 29–55k tokens per wake, ~90% of it the coordinator's own
+  // reads and output, invisible to the coordinator itself. Telemetry plus a
+  // note — never a refusal.
+  const GROWTH_NOTE_TOKENS = Number(process.env.COVERIFY_WAKE_GROWTH_NOTE_TOKENS ?? 40_000);
+  let prevContextTokens: number | undefined;
+  let growthNote = "";
   while (true) {
     wakeCount++;
     if (opts.maxWakes !== undefined && wakeCount > opts.maxWakes) {
@@ -1245,7 +1306,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     // remember it: a citation that points at nothing, and a promoted claim a
     // later verdict has contradicted.
     const dangling = danglingCitations(dir);
-    const retractions = promotionsNeedingRetraction(store);
+    const retractions = retractionClosure(store);
     const bookkeeping =
       (dangling.length > 0
         ? `\n\nLEDGER CITATIONS THAT POINT AT NOTHING (fix or remove them):\n` +
@@ -1255,7 +1316,15 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
         ? `\n\nPROMOTED CLAIMS WITH A LATER SUBSTANTIVE FAIL — the contract requires a retraction ` +
           `(relabel in REGISTRY.md, append to FAILED.md, mark the PROVED.md entry historical, ` +
           `demote dependents):\n` +
-          retractions.map((r) => `- ${r.revision} (later ${r.stage} FAIL)`).join("\n")
+          retractions
+            .map(
+              (r) =>
+                `- ${r.revision} (later ${r.stage} FAIL)` +
+                (r.dependents.length > 0
+                  ? `; recorded dependents standing on it (transitive, via premises): ${r.dependents.join(", ")}`
+                  : ""),
+            )
+            .join("\n")
         : "");
     const idleNudge =
       handles.size === 0 && reportSections.length === 0 && wakeCount > 1
@@ -1365,8 +1434,15 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     const rereadBlock = justCompacted
       ? "Your context was just compacted. Per the contract's restart rule, the current ledgers " +
         "follow; the compaction summary never overrides them.\n\n" +
-        `${resumeBundle(dir)}\n\n---\n\n`
+        `${resumeBundle(dir)}${readingDiscipline}\n\n---\n\n`
       : "";
+    // A growth note describes the previous wake of THIS context; after a
+    // rebuild or compaction it describes a context that no longer exists, and
+    // the growth baseline resets with it (one mechanism for both).
+    if (fresh || justCompacted) {
+      growthNote = "";
+      prevContextTokens = undefined;
+    }
     // User messages (coverify say): delivered verbatim at the wake boundary —
     // the headless analog of the user typing to an interactive skill session.
     // Consumed only after the coordinator's turn succeeds; a failed turn
@@ -1412,8 +1488,8 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     try {
       lastWakeText = await coordinator.ask(
         fresh
-          ? `${resumeBundle(dir)}${guidanceBlock}\n\n---\n\nCampaign directory: ${dir}\n${lostNote}${digest}${bookkeeping}${idleNudge}\n\n${newsBlock}${userBlock}`
-          : `${rereadBlock}${guidanceBlock}${lostNote}${digest}${bookkeeping}${idleNudge}${compactionWarning}\n\n${newsBlock}${userBlock}`,
+          ? `${resumeBundle(dir)}${readingDiscipline}${guidanceBlock}\n\n---\n\nCampaign directory: ${dir}\n${lostNote}${digest}${bookkeeping}${idleNudge}\n\n${newsBlock}${userBlock}`
+          : `${rereadBlock}${guidanceBlock}${lostNote}${digest}${bookkeeping}${idleNudge}${compactionWarning}${growthNote}\n\n${newsBlock}${userBlock}`,
       );
       for (const m of userMessages) appendJournal(dir, { kind: "note", note: `user message: ${m}` });
       consumeUserMessages(dir, userMessages.length + steeredCount);
@@ -1451,11 +1527,25 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     } finally {
       clearInterval(inboxWatcher);
     }
+    const contextNow = coordinator.approxTokens();
+    // Growth is meaningful only between two ordinary wakes of one session;
+    // the baseline was cleared above on rebuild/compaction.
+    const growth = prevContextTokens !== undefined ? contextNow - prevContextTokens : undefined;
+    prevContextTokens = contextNow;
+    growthNote =
+      growth !== undefined && growth > GROWTH_NOTE_TOKENS
+        ? `\nNote: your context grew ~${Math.round(growth / 1000)}k tokens last wake ` +
+          `(now ~${Math.round(contextNow / 1000)}k of the ${Math.round(
+            COORDINATOR_CONTEXT_TOKENS / 1000,
+          )}k cap). If much of that was wholesale file reads, prefer grep or read with ` +
+          "offset/limit — re-reads are cheap, residency is not."
+        : "";
     appendJournal(dir, {
       kind: "usage",
       role: "coordinator",
       cumulative: coordinator.usage(),
-      approxContextTokens: coordinator.approxTokens(),
+      approxContextTokens: contextNow,
+      ...(growth !== undefined ? { contextGrowthTokens: growth } : {}),
     });
     lostNote = "";
 

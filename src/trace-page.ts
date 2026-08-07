@@ -223,6 +223,21 @@ export const VIEW = String.raw`
     ["Idea gates", gates.length, gates.filter((g) => g.verdict === "IDEA PASS").length + " passed"],
     ["Promotions", proms.length, "reached PROVED.md"],
   ];
+  // Campaign-shape metrics (issue #15): ledger-citation coverage of worker
+  // artifacts, and worker-idle share of the dispatch window.
+  const M = DATA.metrics;
+  if (M.citation) {
+    tiles.push(["Cited by ledgers", M.citation.cited + "/" + M.citation.workers,
+      M.citation.orphaned.length
+        ? M.citation.orphaned.length + " uncited: " + esc(M.citation.orphaned.join(", "))
+        : "every report is cited"]);
+  }
+  if (M.idle && M.idle.windowSec > 0) {
+    tiles.push(["Workers idle", Math.round((M.idle.idleSec / M.idle.windowSec) * 100) + "%",
+      M.idle.largestGapsSec.length
+        ? "largest gap " + fmtH(M.idle.largestGapsSec[0] / H)
+        : "no gaps in the worker window"]);
+  }
   document.getElementById("tiles").innerHTML = tiles
     .map(([l, n, s]) => '<div class="tile"><span class="n">' + n + '</span><span class="l">' + l + '</span><span class="l dim">' + s + "</span></div>")
     .join("");

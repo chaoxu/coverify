@@ -116,14 +116,19 @@ export function danglingCitations(dir: string): { ledger: string; citation: stri
   for (const ledger of ["PROVED.md", "FAILED.md", "REGISTRY.md", "CURRENT_FRONTIER.md"]) {
     const p = path.join(dir, ledger);
     if (!fs.existsSync(p)) continue;
-    const text = fs.readFileSync(p, "utf-8");
-    const seen = new Set<string>();
-    for (const m of text.matchAll(/EVIDENCE\/[A-Za-z0-9._\/-]+/g)) {
-      const cited = m[0].replace(/[.,;:)\]]+$/, "");
-      if (seen.has(cited)) continue;
-      seen.add(cited);
+    for (const cited of citedEvidencePaths(fs.readFileSync(p, "utf-8"))) {
       if (!fs.existsSync(path.join(dir, cited))) out.push({ ledger, citation: cited });
     }
+  }
+  return out;
+}
+
+/** The `EVIDENCE/...` citation tokens in a ledger text — the one definition of
+ *  "cited" shared by citation lint and the trace metrics. */
+export function citedEvidencePaths(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of text.matchAll(/EVIDENCE\/[A-Za-z0-9._\/-]+/g)) {
+    out.add(m[0].replace(/[.,;:)\]]+$/, ""));
   }
   return out;
 }

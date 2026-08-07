@@ -361,6 +361,22 @@ launcher-shaped and wait here:
    *Activation test:* the next stalled campaign; measure whether a
    consult-derived packet opens a route the campaign had not proposed.
 
+## Deferred: periodic bundle distillation (2026-08-07)
+
+The resume bundle's growing halves (REGISTRY.md, PROCESS_LESSONS.md) have no
+curation prompt: FAILED.md is append-only by contract, CURRENT_FRONTIER.md is
+rewritten every checkpoint, but nothing ever tells the coordinator to merge
+redundant lessons or retire superseded registry rows — the rewrite authority
+exists and sits unused. Candidate launcher touch (checkpoint section): "when
+the registry or lessons have grown redundant, distill them — merge duplicate
+lessons, collapse superseded route rows into their outcome — preserving every
+exact statement, obstruction, and retry bar." Deferred because measured sizes
+are nowhere near hurting (campaign 2 after 43 dispatches: REGISTRY 7.4KB,
+LESSONS 6.1KB, bundle ≈5k tokens ≈ 2% of the coordinator's peak context).
+*Activation test:* a campaign whose resume bundle exceeds ~10% of the
+coordinator context cap, or whose PROCESS_LESSONS carries visibly duplicated
+rules (two entries a reader would merge on sight).
+
 ## Rejected candidates
 
 - Numeric thresholds for "substantial wave" — prose judgment is the right

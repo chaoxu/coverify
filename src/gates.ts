@@ -249,6 +249,75 @@ export function promotionsNeedingRetraction(store: GateStore): { revision: strin
   return out;
 }
 
+/**
+ * Retractions with their recorded dependent closure.
+ *
+ * Promotion records carry machine-resolvable `premises` (revisions of earlier
+ * promotions), so when a promoted revision later takes a substantive FAIL the
+ * harness can enumerate every promotion standing on it — transitively —
+ * instead of leaving the coordinator to rediscover the graph from prose.
+ * Enumeration only: relabeling, FAILED.md appends, and demotion remain the
+ * coordinator's judgment (contract).
+ */
+function promotionPremises(p: GateRecord): string[] {
+  return Array.isArray(p.premises) ? (p.premises as unknown[]).map(String) : [];
+}
+
+/**
+ * Resolve coordinator-typed premise names to recorded promotions. Each must
+ * match an existing promotion (via revision identity): a typo would silently
+ * disconnect the dependency edge that retraction enumeration walks, which is
+ * the whole point of recording it. Returns the canonical stored revisions and
+ * their content hashes, or the first unresolvable name.
+ */
+export function resolvePremises(
+  store: GateStore,
+  raw: readonly string[],
+): { premises: { revision: string; candidateHash?: string }[] } | { unresolved: string } {
+  const promotions = store.all().filter((e) => e.kind === "promotion");
+  const premises: { revision: string; candidateHash?: string }[] = [];
+  for (const name of raw) {
+    // Latest match: a retracted-and-re-promoted revision's current hash is
+    // what a new dependent stands on, not the retracted content's.
+    const match = [...promotions].reverse().find((e) => sameRevision(e.revision, name.trim()));
+    if (!match) return { unresolved: name };
+    premises.push({
+      revision: String(match.revision),
+      candidateHash: typeof match.candidateHash === "string" ? match.candidateHash : undefined,
+    });
+  }
+  return { premises };
+}
+
+export function retractionClosure(
+  store: GateStore,
+): { revision: string; stage: string; dependents: string[] }[] {
+  const promotions = store.all().filter((e) => e.kind === "promotion");
+  const dependentsOf = (rev: string): string[] =>
+    promotions
+      .filter((p) => promotionPremises(p).some((pr) => sameRevision(pr, rev)))
+      .map((p) => String(p.revision));
+  // Keyed case-insensitively, like revision identity everywhere else: two
+  // case spellings of one file are one retraction, not two.
+  const seeds = new Map<string, { revision: string; stage: string }>();
+  for (const r of promotionsNeedingRetraction(store)) {
+    const key = r.revision.toLowerCase();
+    if (!seeds.has(key)) seeds.set(key, r);
+  }
+  return [...seeds.values()].map(({ revision, stage }) => {
+    const closure = new Set<string>();
+    const queue = [revision];
+    while (queue.length > 0) {
+      for (const dep of dependentsOf(queue.pop()!)) {
+        if (sameRevision(dep, revision) || closure.has(dep)) continue;
+        closure.add(dep);
+        queue.push(dep);
+      }
+    }
+    return { revision, stage, dependents: [...closure] };
+  });
+}
+
 export interface GateDecision {
   allowed: boolean;
   reason?: string;

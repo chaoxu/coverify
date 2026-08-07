@@ -5,7 +5,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const { GateStore, checkDispatch, checkPromotion, statementHash, promotionsNeedingRetraction } =
+const { GateStore, checkDispatch, checkPromotion, statementHash, promotionsNeedingRetraction, retractionClosure } =
   await import("../src/gates.ts");
 const { sha256File, sha256Text, danglingCitations } = await import("../src/campaign.ts");
 
@@ -217,5 +217,30 @@ describe("bookkeeping the harness should own", () => {
     const dangling = danglingCitations(dir);
     expect(dangling.length).toBe(1);
     expect(dangling[0].citation).toBe("EVIDENCE/r009/report.r1.md");
+  });
+});
+
+describe("retraction closure walks premises edges", () => {
+  const { store } = campaign("closure");
+  test("a retracted premise enumerates its transitive dependents", () => {
+    store.append({ kind: "promotion", revision: "a.md", candidateHash: "h-a" });
+    store.append({ kind: "promotion", revision: "b.md", candidateHash: "h-b", premises: ["a.md"] });
+    store.append({ kind: "promotion", revision: "c.md", candidateHash: "h-c", premises: ["b.md"] });
+    store.append({ kind: "promotion", revision: "solo.md", candidateHash: "h-s" });
+    store.append({ kind: "audit", revision: "a.md", verdict: "FAIL", candidateHash: "h-a" });
+    const rc = retractionClosure(store);
+    expect(rc.length).toBe(1);
+    expect(rc[0].revision).toBe("a.md");
+    expect(rc[0].dependents.sort()).toEqual(["b.md", "c.md"]);
+  });
+  test("a promotion without premises has an empty closure", () => {
+    store.append({ kind: "audit", revision: "solo.md", verdict: "FAIL", candidateHash: "h-s" });
+    const solo = retractionClosure(store).find((r) => r.revision === "solo.md")!;
+    expect(solo.dependents).toEqual([]);
+  });
+  test("premise matching is case-insensitive like revision identity", () => {
+    store.append({ kind: "promotion", revision: "D.md", candidateHash: "h-d", premises: ["A.MD"] });
+    const a = retractionClosure(store).find((r) => r.revision === "a.md")!;
+    expect(a.dependents).toContain("D.md");
   });
 });

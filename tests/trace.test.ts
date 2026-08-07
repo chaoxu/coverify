@@ -156,3 +156,33 @@ describe("a trace must not misreport a campaign", () => {
     fs.rmSync(outside, { recursive: true, force: true });
   });
 });
+
+describe("campaign metrics (issue #15)", () => {
+  const T3 = (min: number) => new Date(Date.UTC(2026, 7, 2, 4, min)).toISOString();
+  test("citation coverage counts ledger-cited worker artifacts", () => {
+    const d = campaign([
+      { ts: T3(0), kind: "wake", wake: 1, live: 0, newReports: 0 },
+      gate(T3(1), { kind: "dispatch", id: "r001", role: "reasoner", mechanism: "m1", task: "t" }),
+      gate(T3(2), { kind: "dispatch", id: "r002", role: "reasoner", mechanism: "m2", task: "t" }),
+      gate(T3(5), { kind: "completion", id: "r001", report: "EVIDENCE/r001/report.r1.md" }),
+      gate(T3(6), { kind: "completion", id: "r002", report: "EVIDENCE/r002/report.r1.md" }),
+      // A verification cadence is a judge, not a worker: never counted.
+      gate(T3(7), { kind: "dispatch", id: "v003", role: "verification", mechanism: "verification:x", task: "x" }),
+    ]);
+    fs.writeFileSync(path.join(d, "FAILED.md"), "## route — REFUTED\n\nEvidence: EVIDENCE/r001/report.r1.md\n");
+    const m = traceData(d).metrics;
+    expect(m.citation).toEqual({ workers: 2, cited: 1, orphaned: ["r002"] });
+  });
+  test("idle time is the uncovered part of the worker window", () => {
+    const d = campaign([
+      { ts: T3(0), kind: "wake", wake: 1, live: 0, newReports: 0 },
+      gate(T3(1), { kind: "dispatch", id: "r001", role: "reasoner", mechanism: "m", task: "t" }),
+      gate(T3(5), { kind: "completion", id: "r001", report: "EVIDENCE/r001/report.r1.md" }),
+      gate(T3(10), { kind: "dispatch", id: "r002", role: "reasoner", mechanism: "m", task: "t" }),
+      gate(T3(15), { kind: "completion", id: "r002", report: "EVIDENCE/r002/report.r1.md" }),
+    ]);
+    const m = traceData(d).metrics;
+    // window 60s..900s; live 60-300 and 600-900; idle gap 300-600.
+    expect(m.idle).toEqual({ windowSec: 840, idleSec: 300, largestGapsSec: [300] });
+  });
+});
