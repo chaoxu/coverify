@@ -183,7 +183,8 @@ gates.ts         dispatch gate, idea-gate ledger, verification state, promotion
 cadence.ts       the two-stage verification cadence (the clause-dense core)
 harness.ts       handle table, event loop, wakes; the only persistent process
 observe.ts       records + noticing queries: run-config stamp, ledger history,
-                 refusals, wake bookkeeping (observability, never operations)
+                 refusal events + unaddressed-refusal noticing, wake bookkeeping
+                 (prompt-surfaced noticing; never gates, dispatches, or ledgers)
 trace.ts         journal -> self-contained HTML timeline (read-only observability)
 trace-page.ts    that page's markup, styles, and view code
 pi-extension.ts  interactive-pi boundary layer: supervised run_script in
@@ -407,6 +408,18 @@ OS-enforced. Concurrent bridge sessions cross-contaminate (observed in
 testing), so claude-bridge is coordinator-only, refused at preflight for
 every other role.
 
+## Retry stack (bounded, layered)
+
+Transport failures are absorbed at two layers with a documented ceiling:
+the pi-ai patch retries a mid-stream transport death inside the provider
+(PI_CODEX_MIDSTREAM_RETRIES, default 2 → ≤3 stream attempts per prompt
+call), and the ask-boundary wrapper retries the whole turn
+(COVERIFY_RETRY_MAX, default 3 → ≤4 turn attempts). Worst case is
+therefore ≤12 stream attempts per turn with exponential backoff at both
+layers; quota/billing errors are never retried at either. cancel_agent
+interrupts the stack between attempts (the wrapper's backoff honors the
+session's abort signal).
+
 ## Efficiency commitments
 
 Verify at trust boundaries (promotions, resolution claims), not per
@@ -569,6 +582,21 @@ structured premise references in `record_promotion` for mechanical
 retraction-closure enumeration (issue #16). Launcher-shaped candidates
 (stalled-route dichotomy; stall-triggered different-family strategy
 consult) are filed in `docs/skill-feedback.md`.
+
+**Vanished-intentions audit (2026-08-08, Chao-prompted).** Do frontier
+rewrites ever silently drop open items? Audited every surviving frontier
+generation (3 campaigns, 26 snapshots + current): **zero real losses** —
+every candidate was a restart-stranded handle (already noticed and
+recovered), a result nickname that moved into the ledgers under its
+revision id, or tokenizer noise. The audit's own blind spot became a
+finding: the frontier archiver had been removed 2026-08-02 as "nothing
+reads it", leaving six days unauditable — reinstated generalized
+(content-addressed ledger-history for CURRENT_FRONTIER + REGISTRY,
+hash-bound events; observe.ts). The `--agent-limit 0` = unlimited
+sentinel introduced the same day deliberately REVERSES 2853c9b's
+rejection of `0` (which then meant "block everything", a silent footgun);
+the new meaning is explicit in the usage string and here, and any other
+non-positive value still hard-stops.
 
 **Architecture review (2026-08-07, three independent strong agents: state
 model, verification machinery, execution surface).** A "verified computation

@@ -1,5 +1,8 @@
+diff --git a/node_modules/@earendil-works/pi-ai/.bun-tag-895dac2ec405964f b/.bun-tag-895dac2ec405964f
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 diff --git a/dist/api/openai-codex-responses.js b/dist/api/openai-codex-responses.js
-index bb9fa794ee6cb9f73149dda5733b286941bbb550..9d5d1c061526f1d2f6005862003ed6c0545c90f4 100644
+index bb9fa794ee6cb9f73149dda5733b286941bbb550..5c8bcd539de129c22ff5d595e8820db5510a3c70 100644
 --- a/dist/api/openai-codex-responses.js
 +++ b/dist/api/openai-codex-responses.js
 @@ -257,6 +257,10 @@ export const stream = (model, context, options) => {
@@ -45,7 +48,7 @@ index bb9fa794ee6cb9f73149dda5733b286941bbb550..9d5d1c061526f1d2f6005862003ed6c0
              stream.push({ type: "done", reason: output.stopReason, message: output });
              stream.end();
          }
-@@ -356,6 +379,32 @@ export const stream = (model, context, options) => {
+@@ -356,6 +379,36 @@ export const stream = (model, context, options) => {
      })();
      return stream;
  };
@@ -70,7 +73,11 @@ index bb9fa794ee6cb9f73149dda5733b286941bbb550..9d5d1c061526f1d2f6005862003ed6c0
 +    output.usage.output = 0;
 +    output.usage.cacheRead = 0;
 +    output.usage.cacheWrite = 0;
-+    delete output.stopReason;
++    // Back to the stream-start sentinel, NOT delete: assertSuccessfulOutput
++    // treats only stopReason === "pending" as "stream ended without a stop
++    // reason", so a deleted field would let a retried attempt whose stream
++    // closes cleanly-but-empty pass silently as a contentless done.
++    output.stopReason = "pending";
 +    delete output.errorMessage;
 +}
 +// --- end coverify patch helpers ---

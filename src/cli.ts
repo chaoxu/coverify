@@ -93,7 +93,10 @@ function optionalInt(name: string): number | undefined {
  *  (Chao, 2026-08-08), not a harness-invented ceiling; the launcher's
  *  no-invented-limits rule is satisfied because the default's provenance is
  *  a recorded user policy, like the model defaults. `--agent-limit 0`
- *  explicitly requests unlimited; any other value overrides. */
+ *  explicitly requests unlimited — deliberately REVERSING 2853c9b, which
+ *  rejected `0` when it meant "limit is zero, refuse every dispatch" (a
+ *  silent footgun); the sentinel meaning is stated in the usage string,
+ *  and every other non-positive value still hard-stops via optionalInt. */
 function agentLimit(): number | undefined {
   const v = flags.get("agent-limit");
   if (v === undefined) return 6;

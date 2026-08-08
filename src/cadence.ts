@@ -139,7 +139,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         const reason =
           "this exact bundle already failed certification as leaking the candidate argument. " +
           "Revise keyIdeas/allowedSources before retrying.";
-        recordRefusal(store, "verification", { reason, revision: rel });
+        recordRefusal(store, "verification", { reason, revision: rel, candidateHash });
         return toolText(`VERIFICATION REFUSED: ${reason}`);
       }
       // Matched on content, not on filename. "A substantive FAIL from any
@@ -163,7 +163,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             "a substantive FAIL is on record for this exact revision. Per the contract, respond " +
             "with a load-bearing repair (new revision), retraction, or a recorded rebuttal " +
             "artifact refuting the exact reported gap (pass rebuttalArtifact).";
-          recordRefusal(store, "verification", { reason, revision: rel });
+          recordRefusal(store, "verification", { reason, revision: rel, candidateHash });
           return toolText(`VERIFICATION REFUSED: ${reason}`);
         }
         store.append({ kind: "rebuttal", revision: rel, artifact: rebuttalRel });

@@ -1,7 +1,11 @@
 /**
  * Observability, separated from operations (Chao, 2026-08-08): everything
- * here RECORDS what happened or NOTICES what the records imply — nothing
- * here decides, schedules, gates, or executes. House rule from the same
+ * here RECORDS what happened or NOTICES what the records imply — it
+ * generates prompt text and records, and never itself gates, dispatches,
+ * schedules, or writes ledgers (wakeBookkeeping's digest DOES reach the
+ * coordinator's prompt: noticing is surfaced, deciding stays with the
+ * model, per the ambient-status-digest mechanics precedent). House rule
+ * from the same
  * day's review (issue #21): every record ships with the derived query that
  * makes it actionable — an unread log is not an audit trail. Removing this
  * module changes what the campaign can prove about itself, never what it
@@ -72,7 +76,8 @@ export function recordRunConfig(
     // not depend on the prose note's exact wording.
     runStart: true,
     ...extra,
-    gitDirty: git("git status --porcelain") !== "",
+    // Tri-state: a failed git probe must not masquerade as a dirty tree.
+    gitDirty: ((st) => (st === undefined ? "unknown" : st !== ""))(git("git status --porcelain")),
     bunVersion: process.versions.bun,
     piVersions: { "pi-agent-core": piVersion("pi-agent-core"), "pi-ai": piVersion("pi-ai") },
     ...(patches && Object.keys(patches).length > 0 ? { patches } : {}),
@@ -129,7 +134,7 @@ export function archiveLedgerHistory(store: GateStore, dir: string, wakeCount: n
 export function recordRefusal(
   store: GateStore,
   site: "dispatch" | "verification",
-  fields: { reason: string; mechanism?: string; revision?: string; role?: string },
+  fields: { reason: string; mechanism?: string; revision?: string; role?: string; candidateHash?: string },
 ): void {
   store.event({
     kind: "note",
@@ -161,12 +166,18 @@ export function refusalsWithoutFollowup(
       if (!followed) out.push({ site: "dispatch", subject: r.mechanism, reason: String(r.reason ?? "") });
     } else if (r.refusal === "verification" && typeof r.revision === "string") {
       const rev = r.revision.toLowerCase();
+      // Follow-up by name OR by content: a refused candidate re-verified
+      // under a new filename (same bytes) must clear the flag, so stage
+      // records' candidateHash counts as follow-up too.
       const followed = later.some(
         (e) =>
-          e.kind === "dispatch" &&
-          typeof e.mechanism === "string" &&
-          e.mechanism.startsWith("verification:") &&
-          e.mechanism.slice("verification:".length).toLowerCase() === rev,
+          (e.kind === "dispatch" &&
+            typeof e.mechanism === "string" &&
+            e.mechanism.startsWith("verification:") &&
+            e.mechanism.slice("verification:".length).toLowerCase() === rev) ||
+          (typeof r.candidateHash === "string" &&
+            (e.kind === "audit" || e.kind === "bundle-cert" || e.kind === "comparison") &&
+            e.candidateHash === r.candidateHash),
       );
       if (!followed) out.push({ site: "verification", subject: r.revision, reason: String(r.reason ?? "") });
     }

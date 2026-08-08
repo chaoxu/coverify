@@ -96,3 +96,19 @@ test("non-transport errors are not retried", async () => {
   expect(calls).toBe(1);
   expect(events.some((e) => e.type === "error")).toBe(true);
 });
+
+test("a retried attempt that closes empty still errors (no silent contentless done)", async () => {
+  // Regression for the reset: stopReason must return to "pending", not be
+  // deleted, or assertSuccessfulOutput waves an empty retried stream through.
+  let calls = 0;
+  const fetchStub = async () => {
+    calls++;
+    return calls === 1 ? dyingResponse() : sseResponse([]);
+  };
+  const s = stream(MODEL, CONTEXT, { apiKey: FAKE_JWT, fetch: fetchStub as never, transport: "sse" });
+  const events: { type: string }[] = [];
+  for await (const e of s as AsyncIterable<{ type: string }>) events.push(e);
+  expect(calls).toBe(2);
+  expect(events.some((e) => e.type === "error")).toBe(true);
+  expect(events.some((e) => e.type === "done")).toBe(false);
+});

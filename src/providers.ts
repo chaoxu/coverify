@@ -674,6 +674,12 @@ export async function createHarnessRoleSession(
     );
     contextMessages = (await session.buildContext()).messages;
   };
+  // Cancellation must also cover the retry wrapper's backoff sleeps:
+  // harness.abort() only aborts an in-flight prompt, and between attempts
+  // there is none — so abort() additionally fires this controller, which
+  // retryAssistantCall honors as terminal (an aborted backoff resolves as
+  // an aborted message, never another attempt).
+  const sessionStop = new AbortController();
   return {
     capabilities: { steerable: true, durable: !opts.ephemeral },
     async ask(prompt: string): Promise<string> {
@@ -698,7 +704,7 @@ export async function createHarnessRoleSession(
           }
         },
         retryPolicy(),
-        undefined,
+        sessionStop.signal,
       );
       // The harness resolves failures as a synthetic message; surface the
       // real cause instead of an empty string (which would read as the
@@ -733,6 +739,7 @@ export async function createHarnessRoleSession(
       );
     },
     abort(): void {
+      sessionStop.abort();
       harness.abort().catch(() => {});
     },
   };
