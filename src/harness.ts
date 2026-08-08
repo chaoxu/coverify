@@ -6,7 +6,6 @@ import { Type } from "typebox";
 import {
   acquireCampaignLock,
   consumeUserMessages,
-  danglingCitations,
   newEvidencePath,
   peekUserMessages,
   readJournal,
@@ -22,8 +21,6 @@ import {
   checkPromotion,
   checkDispatch,
   resolvePremises,
-  retractionClosure,
-  promotionsMissingFromProved,
   sameRevision,
   GateStore,
   recordGateVerdict,
@@ -32,6 +29,7 @@ import {
   type TechnicianPacket,
 } from "./gates.js";
 import { requestVerificationTool } from "./cadence.js";
+import { archiveLedgerHistory, recordRefusal, recordRunConfig, wakeBookkeeping } from "./observe.js";
 import { loadLauncherContract } from "./launcher.js";
 import {
   buildModels,
@@ -151,16 +149,13 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     store.event({ kind: "note", note: "journal guidance import complete", journalGuidanceImport: true });
   }
 
-  // Version stamp at every run start: attributes this run to an exact
-  // (harness, contract) pair. Harness audit metadata — launcher-permitted.
-  store.event({
-    kind: "note",
-    note: "run-start",
-    // Structural marker: trace epoch-caps open dispatches on this, so it must
-    // not depend on the prose note's exact wording.
-    runStart: true,
+  // Run-config stamp: attributes this run to an exact (harness, contract,
+  // policy, runtime) tuple — see observe.ts.
+  recordRunConfig(store, {
     harnessRev: harnessRevision(),
     launcherSha256: sha256Text(contract),
+    userAgentLimit: opts.userAgentLimit,
+    maxWakes: opts.maxWakes,
   });
 
   // Statement freeze: hard-stop if STATEMENT.md changed without a recorded
@@ -399,14 +394,18 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       liveWorkers(),
       liveOnMechanism(packet.mechanism),
     );
-    if (!decision.allowed) return toolText(`DISPATCH REFUSED: ${decision.reason}`);
+    if (!decision.allowed) {
+      recordRefusal(store, "dispatch", { reason: decision.reason ?? "", mechanism: packet.mechanism, role });
+      return toolText(`DISPATCH REFUSED: ${decision.reason}`);
+    }
     const spec = roleModelSpec(role);
     const isTechnician = role === "technician";
     if (isTechnician && isCliProvider(spec.provider)) {
-      return toolText(
-        "DISPATCH REFUSED: the configured technician backend is a tool-less CLI oracle; a " +
-          "computation packet needs a tool-running backend",
-      );
+      const reason =
+        "the configured technician backend is a tool-less CLI oracle; a computation packet needs " +
+        "a tool-running backend";
+      recordRefusal(store, "dispatch", { reason, mechanism: packet.mechanism, role });
+      return toolText(`DISPATCH REFUSED: ${reason}`);
     }
     const id = `${isTechnician ? "t" : "r"}${String(nextId++).padStart(3, "0")}`;
     const evidenceDir = path.join(dir, "EVIDENCE", id);
@@ -944,36 +943,9 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       ...(harvested.failed > 0 ? { failed: harvested.failed } : {}),
     });
     // Bookkeeping the harness can check, so the coordinator does not have to
-    // remember it: a citation that points at nothing, and a promoted claim a
-    // later verdict has contradicted.
-    const dangling = danglingCitations(dir);
-    const retractions = retractionClosure(store);
-    const missingEntries = promotionsMissingFromProved(store, dir);
-    const bookkeeping =
-      (dangling.length > 0
-        ? `\n\nLEDGER CITATIONS THAT POINT AT NOTHING (fix or remove them):\n` +
-          dangling.map((d) => `- ${d.ledger} cites ${d.citation}, which does not exist`).join("\n")
-        : "") +
-      (missingEntries.length > 0
-        ? `\n\nPROMOTION ENTRIES NO LONGER IN PROVED.md — the recorded entry text for these ` +
-          `promotions does not appear in the file. If this is a recorded retraction relabel, note ` +
-          `that in REGISTRY.md; otherwise the ledger was edited out from under its events — restore it:\n` +
-          missingEntries.map((m) => `- ${m.revision}`).join("\n")
-        : "") +
-      (retractions.length > 0
-        ? `\n\nPROMOTED CLAIMS WITH A LATER SUBSTANTIVE FAIL — the contract requires a retraction ` +
-          `(relabel in REGISTRY.md, append to FAILED.md, mark the PROVED.md entry historical, ` +
-          `demote dependents):\n` +
-          retractions
-            .map(
-              (r) =>
-                `- ${r.revision} (later ${r.stage} FAIL)` +
-                (r.dependents.length > 0
-                  ? `; recorded dependents standing on it (transitive, via premises): ${r.dependents.join(", ")}`
-                  : ""),
-            )
-            .join("\n")
-        : "");
+    // remember it (observe.ts): dangling citations, contradicted or edited
+    // promotions, refused work nothing followed up.
+    const bookkeeping = wakeBookkeeping(store, dir);
     const idleNudge =
       handles.size === 0 && reportSections.length === 0 && wakeCount > 1
         ? "\nNothing is live and no new reports arrived. Per the contract the campaign remains " +
@@ -1197,33 +1169,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     });
     lostNote = "";
 
-    // Rewritten-ledger history. CURRENT_FRONTIER.md and REGISTRY.md are
-    // rewritten by design, so their evolution vanishes unless kept: each
-    // distinct post-wake version is stored once, content-addressed, under
-    // .coverify/ledger-history/<sha256>.md, with a hash-bound event in the
-    // authoritative log carrying the order and integrity (an edited snapshot
-    // stops matching its recorded hash — same discipline as verification
-    // artifacts; identical rewrites dedupe by address). Removed 2026-08-02
-    // as "nothing reads it"; reinstated and generalized 2026-08-08 with a
-    // reader on record — the vanished-intentions audit, whose first run had
-    // a six-day blind spot without snapshots.
-    {
-      const histDir = path.join(dir, ".coverify", "ledger-history");
-      fs.mkdirSync(histDir, { recursive: true });
-      for (const ledger of ["CURRENT_FRONTIER.md", "REGISTRY.md"]) {
-        const content = readLedger(dir, ledger);
-        if (!content) continue;
-        const hash = sha256Text(content);
-        const snap = path.join(histDir, `${hash}.md`);
-        // The event sequence is the history: append whenever the hash moved,
-        // even back to an earlier content (A→B→A logs three events, stores
-        // two snapshots). Snapshot files are pure content-addressed storage.
-        const last = [...store.all()].reverse().find((e) => e.ledgerRevision === ledger);
-        if (last?.hash === hash) continue;
-        if (!fs.existsSync(snap)) fs.writeFileSync(snap, content);
-        store.event({ kind: "note", ledgerRevision: ledger, hash, wake: wakeCount });
-      }
-    }
+    archiveLedgerHistory(store, dir, wakeCount);
 
     if (declaration) {
       // Anything that settled during the rest of the turn (including agents

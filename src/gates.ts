@@ -78,6 +78,19 @@ export class GateStore {
     const dir = path.join(stateDir, id);
     fs.mkdirSync(dir, { recursive: true });
     this.file = path.join(dir, "gates.jsonl");
+    // meta.json names the opaque 16-hex state dir for cross-campaign
+    // analytics (docs/queries.md): the campaign path and its statement's
+    // first line, best-effort, refreshed each construction.
+    try {
+      const stmt = fs.readFileSync(path.join(this.campaignDir, "STATEMENT.md"), "utf-8");
+      const firstLine = stmt.split("\n").find((l) => l.trim() && !l.startsWith("#")) ?? "";
+      fs.writeFileSync(
+        path.join(dir, "meta.json"),
+        JSON.stringify({ campaignDir: this.campaignDir, statement: firstLine.slice(0, 200) }) + "\n",
+      );
+    } catch {
+      /* fresh campaign without a statement yet */
+    }
     // A campaign that has run before (its journal exists) but has no gate
     // history has lost its authoritative state — moved before ids travelled
     // with it, or ~/.local/state wiped. Adopting silently would re-arm the

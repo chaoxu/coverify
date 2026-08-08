@@ -95,6 +95,13 @@ const LANDSTRIP_BIN = path.join(
 );
 let landstripChecked = false;
 let landstripUsable = false;
+/** Which write-confinement backend is actually in force — a threat-model
+ *  fact for the run-config stamp (degradation was console.error-only). */
+export function sandboxMode(): "seatbelt" | "landlock" | "instructed-only" {
+  if (process.platform === "darwin") return "seatbelt";
+  return landstripAvailable() ? "landlock" : "instructed-only";
+}
+
 function landstripAvailable(): boolean {
   if (!landstripChecked) {
     landstripChecked = true;

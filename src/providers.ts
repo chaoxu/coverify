@@ -579,7 +579,7 @@ const envCount = (raw: string | undefined, fallback: number): number => {
 };
 
 /** Turn-level retry policy for harness sessions, read at call time. */
-function retryPolicy(): { enabled: boolean; maxRetries: number; baseDelayMs: number } {
+export function retryPolicy(): { enabled: boolean; maxRetries: number; baseDelayMs: number } {
   const maxRetries = envCount(process.env.COVERIFY_RETRY_MAX, 3);
   return { enabled: maxRetries > 0, maxRetries, baseDelayMs: envCount(process.env.COVERIFY_RETRY_BASE_MS, 2_000) };
 }

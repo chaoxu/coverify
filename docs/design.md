@@ -182,6 +182,8 @@ claude-bridge.ts pi-claude-bridge as a pi-ai provider (subscription tool loop)
 gates.ts         dispatch gate, idea-gate ledger, verification state, promotion
 cadence.ts       the two-stage verification cadence (the clause-dense core)
 harness.ts       handle table, event loop, wakes; the only persistent process
+observe.ts       records + noticing queries: run-config stamp, ledger history,
+                 refusals, wake bookkeeping (observability, never operations)
 trace.ts         journal -> self-contained HTML timeline (read-only observability)
 trace-page.ts    that page's markup, styles, and view code
 pi-extension.ts  interactive-pi boundary layer: supervised run_script in
