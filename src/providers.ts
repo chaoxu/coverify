@@ -16,7 +16,7 @@ import {
   type AgentTool,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import { createModels, type Transport } from "@earendil-works/pi-ai";
+import { createModels, retryAssistantCall, type AssistantMessage, type Transport } from "@earendil-works/pi-ai";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
@@ -614,14 +614,11 @@ export async function createHarnessRoleSession(
     streamOptions: {
       transport: (process.env.COVERIFY_CODEX_TRANSPORT as Transport | undefined) ?? "auto",
     },
-    // pi's own turn-level retry (retryAssistantCall): a transient
-    // provider/transport failure — pi's classifier covers today's exact
-    // signatures, "socket connection was closed" and "WebSocket closed",
-    // while quota/billing errors stay fail-fast — restarts the assistant
-    // turn with exponential backoff instead of surfacing an infrastructure
-    // failure. Off in pi by default; 2026-08-08 measured ~30% of long Sol
-    // worker turns dying to such drops on both transports, each previously
-    // costing a full re-dispatch. Env-tunable; COVERIFY_RETRY_MAX=0 disables.
+    // NOTE (verified 0.83.0): AgentHarness consumes this option ONLY for
+    // compaction and branch-summary calls — the prompt path never reads it
+    // (a live 1006 sailed through with this set; caught 2026-08-08). Kept
+    // for those two call sites; ordinary turns are retried by the
+    // retryAssistantCall wrapper around harness.prompt in ask() below.
     retry: retryPolicy(),
     // Verbatim — the harness layer performs no prompt assembly of its own.
     systemPrompt: systemText(run),
@@ -674,14 +671,29 @@ export async function createHarnessRoleSession(
   return {
     capabilities: { steerable: true, durable: !opts.ephemeral },
     async ask(prompt: string): Promise<string> {
-      let final;
-      try {
-        final = await harness.prompt(prompt);
-      } finally {
-        // Telemetry must reflect spend even when the run rejects — a failed
-        // 500k-token run recorded as zero usage is worse than the failure.
-        await refresh().catch(() => {});
-      }
+      // Turn-level retry at the ask boundary, built from pi's own parts:
+      // retryAssistantCall classifies the resolved message — transient
+      // transport/provider failures ("socket connection was closed",
+      // "WebSocket closed 1006", codex fetch resets) restart the turn with
+      // exponential backoff; quota/billing errors and aborts stay
+      // fail-fast. 2026-08-08 measured ~30% of long Sol worker turns dying
+      // to such drops on both transports; each retry re-prompts the session
+      // (the failed turn stays in the transcript, like the salvage nudge),
+      // and refresh() runs per attempt so telemetry counts every attempt.
+      const final = await retryAssistantCall(
+        async () => {
+          try {
+            return (await harness.prompt(prompt)) as AssistantMessage;
+          } finally {
+            // Telemetry must reflect spend even when the run rejects — a
+            // failed 500k-token run recorded as zero usage is worse than
+            // the failure.
+            await refresh().catch(() => {});
+          }
+        },
+        retryPolicy(),
+        undefined,
+      );
       // The harness resolves failures as a synthetic message; surface the
       // real cause instead of an empty string (which would read as the
       // empty-report infra failure and trigger a pointless salvage nudge).
