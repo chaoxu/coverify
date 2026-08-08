@@ -133,6 +133,42 @@ observed state discontinuity).
    `failed` reason flag (same shape as `cancelled`), write no phantom
    artifact, and are excluded from the wake's `newReports` count.
 
+## Evidence from campaign 3 (2026-08-01, lin-3-cut complexity, fresh restart)
+
+Third campaign (`~/research/linear-3-cut/campaigns/2026-08-01-complexity-s-star-t-lin3cut-fresh`,
+21 wakes, 46 dispatches, 0 promotions, paused 2026-08-02 mid-wave with v039
+in flight).
+
+1. **All 5 comparisons FAILed, every one substantive — and every one the
+   same shape: the candidate bundles several theorem-class conclusions and
+   the blind reconstruction establishes only a subset.** Read together
+   (r002.r2, r004.r2, r012.r1, r022.r1): a reconstruction proved the
+   pair-union identities but not the existential FC4 counterexample; proved
+   the unsigned obstruction but not the signed all-distinct-pairs theorem;
+   proved nested cuts but not the universal bilateral-exchange claim;
+   proved the qualitative obstruction but not the unbounded profile,
+   the exact primal/dual values, or the two-instance separation. The Aug 1
+   theorem-class/check-class split worked as intended — none of these is a
+   witness-bookkeeping FAIL (and the #14 delta-auditor trigger therefore
+   did **not** fire; re-measured per its "re-measure before sizing" note).
+   What remains is a scope problem: a revision's promotability is
+   all-or-nothing over every theorem-class conclusion it states, so each
+   extra theorem multiplies the chance the whole revision fails.
+   **Candidate launcher lesson (deferred, performance-shaped): candidate
+   scope discipline** — one promotable theorem (or one tightly coupled
+   cluster) per revision; supporting results a reasoner wants on record go
+   in separate revisions verified separately, not as riders. Activation
+   test: a campaign where multi-theorem revisions again convert ≥1
+   would-have-passed conclusion into a whole-revision FAIL, measured from
+   its trace against a comparable single-theorem baseline.
+2. **Restart-lost verification stages re-paid** (v033: audit PASS +
+   bundle-cert PASS stranded by a process death, v035: no verdict at all;
+   fresh v039 re-ran everything on the byte-identical candidate). Harness
+   gap, not a skill gap — fixed in coverify (restart-lost stage reuse,
+   design.md roadmap): a stage PASS now carries forward to a re-run whose
+   every input hash matches. No launcher edit needed; the contract already
+   sanctioned byte-identical re-run reuse.
+
 ## Deferred: tiered verification (drafted, ready to land on evidence)
 
 Two launcher edits:
