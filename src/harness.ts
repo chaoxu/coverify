@@ -1,4 +1,3 @@
-import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -6,6 +5,7 @@ import { Type } from "typebox";
 import {
   acquireCampaignLock,
   consumeUserMessages,
+  gitInRepo,
   newEvidencePath,
   peekUserMessages,
   readJournal,
@@ -101,16 +101,6 @@ const TURN_FAILURE_LIMIT = 5;
  *  every decision must be externalized to the ledgers regardless. */
 const COORDINATOR_CONTEXT_TOKENS = Number(process.env.COVERIFY_COORDINATOR_CONTEXT_TOKENS ?? 300_000);
 
-function harnessRevision(): string {
-  try {
-    return execSync("git rev-parse HEAD", { cwd: path.dirname(new URL(import.meta.url).pathname) })
-      .toString()
-      .trim();
-  } catch {
-    return "unknown";
-  }
-}
-
 /**
  * The harness event loop — the only persistent process. Completions wake the
  * resident coordinator session (compacted in place at its context cap, with
@@ -152,10 +142,11 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   // Run-config stamp: attributes this run to an exact (harness, contract,
   // policy, runtime) tuple — see observe.ts.
   recordRunConfig(store, {
-    harnessRev: harnessRevision(),
+    harnessRev: gitInRepo("git rev-parse HEAD") ?? "unknown",
     launcherSha256: sha256Text(contract),
     userAgentLimit: opts.userAgentLimit,
     maxWakes: opts.maxWakes,
+    coordinatorContextTokens: COORDINATOR_CONTEXT_TOKENS,
   });
 
   // Statement freeze: hard-stop if STATEMENT.md changed without a recorded
@@ -698,10 +689,13 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       if (!decision.allowed) return refuse(store, "promotion", decision.reason ?? "", { revision: rel });
       const resolved = resolvePremises(store, p.premises ?? []);
       if ("unresolved" in resolved) {
-        return toolText(
-          `PROMOTION REFUSED: premise "${resolved.unresolved}" matches no recorded promotion in ` +
-            "this campaign. Premises name earlier promoted revisions exactly; external sources " +
-            "belong in the dependencies prose.",
+        return refuse(
+          store,
+          "promotion",
+          `premise "${resolved.unresolved}" matches no recorded promotion in this campaign. ` +
+            "Premises name earlier promoted revisions exactly; external sources belong in the " +
+            "dependencies prose.",
+          { revision: rel },
         );
       }
       const premises = resolved.premises;

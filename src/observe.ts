@@ -11,9 +11,10 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { danglingCitations, gitInRepo, readLedger, repoRoot, sha256Text } from "./campaign.js";
+import { danglingCitations, gitInRepo, readLedger, repoRoot, sha256File, sha256Text } from "./campaign.js";
 import {
   GateStore,
+  VERIFICATION_MECHANISM_PREFIX,
   normalizeMechanism,
   promotionsMissingFromProved,
   retractionClosure,
@@ -21,6 +22,7 @@ import {
 import {
   ROLE_NAMES,
   cliBackendCommand,
+  codexTransport,
   retryPolicy,
   roleModelSpec,
   sandboxMode,
@@ -40,7 +42,15 @@ import {
  */
 export function recordRunConfig(
   store: GateStore,
-  extra: { harnessRev: string; launcherSha256: string; userAgentLimit?: number; maxWakes?: number },
+  extra: {
+    harnessRev: string;
+    launcherSha256: string;
+    userAgentLimit?: number;
+    maxWakes?: number;
+    // Owned by harness.ts (its enforced constant); passed in rather than
+    // re-derived here so the stamp cannot drift from the enforced value.
+    coordinatorContextTokens: number;
+  },
 ): void {
   const repo = repoRoot();
   const piVersion = (pkg: string): string | undefined => {
@@ -57,7 +67,7 @@ export function recordRunConfig(
   let patches: Record<string, string> | undefined;
   try {
     patches = Object.fromEntries(
-      fs.readdirSync(patchDir).map((f) => [f, sha256Text(fs.readFileSync(path.join(patchDir, f), "utf-8"))]),
+      fs.readdirSync(patchDir).map((f) => [f, sha256File(path.join(patchDir, f))]),
     );
   } catch {
     /* no patches dir */
@@ -84,8 +94,7 @@ export function recordRunConfig(
       "codex-cli": cliBackendCommand("codex-cli"),
     },
     retry: retryPolicy(),
-    transport: process.env.COVERIFY_CODEX_TRANSPORT ?? "auto",
-    coordinatorContextTokens: Number(process.env.COVERIFY_COORDINATOR_CONTEXT_TOKENS ?? 300_000),
+    transport: codexTransport(),
     sandbox: sandboxMode(),
   });
 }
@@ -104,8 +113,12 @@ export function archiveLedgerHistory(store: GateStore, dir: string, wakeCount: n
   for (const ledger of ["CURRENT_FRONTIER.md", "REGISTRY.md"]) {
     // Tolerate absence: a foreign or freshly-adopted campaign may lack a
     // ledger; observability must never brick a run.
-    if (!fs.existsSync(path.join(dir, ledger))) continue;
-    const content = readLedger(dir, ledger);
+    let content: string;
+    try {
+      content = readLedger(dir, ledger);
+    } catch {
+      continue;
+    }
     if (!content) continue;
     const hash = sha256Text(content);
     const last = store.all().findLast((e) => e.ledgerRevision === ledger);
@@ -122,24 +135,8 @@ export function archiveLedgerHistory(store: GateStore, dir: string, wakeCount: n
  * refusal text itself, so new refusal branches are covered without
  * enumeration. Matters most once --agent-limit binds: whether the
  * coordinator re-proposes or forgets refused work becomes auditable.
- */
-export function recordRefusal(
-  store: GateStore,
-  site: "dispatch" | "verification" | "promotion",
-  fields: { reason: string; mechanism?: string; revision?: string; role?: string; candidateHash?: string },
-): void {
-  store.event({
-    kind: "note",
-    refusal: site,
-    ...fields,
-    reason: fields.reason.slice(0, 300),
-  });
-}
-
-/**
- * Record a refusal and produce the tool reply in one step — the idiom every
- * refusal site shares, factored so the next site cannot record-skip (the
- * promotion site did, on the first pass).
+ * Record and tool reply are one step by design, so a refusal site cannot
+ * record-skip (the promotion site did, twice, before this shape).
  */
 export function refuse(
   store: GateStore,
@@ -147,7 +144,12 @@ export function refuse(
   reason: string,
   fields: { mechanism?: string; revision?: string; role?: string; candidateHash?: string } = {},
 ): ReturnType<typeof toolText> {
-  recordRefusal(store, site, { reason, ...fields });
+  store.event({
+    kind: "note",
+    refusal: site,
+    ...fields,
+    reason: reason.slice(0, 300),
+  });
   return toolText(`${site.toUpperCase()} REFUSED: ${reason}`);
 }
 
@@ -161,9 +163,27 @@ export function refusalsWithoutFollowup(
   store: GateStore,
 ): { site: string; subject: string; reason: string }[] {
   const records = store.all();
+  // Only the newest refusal per subject matters, and it is decided first so
+  // superseded refusals never pay a follow-up scan: any follow-up that clears
+  // the newest refusal lies after the older ones too.
+  const subjectKey = (r: (typeof records)[number]): string | undefined => {
+    if (r.refusal === "dispatch" && typeof r.mechanism === "string") {
+      return `dispatch:${r.mechanism.toLowerCase()}`;
+    }
+    if ((r.refusal === "verification" || r.refusal === "promotion") && typeof r.revision === "string") {
+      return `${r.refusal}:${r.revision.toLowerCase()}`;
+    }
+    return undefined;
+  };
+  const newest = new Map<string, number>();
+  records.forEach((r, i) => {
+    const k = subjectKey(r);
+    if (k !== undefined) newest.set(k, i);
+  });
   const out: { site: string; subject: string; reason: string }[] = [];
   records.forEach((r, i) => {
-    if (r.refusal === undefined) return;
+    const k = subjectKey(r);
+    if (k === undefined || newest.get(k) !== i) return;
     // Index-bounded scans (no per-refusal array copy).
     const after = (pred: (e: (typeof records)[number]) => boolean) =>
       records.some((e, j) => j > i && pred(e));
@@ -184,8 +204,8 @@ export function refusalsWithoutFollowup(
         (e) =>
           (e.kind === "dispatch" &&
             typeof e.mechanism === "string" &&
-            e.mechanism.startsWith("verification:") &&
-            e.mechanism.slice("verification:".length).toLowerCase() === rev) ||
+            e.mechanism.startsWith(VERIFICATION_MECHANISM_PREFIX) &&
+            e.mechanism.slice(VERIFICATION_MECHANISM_PREFIX.length).toLowerCase() === rev) ||
           (e.kind === "promotion" && typeof e.revision === "string" && e.revision.toLowerCase() === rev) ||
           (typeof r.candidateHash === "string" &&
             (e.kind === "audit" || e.kind === "bundle-cert" || e.kind === "comparison") &&
@@ -194,14 +214,7 @@ export function refusalsWithoutFollowup(
       if (!followed) out.push({ site: String(r.refusal), subject: r.revision, reason: String(r.reason ?? "") });
     }
   });
-  // Dedup by subject: only the newest unaddressed refusal per subject matters.
-  const seen = new Set<string>();
-  return out.reverse().filter((r) => {
-    const k = `${r.site}:${r.subject.toLowerCase()}`;
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
+  return out.reverse(); // newest first
 }
 
 /**

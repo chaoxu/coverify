@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 const { GateStore } = await import("../src/gates.ts");
-const { archiveLedgerHistory, recordRefusal, refusalsWithoutFollowup } = await import("../src/observe.ts");
+const { archiveLedgerHistory, refuse, refusalsWithoutFollowup } = await import("../src/observe.ts");
 
 function campaign(label: string) {
   const dir = fs.mkdtempSync(`/private/tmp/coverify-observe-${label}-`);
@@ -18,8 +18,8 @@ function campaign(label: string) {
 describe("refusal record + query", () => {
   test("a refused mechanism with no later dispatch is surfaced; a re-proposed one is not", () => {
     const { store } = campaign("refusal");
-    recordRefusal(store, "dispatch", { reason: "worker cap", mechanism: "ROUTE-A deep scan", role: "reasoner" });
-    recordRefusal(store, "dispatch", { reason: "worker cap", mechanism: "ROUTE-B wide scan", role: "reasoner" });
+    refuse(store, "dispatch", "worker cap", { mechanism: "ROUTE-A deep scan", role: "reasoner" });
+    refuse(store, "dispatch", "worker cap", { mechanism: "ROUTE-B wide scan", role: "reasoner" });
     // ROUTE-A gets re-proposed later (case/spacing differ — normalization must match).
     store.append({ kind: "dispatch", id: "r001", role: "reasoner", mechanism: "route-a  DEEP scan", task: "t" });
     const un = refusalsWithoutFollowup(store);
@@ -28,7 +28,7 @@ describe("refusal record + query", () => {
 
   test("a verification refusal is cleared by a later verification dispatch on the revision", () => {
     const { store } = campaign("vrefusal");
-    recordRefusal(store, "verification", { reason: "prior FAIL stands", revision: "r009/cand.r1.md" });
+    refuse(store, "verification", "prior FAIL stands", { revision: "r009/cand.r1.md" });
     expect(refusalsWithoutFollowup(store).length).toBe(1);
     store.append({ kind: "dispatch", id: "v010", role: "verification", mechanism: "verification:r009/cand.r1.md" });
     expect(refusalsWithoutFollowup(store).length).toBe(0);

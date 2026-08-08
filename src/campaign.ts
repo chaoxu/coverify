@@ -200,8 +200,8 @@ export function acquireCampaignLock(dir: string): () => void {
 }
 
 /** Harness-generated audit metadata — permitted by the launcher's EVIDENCE bullet. */
-/** The coverify checkout root (src/'s parent) — shared so the expression
- *  stops being copy-pasted per file (4 copies before extraction). */
+/** The coverify checkout root (src/'s parent) — the one authority for
+ *  locating the checkout and its node_modules; never re-derive per file. */
 export function repoRoot(): string {
   return path.dirname(path.dirname(new URL(import.meta.url).pathname));
 }

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { appendJournal, sha256File, sha256Text } from "./campaign.js";
+import { appendJournal, readLedger, sha256File, sha256Text } from "./campaign.js";
 
 /**
  * Gate state store. Gate decisions must not depend on files any role's
@@ -82,12 +82,13 @@ export class GateStore {
     // analytics (docs/queries.md): the campaign path and its statement's
     // first line, best-effort, refreshed each construction.
     try {
-      const stmt = fs.readFileSync(path.join(this.campaignDir, "STATEMENT.md"), "utf-8");
+      const stmt = readLedger(this.campaignDir, "STATEMENT.md");
       const firstLine = stmt.split("\n").find((l) => l.trim() && !l.startsWith("#")) ?? "";
-      fs.writeFileSync(
-        path.join(dir, "meta.json"),
-        JSON.stringify({ campaignDir: this.campaignDir, statement: firstLine.slice(0, 200) }) + "\n",
-      );
+      const meta = path.join(dir, "meta.json");
+      const next = JSON.stringify({ campaignDir: this.campaignDir, statement: firstLine.slice(0, 200) }) + "\n";
+      // Skip identical rewrites so read-only commands (status, trace) stay
+      // write-free on an unchanged campaign.
+      if (!fs.existsSync(meta) || fs.readFileSync(meta, "utf-8") !== next) fs.writeFileSync(meta, next);
     } catch {
       /* fresh campaign without a statement yet */
     }
@@ -293,6 +294,10 @@ export interface TechnicianPacket extends DispatchPacket {
 export function sameRevision(a: unknown, b: string): boolean {
   return typeof a === "string" && (a === b || a.toLowerCase() === b.toLowerCase());
 }
+
+/** Dispatch-mechanism prefix marking a verification cadence on a revision —
+ *  minted in cadence.ts, parsed by the refusal follow-up query in observe.ts. */
+export const VERIFICATION_MECHANISM_PREFIX = "verification:";
 
 /**
  * Promoted revisions that have since received a substantive FAIL.

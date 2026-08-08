@@ -13,6 +13,7 @@ import { newEvidencePath, promotedStatementsView, readLedger, sha256File, sha256
 import { refuse } from "./observe.js";
 import {
   GateStore,
+  VERIFICATION_MECHANISM_PREFIX,
   assertCandidateWithheld,
   checkPromotion,
   parseFirstLineVerdict,
@@ -525,7 +526,13 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
 
       // Journaled like an agent dispatch so ids stay unique across restarts
       // (maxHandleId reads dispatch records only).
-      store.append({ kind: "dispatch", id, role: "verification", mechanism: `verification:${rel}`, task: rel });
+      store.append({
+        kind: "dispatch",
+        id,
+        role: "verification",
+        mechanism: `${VERIFICATION_MECHANISM_PREFIX}${rel}`,
+        task: rel,
+      });
       cancelled = () => cadenceStop.signal.aborted || !deps.hasHandle(id);
       deps.registerHandle({
         id,
@@ -533,7 +540,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         // A cadence is composite work: stopping it means its stage calls stop
         // recording, which abortIfCancelled already enforces between stages.
         stop: () => cadenceStop.abort(),
-        mechanism: `verification:${rel}`,
+        mechanism: `${VERIFICATION_MECHANISM_PREFIX}${rel}`,
         // Passed as a thunk: with carried-forward stages the cadence's prefix
         // is fully synchronous and checks abortIfCancelled(), so it must not
         // start before registerHandle sets the handle — registerHandle

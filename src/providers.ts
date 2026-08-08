@@ -579,6 +579,12 @@ export function retryPolicy(): { enabled: boolean; maxRetries: number; baseDelay
   return { enabled: maxRetries > 0, maxRetries, baseDelayMs: envNumber(process.env.COVERIFY_RETRY_BASE_MS, 2_000, 0) };
 }
 
+/** Stream transport for harness sessions, read at call time. Shared with the
+ *  run-config stamp so the recorded policy cannot drift from the enforced one. */
+export function codexTransport(): Transport {
+  return (process.env.COVERIFY_CODEX_TRANSPORT as Transport | undefined) ?? "auto";
+}
+
 export async function createHarnessRoleSession(
   run: Omit<RoleRun, "prompt"> & { prompt?: string },
   opts: HarnessSessionOpts,
@@ -613,7 +619,7 @@ export async function createHarnessRoleSession(
     // no long-lived socket; the websocket context cache mostly benefits
     // multi-turn sessions, not ask-once workers. Env read at call time.
     streamOptions: {
-      transport: (process.env.COVERIFY_CODEX_TRANSPORT as Transport | undefined) ?? "auto",
+      transport: codexTransport(),
     },
     // NOTE (verified 0.83.0): AgentHarness consumes this option ONLY for
     // compaction and branch-summary calls — the prompt path never reads it

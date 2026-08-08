@@ -8,6 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { type AgentTool } from "@earendil-works/pi-agent-core";
+import { repoRoot } from "./campaign.js";
 import {
   createGrepTool,
   createLsTool,
@@ -87,13 +88,7 @@ function sbplLiteral(p: string): string {
  * If the landstrip binary is unavailable there, the argv runs unsandboxed
  * and write confinement degrades to instructed-only — loudly.
  */
-const LANDSTRIP_BIN = path.join(
-  path.dirname(new URL(import.meta.url).pathname),
-  "..",
-  "node_modules",
-  ".bin",
-  "landstrip",
-);
+const LANDSTRIP_BIN = path.join(repoRoot(), "node_modules", ".bin", "landstrip");
 let landstripChecked = false;
 let landstripUsable = false;
 /** Which write-confinement backend is actually in force — a threat-model

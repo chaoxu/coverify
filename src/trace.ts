@@ -8,7 +8,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { citedEvidencePaths, readJournal, readLedger } from "./campaign.js";
+import { citedEvidencePaths, readJournal, readLedger, repoRoot } from "./campaign.js";
 import { BODY, STYLES, VIEW } from "./trace-page.js";
 
 export interface TraceAgent {
@@ -67,9 +67,8 @@ const VENDOR_JS = "vis-timeline/standalone/umd/vis-timeline-graph2d.min.js";
 const VENDOR_CSS = "vis-timeline/styles/vis-timeline-graph2d.min.css";
 
 function vendored(rel: string): string {
-  // Resolved from this module, so it works from any cwd.
-  const here = path.dirname(new URL(import.meta.url).pathname);
-  const p = path.join(here, "..", "node_modules", rel);
+  // Resolved from the checkout root, so it works from any cwd.
+  const p = path.join(repoRoot(), "node_modules", rel);
   if (!fs.existsSync(p)) {
     throw new Error(`missing vendored asset ${rel}; run 'bun install' in the coverify checkout`);
   }
