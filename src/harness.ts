@@ -1197,18 +1197,32 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     });
     lostNote = "";
 
-    // Frontier history: CURRENT_FRONTIER.md is rewritten by design, so the
-    // harness snapshots each distinct post-wake version under .coverify/.
-    // Removed 2026-08-02 as "nothing reads it" — reinstated 2026-08-08 with
-    // a reader on record: the vanished-intentions audit (did an open item
-    // silently drop out of a frontier rewrite?) needs exactly these
-    // snapshots, and its first run had a six-day blind spot without them.
-    const frontierNow = readLedger(dir, "CURRENT_FRONTIER.md");
-    const histDir = path.join(dir, ".coverify", "frontier-history");
-    fs.mkdirSync(histDir, { recursive: true });
-    const prevSnap = fs.readdirSync(histDir).sort().at(-1);
-    if (!prevSnap || fs.readFileSync(path.join(histDir, prevSnap), "utf-8") !== frontierNow) {
-      fs.writeFileSync(path.join(histDir, `wake-${String(wakeCount).padStart(4, "0")}.md`), frontierNow);
+    // Rewritten-ledger history. CURRENT_FRONTIER.md and REGISTRY.md are
+    // rewritten by design, so their evolution vanishes unless kept: each
+    // distinct post-wake version is stored once, content-addressed, under
+    // .coverify/ledger-history/<sha256>.md, with a hash-bound event in the
+    // authoritative log carrying the order and integrity (an edited snapshot
+    // stops matching its recorded hash — same discipline as verification
+    // artifacts; identical rewrites dedupe by address). Removed 2026-08-02
+    // as "nothing reads it"; reinstated and generalized 2026-08-08 with a
+    // reader on record — the vanished-intentions audit, whose first run had
+    // a six-day blind spot without snapshots.
+    {
+      const histDir = path.join(dir, ".coverify", "ledger-history");
+      fs.mkdirSync(histDir, { recursive: true });
+      for (const ledger of ["CURRENT_FRONTIER.md", "REGISTRY.md"]) {
+        const content = readLedger(dir, ledger);
+        if (!content) continue;
+        const hash = sha256Text(content);
+        const snap = path.join(histDir, `${hash}.md`);
+        // The event sequence is the history: append whenever the hash moved,
+        // even back to an earlier content (A→B→A logs three events, stores
+        // two snapshots). Snapshot files are pure content-addressed storage.
+        const last = [...store.all()].reverse().find((e) => e.ledgerRevision === ledger);
+        if (last?.hash === hash) continue;
+        if (!fs.existsSync(snap)) fs.writeFileSync(snap, content);
+        store.event({ kind: "note", ledgerRevision: ledger, hash, wake: wakeCount });
+      }
     }
 
     if (declaration) {
