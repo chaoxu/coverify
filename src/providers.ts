@@ -16,7 +16,7 @@ import {
   type AgentTool,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import { createModels } from "@earendil-works/pi-ai";
+import { createModels, type Transport } from "@earendil-works/pi-ai";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
@@ -591,6 +591,17 @@ export async function createHarnessRoleSession(
     models: run.models,
     model: getModel(run.models, run.spec),
     thinkingLevel: run.spec.thinking,
+    // Stream transport (openai-codex honors it; others ignore it). "auto"
+    // holds a WebSocket open for the whole turn — a Sol@max worker thinks
+    // quietly for 10-20 min on one socket, and 2026-08-08 measured ~25% of
+    // long turns dying mid-stream with close code 1006, each an unrecoverable
+    // infra failure (pi's SSE fallback arms only for the session's NEXT turn,
+    // which an ask-once worker never has). "sse" streams over plain HTTP with
+    // no long-lived socket; the websocket context cache mostly benefits
+    // multi-turn sessions, not ask-once workers. Env read at call time.
+    streamOptions: {
+      transport: (process.env.COVERIFY_CODEX_TRANSPORT as Transport | undefined) ?? "auto",
+    },
     // Verbatim — the harness layer performs no prompt assembly of its own.
     systemPrompt: systemText(run),
     tools,
