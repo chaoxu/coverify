@@ -566,6 +566,18 @@ export type HarnessSessionOpts = {
  * AgentTools, with zero disk/env discovery (docs/redesign-proposal.md).
  * prompt_cache_key threads automatically from the session id.
  */
+/** Non-negative env integer (0 is meaningful: it disables); malformed → fallback. */
+const envCount = (raw: string | undefined, fallback: number): number => {
+  const n = Number(raw);
+  return raw !== undefined && Number.isFinite(n) && n >= 0 ? n : fallback;
+};
+
+/** Turn-level retry policy for harness sessions, read at call time. */
+function retryPolicy(): { enabled: boolean; maxRetries: number; baseDelayMs: number } {
+  const maxRetries = envCount(process.env.COVERIFY_RETRY_MAX, 3);
+  return { enabled: maxRetries > 0, maxRetries, baseDelayMs: envCount(process.env.COVERIFY_RETRY_BASE_MS, 2_000) };
+}
+
 export async function createHarnessRoleSession(
   run: Omit<RoleRun, "prompt"> & { prompt?: string },
   opts: HarnessSessionOpts,
@@ -602,6 +614,15 @@ export async function createHarnessRoleSession(
     streamOptions: {
       transport: (process.env.COVERIFY_CODEX_TRANSPORT as Transport | undefined) ?? "auto",
     },
+    // pi's own turn-level retry (retryAssistantCall): a transient
+    // provider/transport failure — pi's classifier covers today's exact
+    // signatures, "socket connection was closed" and "WebSocket closed",
+    // while quota/billing errors stay fail-fast — restarts the assistant
+    // turn with exponential backoff instead of surfacing an infrastructure
+    // failure. Off in pi by default; 2026-08-08 measured ~30% of long Sol
+    // worker turns dying to such drops on both transports, each previously
+    // costing a full re-dispatch. Env-tunable; COVERIFY_RETRY_MAX=0 disables.
+    retry: retryPolicy(),
     // Verbatim — the harness layer performs no prompt assembly of its own.
     systemPrompt: systemText(run),
     tools,
