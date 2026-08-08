@@ -68,3 +68,36 @@ success metrics.
   burned for grading (overfitting to the toy is the failure mode).
 - Layer 2 runs before any skill edit lands and after; layer 3 only when a
   change is worth its cost.
+
+## Token-controlled A/B (the arbiter, Chao's metric 2026-08-08)
+
+The goal is controlled token usage: obtain the result using as few tokens
+as possible. So the raw-skill comparison is budget-matched, not time- or
+wake-matched, and the primary metric is verified-true output per token.
+
+Protocol:
+
+1. **Same frozen statement**, byte-identical, in two arms: (a) coverify
+   campaign; (b) a plain Codex session running the canonical
+   `math-proof-search` skill from `~/kb`, no harness.
+2. **One shared budget B** of billable tokens: fresh input + output +
+   reasoning, summed over every model call the arm makes. Cache reads are
+   metered separately and reported, not charged (they are the mechanism,
+   not the spend). Coverify's meter is the journal's per-call usage
+   records; the raw arm's is codex's JSONL turn usage.
+3. **Stop each arm at B.** Coverify: watch the journal cumulative and
+   pause. Raw: end the session when its rollout usage crosses B.
+4. **Grade blind, outside the budget.** Every claim either arm labels
+   proved/promoted is run through a fresh verification cadence by a grader
+   who has not seen either transcript. Score: verified-true claims on the
+   statement's dependency path (+), claims that fail verification (−,
+   reported loudly — shipping a false theorem is worse than shipping
+   nothing), unresolved (0).
+5. **Report per arm**: budget consumed, cache reads, verified/failed/
+   unverified claim counts, and tokens per verified claim. Resolution of
+   the statement inside B trumps everything.
+
+The verification-cadence spend of the coverify arm counts INSIDE its
+budget (the discipline's cost is real and must be paid on the meter); the
+grader's post-hoc verification of the raw arm counts outside (it is the
+judge, not the method).
