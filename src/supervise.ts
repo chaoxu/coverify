@@ -56,7 +56,10 @@ function positiveEnvNumber(raw: string | undefined, fallback: number): number {
 
 /** Wall limit for one run_script batch / one librarian call. Never a
  *  proof-work timebox (the launcher forbids those) — supervision only. */
-export const RUN_TIMEOUT_MS = positiveEnvNumber(process.env.COVERIFY_RUN_TIMEOUT_MS, 600_000);
+// Read at call time, never frozen at module load: tests and wrappers set
+// these envs after import, and a value captured at import silently ignores
+// them (caught live when a new test file changed the suite's import order).
+export const runTimeoutMs = () => positiveEnvNumber(process.env.COVERIFY_RUN_TIMEOUT_MS, 600_000);
 
 export function toolText(text: string) {
   return { content: [{ type: "text" as const, text }], details: {} };
@@ -223,7 +226,7 @@ function assertInScope(scope: WriteScope, target: string): void {
   if (!inScope(scope, target)) throw new Error(`write outside assigned scope: ${target}`);
 }
 
-export const RUN_MEM_MB = positiveEnvNumber(process.env.COVERIFY_RUN_MEM_MB, 4096);
+export const runMemMb = () => positiveEnvNumber(process.env.COVERIFY_RUN_MEM_MB, 4096);
 
 /**
  * Does this command line name one of the batch's scripts as an argument?
@@ -320,7 +323,7 @@ export function runScriptTool(
       `Run 1-8 script files concurrently, supervised, under ONE shared cap. Working directory: ${cwd}. ` +
       "Each script must be a file inside your assigned directory: a .py runs under python3, " +
       "anything else must be executable. Write scripts with the write tool first. Limits for the " +
-      `whole batch: ${Math.round(RUN_TIMEOUT_MS / 60000)} minutes, ${RUN_MEM_MB} MB combined RSS; ` +
+      `whole batch: ${Math.round(runTimeoutMs() / 60000)} minutes, ${runMemMb()} MB combined RSS; ` +
       "writes are OS-sandboxed to your assigned directories; when the batch ends (or hits a limit) " +
       "the whole process tree is killed — nothing survives the call. Route genuinely long " +
       "computation through the scheduler front door instead.",
@@ -466,9 +469,9 @@ async function supervise(
   liveReapers.add(killGroups);
   const timer = setTimeout(() => {
     if (finished) return;
-    fate = `timed out after ${Math.round(RUN_TIMEOUT_MS / 60000)} minutes`;
+    fate = `timed out after ${Math.round(runTimeoutMs() / 60000)} minutes`;
     void killAll();
-  }, RUN_TIMEOUT_MS);
+  }, runTimeoutMs());
   const onAbort = () => {
     if (finished) return;
     fate = "cancelled";
@@ -484,8 +487,8 @@ async function supervise(
         // `finished` is re-read here: a sweep in flight when the batch ended
         // must not report a completed run as killed.
         if (fate || finished) return;
-        if (rssKb > RUN_MEM_MB * 1024) {
-          fate = `exceeded the ${RUN_MEM_MB} MB combined memory cap (rss ${Math.round(rssKb / 1024)} MB)`;
+        if (rssKb > runMemMb() * 1024) {
+          fate = `exceeded the ${runMemMb()} MB combined memory cap (rss ${Math.round(rssKb / 1024)} MB)`;
           void killAll();
         }
       },
@@ -540,10 +543,10 @@ const APPEND_ONLY_LEDGERS = new Set(["failed.md"]);
  * network itself. Space-split argv; the librarian prompt is appended as the
  * final argument.
  */
-const LITERATURE_CMD = (
-  process.env.COVERIFY_LITERATURE_CMD ??
-  "agy --dangerously-skip-permissions --print-timeout 10m -p"
-).split(/\s+/);
+const literatureCmd = () =>
+  (process.env.COVERIFY_LITERATURE_CMD ?? "agy --dangerously-skip-permissions --print-timeout 10m -p").split(
+    /\s+/,
+  );
 
 /**
  * State directories the librarian CLI may write (token refresh, cache).
@@ -553,10 +556,11 @@ const LITERATURE_CMD = (
  * them. Override for a different librarian binary with
  * COVERIFY_LITERATURE_STATE_DIRS (colon-separated absolute paths).
  */
-const LIBRARIAN_STATE_DIRS = (
-  process.env.COVERIFY_LITERATURE_STATE_DIRS?.split(":").filter(Boolean) ??
-  [".gemini", ".antigravity"].map((d) => path.join(os.homedir(), d))
-).filter((d) => path.isAbsolute(d) && d !== os.homedir());
+const librarianStateDirs = () =>
+  (
+    process.env.COVERIFY_LITERATURE_STATE_DIRS?.split(":").filter(Boolean) ??
+    [".gemini", ".antigravity"].map((d) => path.join(os.homedir(), d))
+  ).filter((d) => path.isAbsolute(d) && d !== os.homedir());
 
 const LIBRARIAN_CHARGE =
   "You are a mathematical literature librarian. Web-search the question below and compile a " +
@@ -584,7 +588,7 @@ function literatureSearchTool(cwd: string, scope: WriteScope): AgentTool {
       "compiled report with citations and URLs, archived verbatim under your evidence directory " +
       "as literature-<n>.md. The librarian's claims are secondhand: treat them as leads, cite the " +
       "archived report, and label dependencies per the contract. One question per call; " +
-      `${Math.round(RUN_TIMEOUT_MS / 60000)}-minute limit.`,
+      `${Math.round(runTimeoutMs() / 60000)}-minute limit.`,
     parameters: Type.Object({
       question: Type.String({ description: "The literature question, self-contained" }),
     }),
@@ -597,8 +601,8 @@ function literatureSearchTool(cwd: string, scope: WriteScope): AgentTool {
       // confinement, memory cap, tree kill, and reaper. Its own state
       // directories stay writable: a CLI that cannot refresh its OAuth token
       // fails as an opaque non-zero exit.
-      const spec = sandboxedArgv([...LITERATURE_CMD, LIBRARIAN_CHARGE + question], {
-        allow: [...scope.allow, ...LIBRARIAN_STATE_DIRS],
+      const spec = sandboxedArgv([...literatureCmd(), LIBRARIAN_CHARGE + question], {
+        allow: [...scope.allow, ...librarianStateDirs()],
         deny: scope.deny,
       });
       const { outs, fate } = await supervise([spec], {
@@ -617,7 +621,7 @@ function literatureSearchTool(cwd: string, scope: WriteScope): AgentTool {
       const artifact = path.join(cwd, `literature-${n}.md`);
       fs.writeFileSync(
         artifact,
-        `# Literature search ${n}\n\nLibrarian: \`${LITERATURE_CMD.join(" ")}\` (self-attested provenance)\n\n## Question\n\n${question}\n\n## Report\n\n${stdout}\n`,
+        `# Literature search ${n}\n\nLibrarian: \`${literatureCmd().join(" ")}\` (self-attested provenance)\n\n## Question\n\n${question}\n\n## Report\n\n${stdout}\n`,
       );
       let out = stdout;
       if (out.length > OUTPUT_LIMIT) out = out.slice(0, OUTPUT_LIMIT) + "\n[truncated; full report in artifact]";

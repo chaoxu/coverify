@@ -36,8 +36,8 @@ import { loadLauncherContract } from "./launcher.js";
 import {
   buildModels,
   CHARGES,
-  RUN_MEM_MB,
-  RUN_TIMEOUT_MS,
+  runMemMb,
+  runTimeoutMs,
   createCliRoleSession,
   createHarnessRoleSession,
   isCliProvider,
@@ -524,7 +524,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       `dispatched ${id} (${handles.size} live). The report will arrive at a later wake.` +
         (isTechnician
           ? `\nREGISTRY.md launch record: id ${id}; workload ${evidenceDir}; ` +
-            `limits ${Math.round(RUN_TIMEOUT_MS / 60000)} min / ${RUN_MEM_MB} MB per batch; ` +
+            `limits ${Math.round(runTimeoutMs() / 60000)} min / ${runMemMb()} MB per batch; ` +
             `outputs + logs under ${path.relative(dir, evidenceDir)}/; cancel with cancel_agent ${id}.`
           : "") +
         (decision.warning ? `\n${decision.warning}` : ""),

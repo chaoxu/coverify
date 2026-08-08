@@ -377,7 +377,6 @@ function runCliRole(
         /* best effort */
       }
     };
-    child.once("close", cleanup);
     child.once("error", cleanup);
     let out = "";
     let err = "";
@@ -385,6 +384,14 @@ function runCliRole(
     child.stderr.on("data", (d: Buffer) => (err += d));
     child.on("error", reject);
     child.on("close", (code: number | null) => {
+      // Read {out} BEFORE reaping the temp dir. Cleanup used to run as its
+      // own earlier 'close' handler, deleting the out file before this
+      // resolver's existsSync — every codex-cli verdict silently fell back
+      // to raw --json stdout and parsed UNPARSEABLE (regression from
+      // c60c03f, caught by the 2026-08-07 smoke campaign, the first live
+      // run after that commit).
+      const outText = fs.existsSync(outFile) ? fs.readFileSync(outFile, "utf-8") : undefined;
+      cleanup();
       if (backend.output === "oracle-json") {
         try {
           const payload = JSON.parse(out) as { ok?: boolean; text?: string; error?: string };
@@ -416,8 +423,8 @@ function runCliRole(
           return resolve({ text: out.trim() });
         }
       }
-      if (backend.output === "outfile" && fs.existsSync(outFile)) {
-        return resolve({ text: fs.readFileSync(outFile, "utf-8").trim(), usage: backend.usage?.(out) });
+      if (backend.output === "outfile" && outText !== undefined) {
+        return resolve({ text: outText.trim(), usage: backend.usage?.(out) });
       }
       resolve({ text: out.trim() });
     });
