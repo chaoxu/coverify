@@ -26,6 +26,7 @@ function usage(): never {
   console.error(`usage:
   coverify prove "<exact statement>" [--dir campaign] [--agent-limit N] [--max-wakes N]
   coverify resume [--dir campaign] [--agent-limit N] [--max-wakes N]
+                                    (--agent-limit defaults to 6 workers — user policy 2026-08-08; 0 = unlimited)
   coverify status [--dir campaign]
   coverify trace [--dir campaign] [--out file]
                                     render the journal as a self-contained HTML timeline
@@ -88,6 +89,18 @@ function optionalInt(name: string): number | undefined {
   return n;
 }
 
+/** Worker cap: default 6 per campaign — an explicit USER decision
+ *  (Chao, 2026-08-08), not a harness-invented ceiling; the launcher's
+ *  no-invented-limits rule is satisfied because the default's provenance is
+ *  a recorded user policy, like the model defaults. `--agent-limit 0`
+ *  explicitly requests unlimited; any other value overrides. */
+function agentLimit(): number | undefined {
+  const v = flags.get("agent-limit");
+  if (v === undefined) return 6;
+  if (v === "0") return undefined;
+  return optionalInt("agent-limit");
+}
+
 async function prove(resume: boolean): Promise<void> {
   // Auth preflight: a provider is usable via an env API key or a stored
   // OAuth subscription credential (coverify login <provider>).
@@ -136,7 +149,7 @@ async function prove(resume: boolean): Promise<void> {
   }
   const synthesis = await runCampaign({
     campaignDir: dir,
-    userAgentLimit: optionalInt("agent-limit"),
+    userAgentLimit: agentLimit(),
     maxWakes: optionalInt("max-wakes"),
   });
   console.log(synthesis);

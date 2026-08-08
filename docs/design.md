@@ -18,9 +18,12 @@ Three implementation rules follow:
 2. **Unmapped code is semantics-invisible mechanics** (scheduler, handle
    table, wake building, journal). Any such mechanism must be removable
    without changing campaign behavior.
-3. **No invented policy defaults.** No agent-count ceiling (launcher forbids
-   one); budget gates enforce only limits the user actually set; no
-   wall-clock timeouts on proof work, ever.
+3. **No invented policy defaults.** No harness-invented agent ceiling
+   (launcher forbids one); budget gates enforce only limits the user set —
+   including recorded standing user policy: `--agent-limit` defaults to 6
+   workers per campaign (Chao, 2026-08-08; `--agent-limit 0` = unlimited),
+   a user decision the CLI carries, same provenance rule as the model
+   defaults. No wall-clock timeouts on proof work, ever.
 
 ## Campaign state — the skill's own format
 
