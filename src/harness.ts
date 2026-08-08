@@ -1197,6 +1197,20 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     });
     lostNote = "";
 
+    // Frontier history: CURRENT_FRONTIER.md is rewritten by design, so the
+    // harness snapshots each distinct post-wake version under .coverify/.
+    // Removed 2026-08-02 as "nothing reads it" — reinstated 2026-08-08 with
+    // a reader on record: the vanished-intentions audit (did an open item
+    // silently drop out of a frontier rewrite?) needs exactly these
+    // snapshots, and its first run had a six-day blind spot without them.
+    const frontierNow = readLedger(dir, "CURRENT_FRONTIER.md");
+    const histDir = path.join(dir, ".coverify", "frontier-history");
+    fs.mkdirSync(histDir, { recursive: true });
+    const prevSnap = fs.readdirSync(histDir).sort().at(-1);
+    if (!prevSnap || fs.readFileSync(path.join(histDir, prevSnap), "utf-8") !== frontierNow) {
+      fs.writeFileSync(path.join(histDir, `wake-${String(wakeCount).padStart(4, "0")}.md`), frontierNow);
+    }
+
     if (declaration) {
       // Anything that settled during the rest of the turn (including agents
       // left running under supervision) is persisted before the process ends.
