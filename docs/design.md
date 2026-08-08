@@ -441,6 +441,20 @@ write one file under `.coverify/`, never campaign state, so they cannot
 change campaign semantics (rule 2). They also work on a live campaign;
 in-flight dispatches simply show as "no completion recorded".
 
+## Analytics: query in place
+
+The authoritative event corpus is small by construction (~1.4 MB across
+all campaigns ever, measured 2026-08-08), so analytics is a convention,
+not infrastructure: DuckDB directly over the out-of-tree JSONL
+(`read_json_auto(..., format='newline_delimited', union_by_name=true,
+filename=true)` — drift-tolerant, cross-campaign by filename, zero sync,
+no second trust domain). Canonical queries live in `docs/queries.md`.
+Derived stores were reviewed and rejected (synced SQLite: schema drift
+yields confidently wrong answers; OTel-shaped events: a one-way projection
+if ever wanted, never the authoritative shape). House rule from the same
+review: every new record ships with the derived query that makes it
+actionable — an unread log is not an audit trail (see issue #21).
+
 ## Skill feedback
 
 Candidate improvements to the skill discovered during this design are
