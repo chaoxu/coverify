@@ -1,0 +1,683 @@
+// Model providers and role invocation: pi-ai provider registry, per-role
+// model specs, runRole, the subscription CLI backends, harness role sessions,
+// and usage accounting. Semantics-invisible mechanics (design rule 2): how a
+// model gets called, never what it is told (charges live in roles.ts).
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import * as os from "node:os";
+import * as path from "node:path";
+import * as fs from "node:fs";
+import {
+  AgentHarness,
+  InMemorySessionRepo,
+  JsonlSessionRepo,
+  estimateContextTokens,
+  type AgentMessage,
+  type AgentTool,
+} from "@earendil-works/pi-agent-core";
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import { createModels } from "@earendil-works/pi-ai";
+import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
+import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
+import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
+import { googleProvider } from "@earendil-works/pi-ai/providers/google";
+import { fileCredentialStore } from "./credentials.js";
+import { CLAUDE_BRIDGE_ID, claudeBridgeProvider } from "./claude-bridge.js";
+import { installReaperHooks, liveReapers, workspaceTools, type WriteScope } from "./supervise.js";
+
+export type Models = ReturnType<typeof createModels>;
+
+export async function buildModels(): Promise<Models> {
+  // Persistent credential store: OAuth subscription logins (coverify login)
+  // survive across runs; API-key env vars keep working unchanged.
+  const models = createModels({ credentials: fileCredentialStore() });
+  models.setProvider(anthropicProvider());
+  models.setProvider(openaiProvider());
+  models.setProvider(openaiCodexProvider());
+  models.setProvider(googleProvider());
+  // Subscription tool-loop transport (Agent SDK); see src/claude-bridge.ts.
+  models.setProvider((await claudeBridgeProvider()) as Parameters<Models["setProvider"]>[0]);
+  return models;
+}
+
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+export type RoleName =
+  | "coordinator"
+  | "reasoner"
+  | "technician"
+  | "gateCritic"
+  | "hostileAuditor"
+  | "bundleCertifier"
+  | "reconstructor"
+  | "comparator";
+
+const PROVIDERS = [
+  "anthropic",
+  "openai",
+  "openai-codex",
+  "google",
+  CLAUDE_BRIDGE_ID,
+  "claude-cli",
+  "codex-cli",
+  "chatgpt-cli",
+] as const;
+
+export interface ModelSpec {
+  provider: (typeof PROVIDERS)[number];
+  modelId: string;
+  thinking: ThinkingLevel;
+}
+
+export const ROLE_NAMES: RoleName[] = [
+  "coordinator",
+  "reasoner",
+  "technician",
+  "gateCritic",
+  "hostileAuditor",
+  "bundleCertifier",
+  "reconstructor",
+  "comparator",
+];
+
+const ROLE_ENV: Record<RoleName, string> = {
+  coordinator: "COVERIFY_MODEL_COORDINATOR",
+  reasoner: "COVERIFY_MODEL_REASONER",
+  technician: "COVERIFY_MODEL_TECHNICIAN",
+  gateCritic: "COVERIFY_MODEL_CRITIC",
+  hostileAuditor: "COVERIFY_MODEL_AUDITOR",
+  bundleCertifier: "COVERIFY_MODEL_CERTIFIER",
+  reconstructor: "COVERIFY_MODEL_RECONSTRUCTOR",
+  comparator: "COVERIFY_MODEL_COMPARATOR",
+};
+
+/** Subscription-only defaults (user decisions, 2026-08-01): OpenAI for
+ *  almost everything — the coordinator's tool loop and the dispatched agents run
+ *  GPT-5.6 Sol as full pi agents through the openai-codex provider
+ *  (ChatGPT-subscription OAuth via `coverify login openai-codex`; @max is
+ *  the top of Sol's thinking-level map), and the single-shot verdict roles
+ *  run through the `codex` CLI. The one exception is the hostile auditor
+ *  (the independent audit): it stays on Opus via `claude -p`, so every
+ *  candidate still gets one cross-family check. Third-party OAuth against
+ *  Anthropic draws Extra Credits, hence the official Claude CLI. Every
+ *  role is overridable per-role via COVERIFY_MODEL_<ROLE>. */
+const ROLE_DEFAULTS: Record<RoleName, string> = {
+  coordinator: "openai-codex/gpt-5.6-sol@max",
+  reasoner: "openai-codex/gpt-5.6-sol@max",
+  technician: "openai-codex/gpt-5.6-sol@max",
+  gateCritic: "codex-cli/gpt-5.6-sol",
+  hostileAuditor: "claude-cli/opus",
+  bundleCertifier: "codex-cli/gpt-5.6-sol",
+  reconstructor: "codex-cli/gpt-5.6-sol",
+  comparator: "codex-cli/gpt-5.6-sol",
+};
+
+/** Spec format: `provider/model[@thinking]`; bare model id means anthropic. */
+function parseModelSpec(spec: string): ModelSpec {
+  const [modelPart, thinking = "high"] = spec.split("@");
+  const slash = modelPart.indexOf("/");
+  const provider = slash < 0 ? "anthropic" : modelPart.slice(0, slash);
+  const modelId = slash < 0 ? modelPart : modelPart.slice(slash + 1);
+  if (!(PROVIDERS as readonly string[]).includes(provider)) {
+    throw new Error(
+      `unknown provider "${provider}" in model spec "${spec}" (valid: ${PROVIDERS.join(", ")})`,
+    );
+  }
+  return { provider: provider as ModelSpec["provider"], modelId, thinking: thinking as ThinkingLevel };
+}
+
+/** Resolution: COVERIFY_MODEL_<ROLE> > role default (every role has one). */
+export function roleModelSpec(role: RoleName): ModelSpec {
+  return parseModelSpec(process.env[ROLE_ENV[role]] ?? ROLE_DEFAULTS[role]);
+}
+
+export function specLabel(spec: ModelSpec): string {
+  return `${spec.provider}/${spec.modelId}`;
+}
+
+function getModel(models: Models, spec: ModelSpec) {
+  const model = models.getModel(spec.provider, spec.modelId);
+  if (!model) {
+    throw new Error(
+      `unknown ${spec.provider} model id "${spec.modelId}"; check the COVERIFY_MODEL* spec ` +
+        `(auth: ${{ anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", google: "GEMINI_API_KEY", "openai-codex": "coverify login openai-codex", "claude-bridge": "claude binary (Claude Code login)", "claude-cli": "claude binary", "codex-cli": "codex binary", "chatgpt-cli": "chatgpt-cli binary (daemon must be running)" }[spec.provider]})`,
+    );
+  }
+  return model;
+}
+
+
+export interface RoleRun {
+  /** The full launcher contract text (verbatim), embedded in the system prompt. */
+  contract: string;
+  /** One-paragraph role charge appended after the contract. */
+  charge: string;
+  prompt: string;
+  /** Give the role the workspace tools (read/ls/grep, scoped write; run_script iff code;
+   *  librarian search iff literature). */
+  workspace?: { cwd: string; scope: WriteScope; code?: boolean; literature?: boolean };
+  extraTools?: AgentTool[];
+  spec: ModelSpec;
+  models: Models;
+}
+
+/**
+ * Run one fresh, ephemeral role instance (single-shot roles: idea-gate
+ * critic, hostile auditor, bundle certifier, reconstructor, comparator):
+ * an in-memory harness session on API providers, an official CLI otherwise —
+ * toolless either way. The coordinator and dispatched agents run as durable
+ * sessions via createHarnessRoleSession (harness.ts). What each
+ * instance sees is decided by the bundle its caller builds; the journal
+ * records supplied inputs and which restrictions are platform-enforced
+ * versus instructed.
+ */
+export async function runRole(
+  run: Omit<RoleRun, "workspace" | "extraTools">,
+  signal?: AbortSignal,
+): Promise<RoleResult> {
+  const started = Date.now();
+  // One invocation surface: every role call is a session asked once. A CLI
+  // backend is a degenerate session (answers once, stoppable, not
+  // steerable); an API provider gets an in-memory harness session with a
+  // stable per-call prompt-cache key (pi derives prompt_cache_key from the
+  // session id — ~80% prefix-cache hit measured, see f0ad016).
+  const cli = isCliProvider(run.spec.provider) ? createCliRoleSession(run, signal) : undefined;
+  const session = cli ?? (await createHarnessRoleSession(run, { sessionId: randomUUID(), ephemeral: true }));
+  const text = await session.ask(run.prompt);
+  return {
+    text,
+    usage: session.usage(),
+    // promptChars counts what actually went over the wire: the CLI path
+    // inlines the contract+charge into one prompt string.
+    promptChars: cli ? cli.promptChars() : run.prompt.length,
+    durationMs: Date.now() - started,
+  };
+}
+
+/**
+ * A spawned official CLI as a degenerate RoleSession: it answers exactly
+ * once, can be stopped (kill) but not steered, holds no transcript, and
+ * reports usage only when its machine-readable output carried it. The
+ * capability flags make the honesty-ledger claim ("a CLI role can be
+ * stopped but not steered") observable in the type instead of inferred
+ * from a missing field.
+ */
+export function createCliRoleSession(
+  run: Omit<RoleRun, "workspace" | "extraTools">,
+  signal?: AbortSignal,
+): RoleSession & { promptChars(): number } {
+  const provider = run.spec.provider as keyof typeof CLI_BACKENDS;
+  const stop = new AbortController();
+  const onOuterAbort = () => stop.abort();
+  if (signal?.aborted) stop.abort();
+  else signal?.addEventListener("abort", onOuterAbort, { once: true });
+  let usage: RoleUsage | undefined;
+  let sentChars = 0;
+  let asked = false;
+  return {
+    capabilities: { steerable: false, durable: false },
+    async ask(prompt: string): Promise<string> {
+      if (asked) throw new Error("a CLI oracle answers exactly once per dispatch");
+      asked = true;
+      const fullPrompt = `${systemText(run)}\n\n---\n\n${prompt}`;
+      sentChars = fullPrompt.length;
+      const r = await runCliRole(provider, run.spec.modelId, fullPrompt, stop.signal);
+      usage = r.usage;
+      return r.text;
+    },
+    approxTokens: () => 0,
+    usage: () => usage,
+    steer: () => Promise.resolve(false),
+    abort: () => stop.abort(),
+    promptChars: () => sentChars,
+  };
+}
+
+export function isCliProvider(p: string): p is keyof typeof CLI_BACKENDS {
+  return p in CLI_BACKENDS;
+}
+
+interface CliBackend {
+  env: string;
+  cmd: string;
+  /** Where the final text lives: stdout raw, stdout JSON, an {out} file, or the oracle's JSON. */
+  output: "stdout" | "claude-json" | "outfile" | "oracle-json";
+  /** Backend-specific stdout-side usage parser (telemetry only), orthogonal to `output`. */
+  usage?: (stdout: string) => RoleUsage | undefined;
+}
+
+/** Subscription-billed official CLIs as verdict-role backends. Command
+ *  templates are env-overridable so CLI flag drift never needs a harness
+ *  release; {model} and {out} are substituted. Both official CLIs are asked
+ *  for machine-readable output so per-call token usage reaches the journal
+ *  (claude: result JSON on stdout; codex: JSONL events with turn usage);
+ *  an env-overridden template without those flags degrades to text-only. */
+const CLI_BACKENDS: Record<"claude-cli" | "codex-cli" | "chatgpt-cli", CliBackend> = {
+  "claude-cli": {
+    env: "COVERIFY_CLAUDE_CMD",
+    cmd: "claude -p --model {model} --output-format json",
+    output: "claude-json",
+  },
+  "codex-cli": {
+    env: "COVERIFY_CODEX_CMD",
+    cmd: "codex exec --json --model {model} --sandbox read-only --skip-git-repo-check --output-last-message {out} -",
+    output: "outfile",
+    usage: codexJsonlUsage,
+  },
+  /** Chao's chatgpt.com daemon CLI (gitea chaoxu/chatgpt-cli): the only road
+   *  to ChatGPT-Pro-only models (gpt-5.6-pro) — the deep one-shot prover.
+   *  The daemon picks the actual model; the spec's modelId is a provenance
+   *  label. Emits {ok, text, error} JSON on stdout. */
+  "chatgpt-cli": { env: "COVERIFY_CHATGPT_CMD", cmd: "chatgpt-cli oracle --quiet --timeout 6000", output: "oracle-json" },
+};
+
+export function cliBackendCommand(provider: keyof typeof CLI_BACKENDS): string {
+  const backend = CLI_BACKENDS[provider];
+  return process.env[backend.env] ?? backend.cmd;
+}
+
+function systemText(run: Pick<RoleRun, "contract" | "charge">): string {
+  return `The campaign contract below governs this work. Follow it exactly.\n\n<contract>\n${run.contract}\n</contract>\n\n${run.charge}`;
+}
+
+/** claude -p --output-format json result payload (the fields we read). */
+interface ClaudeJsonResult {
+  is_error?: boolean;
+  result?: string;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  };
+}
+
+/** Sum token usage from codex --json JSONL events ({type:"turn.completed"}). */
+function codexJsonlUsage(stdout: string): RoleUsage | undefined {
+  let found = false;
+  let input = 0;
+  let output = 0;
+  let cacheRead = 0;
+  let cacheWrite = 0;
+  let reasoning = 0;
+  for (const line of stdout.split("\n")) {
+    if (!line.includes('"turn.completed"')) continue;
+    let event: {
+      type?: string;
+      usage?: {
+        input_tokens?: number;
+        cached_input_tokens?: number;
+        cache_write_input_tokens?: number;
+        output_tokens?: number;
+        reasoning_output_tokens?: number;
+      };
+    };
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (event.type !== "turn.completed" || !event.usage) continue;
+    found = true;
+    input += event.usage.input_tokens ?? 0;
+    output += event.usage.output_tokens ?? 0;
+    cacheRead += event.usage.cached_input_tokens ?? 0;
+    cacheWrite += event.usage.cache_write_input_tokens ?? 0;
+    reasoning += event.usage.reasoning_output_tokens ?? 0;
+  }
+  return found ? { input, output, cacheRead, cacheWrite, reasoning } : undefined;
+}
+
+/**
+ * Run one single-shot role through an official subscription CLI. cwd is a
+ * fresh empty temp dir; the CLI's own tools find nothing there
+ * (instructed-only isolation — recorded honestly by callers). No timeout:
+ * audit and reconstruction work is never clocked. Output comes from the
+ * {out} file when the template names one (codex), else stdout (claude).
+ * Per-call token usage is parsed from the CLI's machine-readable output
+ * when present (telemetry only — absence never fails the call).
+ */
+function runCliRole(
+  provider: keyof typeof CLI_BACKENDS,
+  modelId: string,
+  fullPrompt: string,
+  signal?: AbortSignal,
+): Promise<{ text: string; usage?: RoleUsage }> {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "coverify-cli-"));
+  const outFile = path.join(cwd, "last-message.txt");
+  const backend = CLI_BACKENDS[provider];
+  const parts = cliBackendCommand(provider)
+    .replaceAll("{model}", modelId)
+    .replaceAll("{out}", outFile)
+    .split(/\s+/);
+  return new Promise((resolve, reject) => {
+    const child = spawn(parts[0], parts.slice(1), { cwd, stdio: ["pipe", "pipe", "pipe"] });
+    // A spawned verdict role is work like any other: it must die when the
+    // harness dies, and stop when the campaign stops. Without this an
+    // in-flight `claude -p` audit outlives a pause, bills a full Opus run,
+    // and its verdict lands nowhere because no live process is waiting.
+    const kill = () => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    };
+    installReaperHooks();
+    liveReapers.add(kill);
+    const onAbort = () => kill();
+    if (signal?.aborted) kill();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+    const cleanup = () => {
+      liveReapers.delete(kill);
+      signal?.removeEventListener("abort", onAbort);
+      try {
+        fs.rmSync(cwd, { recursive: true, force: true });
+      } catch {
+        /* best effort */
+      }
+    };
+    child.once("close", cleanup);
+    child.once("error", cleanup);
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (d: Buffer) => (out += d));
+    child.stderr.on("data", (d: Buffer) => (err += d));
+    child.on("error", reject);
+    child.on("close", (code: number | null) => {
+      if (backend.output === "oracle-json") {
+        try {
+          const payload = JSON.parse(out) as { ok?: boolean; text?: string; error?: string };
+          if (code !== 0 || !payload.ok || !payload.text?.trim()) {
+            return reject(new Error(`${provider} failed: ${payload.error ?? `exit ${code}`}`));
+          }
+          return resolve({ text: payload.text.trim() });
+        } catch {
+          return reject(new Error(`${provider} returned non-JSON output (exit ${code}): ${err.slice(0, 300)}`));
+        }
+      }
+      if (code !== 0) return reject(new Error(`${provider} exited ${code}: ${err.slice(0, 500)}`));
+      if (backend.output === "claude-json") {
+        try {
+          const payload = JSON.parse(out) as ClaudeJsonResult;
+          if (payload.is_error) return reject(new Error(`${provider} reported an error result`));
+          const u = payload.usage;
+          return resolve({
+            text: (payload.result ?? "").trim(),
+            usage: u && {
+              input: u.input_tokens ?? 0,
+              output: u.output_tokens ?? 0,
+              cacheRead: u.cache_read_input_tokens ?? 0,
+              cacheWrite: u.cache_creation_input_tokens ?? 0,
+            },
+          });
+        } catch {
+          // Env-overridden template without --output-format json: plain text.
+          return resolve({ text: out.trim() });
+        }
+      }
+      if (backend.output === "outfile" && fs.existsSync(outFile)) {
+        return resolve({ text: fs.readFileSync(outFile, "utf-8").trim(), usage: backend.usage?.(out) });
+      }
+      resolve({ text: out.trim() });
+    });
+    child.stdin.write(fullPrompt);
+    child.stdin.end();
+  });
+}
+
+export interface RoleSession {
+  /** What this substrate can actually do, stated explicitly rather than
+   *  inferred from which fields exist: a spawned CLI answers once and can be
+   *  stopped but not steered (the honesty ledger's claim, kept observable);
+   *  a harness session is steerable, and durable when its transcript
+   *  persists. */
+  readonly capabilities: { steerable: boolean; durable: boolean };
+  ask(prompt: string): Promise<string>;
+  /** Context size in tokens from pi's estimator over the session's context messages. */
+  approxTokens(): number;
+  /** Cumulative provider-reported token usage across the session's calls;
+   *  undefined when the backend reported none (never fabricated zeros). */
+  usage(): RoleUsage | undefined;
+  /** In-place lossy compaction (harness-backed sessions only): summarize
+   *  older turns, keep a recent tail verbatim. The caller owns the policy
+   *  and the contract's post-compaction reread rule. */
+  compact?(customInstructions?: string): Promise<void>;
+  /** Inject a steering message while the session is running. Resolves true
+   *  iff the session accepted it (false: session idle, message dropped). */
+  steer(text: string): Promise<boolean>;
+  /** Abort the session's current run. */
+  abort(): void;
+}
+
+/** Wire-log hooks (COVERIFY_WIRE_LOG=/path): each request's SHAPE via pi's
+ *  native onPayload/onResponse — cache key, item counts, sizes, status, and
+ *  rate-limit headers; never content. Telemetry only, failures swallowed. */
+function wireLogPayload(wirePath: string) {
+  return (payload: unknown, m: unknown) => {
+    try {
+      const params = payload as Record<string, unknown>;
+      const input = params.input as unknown[] | undefined;
+      const instructions = params.instructions as string | undefined;
+      fs.appendFileSync(
+        wirePath,
+        JSON.stringify({
+          ts: Date.now(),
+          kind: "request",
+          model: (m as { id?: string })?.id ?? String(params.model ?? ""),
+          prompt_cache_key: params.prompt_cache_key,
+          store: params.store,
+          input_items: Array.isArray(input) ? input.length : undefined,
+          instructions_chars: typeof instructions === "string" ? instructions.length : undefined,
+          tools: Array.isArray(params.tools) ? (params.tools as unknown[]).length : undefined,
+          reasoning: params.reasoning,
+          keys: Object.keys(params),
+        }) + "\n",
+      );
+    } catch {
+      /* telemetry only */
+    }
+    return undefined;
+  };
+}
+
+
+/** Provider-reported token usage (pi-ai Usage, summed; official CLIs parsed
+ *  from their JSON output) — mechanics only; nothing reads this except the
+ *  journal. */
+export interface RoleUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  reasoning?: number;
+  /** Dollar cost summed from pi's per-message pricing (absent for CLI backends). */
+  costUSD?: number;
+}
+
+/** Field-wise RoleUsage sum (reduce-friendly). */
+export function addUsage(a: RoleUsage, b: RoleUsage): RoleUsage {
+  return {
+    input: a.input + b.input,
+    output: a.output + b.output,
+    cacheRead: a.cacheRead + b.cacheRead,
+    cacheWrite: a.cacheWrite + b.cacheWrite,
+    reasoning: (a.reasoning ?? 0) + (b.reasoning ?? 0),
+    costUSD: (a.costUSD ?? 0) + (b.costUSD ?? 0),
+  };
+}
+
+function sumMessagesUsage(messages: readonly unknown[]): RoleUsage {
+  const total: RoleUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  for (const m of messages) {
+    const u = (m as { role?: string; usage?: RoleUsage & { cost?: { total?: number } } }).usage;
+    if ((m as { role?: string }).role !== "assistant" || !u) continue;
+    total.input += u.input ?? 0;
+    total.output += u.output ?? 0;
+    total.cacheRead += u.cacheRead ?? 0;
+    total.cacheWrite += u.cacheWrite ?? 0;
+    if (u.reasoning !== undefined) total.reasoning = (total.reasoning ?? 0) + u.reasoning;
+    if (u.cost?.total !== undefined) total.costUSD = (total.costUSD ?? 0) + u.cost.total;
+  }
+  return total;
+}
+
+interface RoleResult {
+  text: string;
+  /** Undefined when the backend reported no usage (e.g. an env-overridden CLI template without JSON output). */
+  usage?: RoleUsage;
+  /** Request-shape telemetry for single-shot roles (their only "turn"). */
+  promptChars?: number;
+  durationMs?: number;
+}
+
+export type HarnessSessionOpts = {
+  /** Stable session identity: names the session and becomes the
+   *  provider's prompt_cache_key (keep ≤64 chars). */
+  sessionId: string;
+} & (
+  | {
+      /** Directory for durable session trees (e.g. <campaign>/.coverify/sessions). */
+      sessionsRoot: string;
+      cwd: string;
+      ephemeral?: false;
+    }
+  /** In-memory session (single-shot roles): same harness surface and cache
+   *  keying, nothing written under .coverify/sessions/. */
+  | { ephemeral: true }
+);
+
+/**
+ * Role session on pi's AgentHarness (redesign phase 1), implementing the full
+ * RoleSession surface (telemetry, compaction, steering). By default the
+ * transcript is an append-only JSONL session tree on disk —
+ * crash-survivable, forkable, and the raw material for telemetry; with
+ * `ephemeral: true` (runRole's single-shot path) the same harness runs over
+ * an in-memory repo and leaves nothing on disk. Chosen over pi-coding-agent's
+ * createAgentSession because the harness layer takes systemPrompt verbatim
+ * (prompt purity by construction), our Models instance directly, and plain
+ * AgentTools, with zero disk/env discovery (docs/redesign-proposal.md).
+ * prompt_cache_key threads automatically from the session id.
+ */
+export async function createHarnessRoleSession(
+  run: Omit<RoleRun, "prompt"> & { prompt?: string },
+  opts: HarnessSessionOpts,
+): Promise<RoleSession> {
+  if (isCliProvider(run.spec.provider)) {
+    throw new Error("CLI backends support single-shot verdict roles only, not sessions");
+  }
+  const tools: AgentTool[] = run.workspace
+    ? workspaceTools(run.workspace.cwd, run.workspace.scope, {
+        code: run.workspace.code,
+        literature: run.workspace.literature,
+      })
+    : [];
+  if (run.extraTools) tools.push(...run.extraTools);
+  const session = opts.ephemeral
+    ? await new InMemorySessionRepo().create({ id: opts.sessionId })
+    : await new JsonlSessionRepo({
+        fs: new NodeExecutionEnv({ cwd: opts.cwd }),
+        sessionsRoot: opts.sessionsRoot,
+      }).create({ cwd: opts.cwd, id: opts.sessionId });
+  const harness = new AgentHarness({
+    session,
+    models: run.models,
+    model: getModel(run.models, run.spec),
+    thinkingLevel: run.spec.thinking,
+    // Verbatim — the harness layer performs no prompt assembly of its own.
+    systemPrompt: systemText(run),
+    tools,
+    activeToolNames: tools.map((t) => t.name),
+    resources: {},
+  });
+  // Wire logging via the harness's own hooks (the Agent-ctor onPayload path
+  // does not exist at this layer — review 2026-08-02 caught the silent loss).
+  const wirePath = process.env.COVERIFY_WIRE_LOG;
+  if (wirePath) {
+    const logPayload = wireLogPayload(wirePath);
+    harness.on("before_provider_payload", (e) => {
+      logPayload((e as { payload?: unknown }).payload, (e as { model?: unknown }).model);
+      return undefined;
+    });
+    // Response-side records (status, rate-limit headers) are NOT available:
+    // pi 0.83.0 types after_provider_response but never emits it on this
+    // provider path (verified empirically 2026-08-02 — neither .on() nor
+    // subscribe() ever sees it, and the Agent-path onResponse never fired
+    // either). Revisit on pi upgrade; until then the wire log is
+    // request-side only.
+  }
+  // Sync RoleSession surface over async session storage: the message cache
+  // refreshes after every completed run (telemetry reads between runs).
+  // Two views on purpose: `allMessages` (every message ever, across all
+  // branches — usage totals never un-count compacted spend) vs
+  // `contextMessages` (session.buildContext() — what the model actually
+  // sees next call).
+  let allMessages: AgentMessage[] = [];
+  let contextMessages: AgentMessage[] = [];
+  let compactionUsage: RoleUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  const refresh = async () => {
+    // getEntries (not getBranch): usage/turn totals must keep counting
+    // everything ever spent — including entries a compaction superseded.
+    const entries = await session.getEntries();
+    allMessages = entries.flatMap((e) => (e.type === "message" ? [e.message] : []));
+    // The summarization call's own spend lives on the compaction entry, not
+    // on any assistant message — without this, every compaction's large
+    // request would vanish from the usage journal (review 2026-08-02).
+    compactionUsage = sumMessagesUsage(
+      entries.flatMap((e) =>
+        e.type === "compaction" && (e as { usage?: unknown }).usage
+          ? [{ role: "assistant", usage: (e as { usage?: unknown }).usage }]
+          : [],
+      ),
+    );
+    contextMessages = (await session.buildContext()).messages;
+  };
+  return {
+    capabilities: { steerable: true, durable: !opts.ephemeral },
+    async ask(prompt: string): Promise<string> {
+      let final;
+      try {
+        final = await harness.prompt(prompt);
+      } finally {
+        // Telemetry must reflect spend even when the run rejects — a failed
+        // 500k-token run recorded as zero usage is worse than the failure.
+        await refresh().catch(() => {});
+      }
+      // The harness resolves failures as a synthetic message; surface the
+      // real cause instead of an empty string (which would read as the
+      // empty-report infra failure and trigger a pointless salvage nudge).
+      if (final.stopReason === "error") {
+        throw new Error(final.errorMessage ?? "provider error (no message)");
+      }
+      if (final.stopReason === "aborted") return "";
+      if (typeof final.content === "string") return final.content;
+      return (final.content ?? [])
+        .filter((b): b is { type: "text"; text: string } => (b as { type?: string }).type === "text")
+        .map((b) => b.text)
+        .join("\n");
+    },
+    approxTokens(): number {
+      return estimateContextTokens(contextMessages).tokens;
+    },
+    usage(): RoleUsage {
+      return addUsage(sumMessagesUsage(allMessages), compactionUsage);
+    },
+    async compact(customInstructions?: string): Promise<void> {
+      await harness.compact(customInstructions);
+      await refresh();
+    },
+    steer(text: string): Promise<boolean> {
+      // AgentHarness.steer REJECTS when idle (worker just finished): a
+      // dropped steer is routine, an unhandled rejection kills the process —
+      // resolve to a delivered/dropped boolean so callers can act on it.
+      return harness.steer(text).then(
+        () => true,
+        () => false,
+      );
+    },
+    abort(): void {
+      harness.abort().catch(() => {});
+    },
+  };
+}
+

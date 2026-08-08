@@ -37,7 +37,7 @@ PROVED.md             append-only promotions with dependencies + audit provenanc
 PROCESS_LESSONS.md    process lessons only — the name itself carries the rule
 EVIDENCE/             revision-suffixed artifacts; identity = filename (harness-written
                       artifacts are append-only; role scratch edits are instructed)
-.coverify/journal.jsonl   harness audit metadata (write-only mirror; gates never read it)
+.coverify/journal.jsonl   derived mirror of the authoritative event log (observability only)
 ```
 
 Gate-authoritative state lives OUTSIDE the campaign directory
@@ -49,7 +49,13 @@ path, or a different mount, because a campaign with intact ledgers and no
 gate history would otherwise re-arm the statement freeze on whatever
 `STATEMENT.md` now says and lose every recorded FAIL. A campaign that has run
 before but whose gate history is missing is refused rather than adopted
-(`COVERIFY_ADOPT=1` accepts a new baseline deliberately); the in-tree journal is an audit mirror. Audit,
+(`COVERIFY_ADOPT=1` accepts a new baseline deliberately). One event log: every
+record — gate records and campaign events (wakes, usage, notes, replayed user
+guidance) — appends to the out-of-tree store, and the in-tree journal is a
+derived mirror written by the same append path, read only for observability
+(`status`, `trace`); nothing behavioral is ever read from the role-adjacent
+journal (previously standing user guidance was, a forgeable channel on
+degraded-confinement platforms). Audit,
 reconstruction, and comparison records are content-hash-bound (sha256 of the
 candidate and of `STATEMENT.md` at verification time) — a file edited after
 its PASS is no longer verifier-backed, and a statement edit without
@@ -166,9 +172,12 @@ scheduler front door, per the launcher.
 cli.ts           prove / resume / status / amend / trace
 campaign.ts      state layer: init, revisions, append-only evidence, resume bundle
 launcher.ts      load + extract the fenced launcher contract (no fallback)
-roles.ts         prompt assembly (launcher verbatim + role charge); pi Agent runner
+roles.ts         role charges (the only coverify-authored role text); re-exports the two below
+supervise.ts     OS supervision: reaper, write-scope sandboxing, run_script, librarian
+providers.ts     model providers, per-role specs, runRole, CLI backends, harness sessions
 claude-bridge.ts pi-claude-bridge as a pi-ai provider (subscription tool loop)
-gates.ts         dispatch gate, idea-gate ledger, two-stage verification, promotion
+gates.ts         dispatch gate, idea-gate ledger, verification state, promotion
+cadence.ts       the two-stage verification cadence (the clause-dense core)
 harness.ts       handle table, event loop, wakes; the only persistent process
 trace.ts         journal -> self-contained HTML timeline (read-only observability)
 trace-page.ts    that page's markup, styles, and view code
@@ -248,6 +257,78 @@ pi with `src/pi-extension.ts` loaded.
   coordinator — no polling. Gate critics run synchronously inside the
   coordinator's tool call (single-shot verdicts, short).
 
+## State diagrams (derived, never stored)
+
+The system is full of state machines, but no state is ever stored — there is
+no status field anywhere. Every "state" below is recomputed at the moment of
+decision from two things: the append-only gate records and the current bytes
+on disk. That is deliberate, three times over. A stored status would be one
+write away from forging `verifier-backed`, while the records are hash-bound
+and live out of tree. A stored status would go stale silently — here, editing
+a promoted candidate's file *is* its demotion, because the derived state
+stops matching without anyone having to notice and update a field. And
+several "states" are properties of the whole history, not of the current
+node: a substantive FAIL sticks to content across renames, and stranded-ness
+is "dispatch without completion", both queries over the log. The diagrams
+are documentation of those queries; the code they describe is
+`verificationState`, `checkPromotion`, `priorReusableRecord`,
+`promotionsNeedingRetraction`, and the handle table.
+
+A revision's life, keyed on (candidate content hash, statement hash) — a
+repair is deliberately **not** a transition: new bytes are a new machine, and
+the old machine's FAIL stays on record against the old content forever:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Unverified
+    Unverified --> InCadence: request_verification (refused while a sticky FAIL stands unrebutted)
+    InCadence --> Failed: audit or comparison FAIL (sticky against these bytes)
+    InCadence --> Unverified: bundle-cert FAIL (blocks that bundle only) or UNPARSEABLE (re-run legitimate)
+    InCadence --> VerifierBacked: audit PASS then comparison PASS, hash-bound
+    Failed --> InCadence: recorded rebuttal artifact
+    VerifierBacked --> Promoted: record_promotion (hashes still match on disk)
+    VerifierBacked --> Unverified: candidate or STATEMENT.md bytes change (derived, automatic)
+    Promoted --> DemotionFlagged: later substantive FAIL on same content, or a premise retracted
+    DemotionFlagged --> [*]: coordinator relabels + FAILED.md entry (judgment, not harness)
+```
+
+Inside one verification handle, the cadence is linear with early exits; the
+carry-forward edges are the information-flow policy from the review record:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Audit
+    Audit --> BundleCert: PASS — or carried from a stranded cadence, byte-identical inputs
+    Audit --> [*]: FAIL (sticky) or UNPARSEABLE
+    BundleCert --> Reconstruction: PASS — or carried, same conditions
+    BundleCert --> [*]: FAIL (faults the bundle, not the candidate)
+    Reconstruction --> Comparison: fresh — or reused from any prior run with identical statement, bundle, premises (never sees a candidate)
+    Comparison --> [*]: PASS ⇒ verifier-backed, FAIL ⇒ sticky
+```
+
+Every dispatch (worker, gate, verification) is one handle:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Live: dispatch record, then registerHandle starts the work
+    Live --> Settled: final report, infrastructure failure, or cancel_agent
+    Settled --> Delivered: completion record at settle time; delivery record after the wake that showed it
+    Live --> Stranded: process death (dispatch record, no completion record)
+    Stranded --> [*]: restart notes it; a stranded verification's stage PASSes are carry-forward eligible
+```
+
+The campaign itself:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Active: coverify prove
+    Active --> Active: wake loop
+    Active --> Paused: declare(pause), 3 no-op wakes, or repeated failing turns
+    Paused --> Active: coverify resume
+    Active --> Complete: declare(complete) — refused with zero promotions
+    Complete --> [*]
+```
+
 ## Conformance table
 
 | Mechanical enforcement (code) | Launcher clause |
@@ -265,7 +346,7 @@ pi with `src/pi-extension.ts` loaded.
 | Wave gate: a second **concurrent** worker on a mechanism requires `IDEA PASS` on file; sequential retries get an advisory reminder, not a refusal (that judgment is the coordinator's); single first-wave scouts exempt | "Do not allow recursive subagent fan-out or a large route wave before the parent mechanism receives `IDEA PASS`…" |
 | Verification = stage 1 (fresh hostile audit) then stage 2: bundle certification (fresh agent sees candidate + bundle; leaky bundle refused, same-bundle retry hash-blocked) → blind reconstruction (no verdict) → fresh comparison carrying stage 2's verdict with the contract's match semantics; all outputs saved as citable EVIDENCE artifacts, hash-bound; a reusable reconstruction is bound to the candidate hash as well as its own artifact hash, so a repaired candidate always gets a fresh one | "Verification cadence" 1–2 (2026-07-31 revision): bundle certification, "a fresh comparison agent…", explicit PASS/mismatch semantics |
 | Anti-verdict-shopping: a substantive audit/comparison FAIL blocks re-verification of that content — matched by candidate hash, so copying the bytes to a new filename inherits the FAIL — unless a recorded rebuttal artifact is supplied; every attempt stays on record | "A substantive FAIL from any stage stands… Do not rerun a failed stage on an unchanged revision in search of a PASS" |
-| Any content change ⇒ every stage reruns, reconstruction included: the contract says a load-bearing repair must "rerun a fresh hostile audit and then a fresh reconstruction. Never reuse a verifier response that influenced the repair", and the comparator's FAIL is quoted into the wake that prompts the repair. Reuse is limited to a re-run on the byte-identical candidate (a protocol or infrastructure failure). Carrying stages forward for a certified non-load-bearing diff is legal but needs a fresh delta auditor's PASS, which is not built (roadmap) | Revision-impact rules |
+| Any content change ⇒ every stage reruns, reconstruction included: the contract says a load-bearing repair must "rerun a fresh hostile audit and then a fresh reconstruction. Never reuse a verifier response that influenced the repair", and the comparator's FAIL is quoted into the wake that prompts the repair. Reuse is limited to a re-run on the byte-identical candidate (a protocol or infrastructure failure): an audit or bundle-cert PASS carries forward (`priorReusableRecord`, requireStranded) only when every input hash (candidate, statement, promoted premises, declared dependencies / bundle) matches, its saved artifact is byte-unchanged, **and** its own cadence is stranded — a verification dispatch with no completion record, the journal's definition of an infrastructure failure (campaign 2026-08-01 v033/v035). A PASS from a completed cadence is never reused, so a rebuttal challenge or duplicate re-request reruns every stage fresh; the comparison, being the final verdict, is never reused at all. Carrying stages forward for a certified non-load-bearing diff is legal but needs a fresh delta auditor's PASS, which is not built (roadmap) | Revision-impact rules |
 | `record_promotion` is the sole writer of `PROVED.md` (direct writes OS-denied); legal only when both stage records exist for the exact revision with matching content hashes; entry carries dependency identities, audit-artifact citations, and the verified candidate's content hash. The promoted statement text itself is coordinator-authored and not machine-checked against the candidate — see the honesty ledger | "Promotion records the revision and dependency identities plus every audit…" |
 | Campaign ends only by explicit `declare_campaign_state`; "complete" refused with zero promotions on record; an idle wake gets a nudge, and 3 consecutive no-op wakes trigger an operational *pause* (never a completion) as spend protection | "Do not mark it complete until the final result passes the full cadence…"; "Failed attempts… are not permission to return"; "Pause is operational state" (pause stops further wakes; live agents are not force-aborted — use cancel_agent) |
 | Harvest before judgment: worker reports are saved to EVIDENCE/ and completion-recorded before any model sees them; checkpoint ordering itself is contract-instructed, not enforced (struck as over-constraint — see review record) | "Checkpoint and learning loop" |
@@ -470,6 +551,37 @@ retraction-closure enumeration (issue #16). Launcher-shaped candidates
 (stalled-route dichotomy; stall-triggered different-family strategy
 consult) are filed in `docs/skill-feedback.md`.
 
+**Architecture review (2026-08-07, three independent strong agents: state
+model, verification machinery, execution surface).** A "verified computation
+cache" frame for the cadence — every stage record a memoized pure function
+of its disclosed inputs, reuse derivable from the input list — was
+**rejected as unsound on the contract's central example**: reuse soundness
+here is information-flow control, not memoization. A record is reusable iff
+its output provably could not have influenced the request now presenting
+these inputs — the reconstructor is structurally blind to candidates, so its
+reuse crosses completed cadences with `candidateHash` as an
+influence-tracking key (not a disclosed input); verdict stages see the
+candidate, so their reuse is confined to stranded cadences; the comparison
+is the verdict, so it is never reused. Pure input-memoization would reuse a
+reconstruction across a repair — exactly the bug removed in 6997036. A
+declarative stage table driving a generic runner was rejected on the same
+grounds (every interesting cell is an exception, and the table format
+teaches "reuse key = inputs", the wrong invariant); folding
+anti-verdict-shopping into per-stage policy data was rejected (two `if`
+blocks with different scopes, escapes, and launcher quotes are the clearer
+form). The handle-kind discriminator was confirmed load-bearing (worker
+budget and wave gate count workers only). Adopted and landed the same day
+(roadmap): one out-of-tree event log with the journal as a strictly derived
+mirror (standing-guidance replay previously read the in-tree journal — the
+wrong trust domain on degraded platforms), mirror-based `COVERIFY_ADOPT`
+recovery, the carry-forward unification behind
+`priorReusableRecord`/`carriedRecord` with the explicit `requireStranded`
+policy flag, the mechanics/semantics file splits (supervise.ts,
+providers.ts, cadence.ts), the PROVED.md checked view
+(`promotionsMissingFromProved`), and CLI backends as capability-flagged
+degenerate RoleSessions (one dispatch path; answer once, stoppable, not
+steerable).
+
 ## Planned capability: CLI coding agents (design reserved, not built)
 
 Workers will be able to run coding experiments through the subscription
@@ -527,6 +639,16 @@ the cheaper thing to fix first.
       repair cannot invalidate it); audit, bundle-cert, and comparison always
       rerun since they see the candidate. Cuts clerical-repair re-cadence
       cost by the reconstruction (the dominant step)
+- [x] Restart-lost stage reuse: an audit or bundle-cert PASS carries forward
+      to a re-run on byte-identical inputs — only when every input hash
+      matches, the artifact is byte-unchanged, and the PASS's own cadence is
+      stranded (verification dispatch with no completion record), the
+      journal's definition of the contract's "protocol or infrastructure
+      failure". A completed cadence's PASS is never reused (rebuttal retries
+      and duplicate requests rerun every stage fresh). Motivated by campaign
+      2026-08-01 v033/v035, where a cadence died between stages and the fresh
+      request re-paid a completed audit PASS and bundle-cert PASS. Comparison
+      is never reused
 - [x] No unsupervised detached compute (launcher: "Never run unsupervised
       detached compute."): roles have no shell at all — file work goes
       through read/ls/grep/scoped-write, execution only through
@@ -537,6 +659,10 @@ the cheaper thing to fix first.
       certified non-load-bearing repair, replacing the bundle-keyed shortcut
       removed in 6997036. Trigger: the next campaign showing the
       clerical-repair tax again, measured from its trace
+- [x] One event log (2026-08-07 architecture review): campaign events join
+      gate records in the out-of-tree store; the journal is a verbatim
+      derived mirror; standing user guidance replays from the trusted log
+      (one-time import adopts pre-unification guidance, provenance-marked)
 - [ ] Compute handles via the fleet scheduler front door (Nomad)
 - [ ] `run_coding_agent` worker tool (claude/codex CLI, design above)
 - [ ] Independent different-family audit path (fable-review for the Anthropic
@@ -565,4 +691,6 @@ the cheaper thing to fix first.
       first-run validation on a Linux fleet host)
 - [ ] Trigger + contract-adherence evals per `docs/evals.md` (toy campaign
       + fresh-context contract judge); blind A/B reserved for real changes
-- [ ] First live campaign; then revisit `docs/skill-feedback.md`
+- [x] First live campaign (2026-07-31 equivalence, resolved affirmatively;
+      two complexity campaigns followed); `docs/skill-feedback.md` is an
+      active ledger fed from each campaign's evidence

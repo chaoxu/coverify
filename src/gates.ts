@@ -23,7 +23,14 @@ export interface GateRecord {
     | "comparison"
     | "rebuttal"
     | "promotion"
-    | "delivery";
+    | "delivery"
+    // Campaign events (wakes, usage, notes, replayed user guidance). One
+    // event log: these live in the same out-of-tree store as gate records —
+    // anything read back for behavior (standing guidance, delivery) must
+    // come from the trust domain no role's workspace tools can write.
+    | "wake"
+    | "usage"
+    | "note";
   [key: string]: unknown;
 }
 
@@ -77,16 +84,42 @@ export class GateStore {
     // statement freeze on whatever STATEMENT.md now says and erase every
     // recorded FAIL, so this stops instead. A first run has no journal yet,
     // and neither does a fresh campaign, so both proceed normally.
-    if (
-      !fs.existsSync(this.file) &&
-      fs.existsSync(path.join(this.campaignDir, ".coverify", "journal.jsonl")) &&
-      !process.env.COVERIFY_ADOPT
-    ) {
-      throw new Error(
-        `campaign at ${this.campaignDir} has ledgers but no gate history at ${dir}. Its verification ` +
-          "records, statement freeze and FAIL history are not where its id points. Restore the state " +
-          "directory, or re-run with COVERIFY_ADOPT=1 to accept the current STATEMENT.md as a new " +
-          "baseline (earlier verification evidence will not carry over).",
+    const journalPath = path.join(this.campaignDir, ".coverify", "journal.jsonl");
+    let recoveredFromMirror = 0;
+    if (!fs.existsSync(this.file) && fs.existsSync(journalPath)) {
+      if (!process.env.COVERIFY_ADOPT) {
+        throw new Error(
+          `campaign at ${this.campaignDir} has ledgers but no gate history at ${dir}. Its verification ` +
+            "records, statement freeze and FAIL history are not where its id points. Restore the state " +
+            "directory, or re-run with COVERIFY_ADOPT=1 to rebuild gate history from the campaign's " +
+            "journal mirror (recorded with an explicit lower-trust provenance mark; if the journal " +
+            "holds no gate entries this falls back to accepting the current STATEMENT.md as a new " +
+            "baseline).",
+        );
+      }
+      // Mirror-based recovery: the journal is a derived mirror of the lost
+      // authoritative log — gate records wrapped as {kind:"note", gate},
+      // campaign events verbatim. Rebuilding from it turns "lose every
+      // recorded FAIL or refuse to run" into "recover, with the taint on the
+      // ledger forever": the mirror is in-tree and role-adjacent, so the
+      // rebuilt history is honest testimony, not the trust anchor it replaced.
+      const lines: string[] = [];
+      for (const raw of fs.readFileSync(journalPath, "utf-8").split("\n")) {
+        if (!raw.trim()) continue;
+        try {
+          const e = JSON.parse(raw) as Record<string, unknown>;
+          const gate = e.gate as Record<string, unknown> | undefined;
+          if (gate && typeof gate.kind === "string") lines.push(JSON.stringify(gate));
+          else if (e.kind === "wake" || e.kind === "usage" || e.kind === "note") lines.push(JSON.stringify(e));
+        } catch {
+          /* torn mirror line: recover the rest */
+        }
+      }
+      if (lines.length > 0) fs.writeFileSync(this.file, lines.join("\n") + "\n");
+      recoveredFromMirror = lines.length;
+      console.error(
+        `[coverify] COVERIFY_ADOPT: rebuilt ${lines.length} gate-history record(s) at ${this.file} ` +
+          "from the campaign journal mirror (lower-trust provenance; marked on the record).",
       );
     }
     // A torn line (crash or full disk mid-append) must not make the campaign
@@ -111,14 +144,42 @@ export class GateStore {
         );
       }
     }
+    // Permanent provenance mark: a rebuilt history is testimony from the
+    // in-tree mirror, not the original trust anchor. On the ledger forever.
+    if (recoveredFromMirror > 0) {
+      this.event({
+        kind: "note",
+        note: "gate history reconstructed from the in-tree journal mirror (COVERIFY_ADOPT)",
+        reconstructedFromMirror: recoveredFromMirror,
+      });
+    }
   }
 
   append(record: { kind: GateRecord["kind"] } & Record<string, unknown>): GateRecord {
     const full: GateRecord = { ts: new Date().toISOString(), ...record };
     this.records.push(full);
     fs.appendFileSync(this.file, JSON.stringify(full) + "\n");
-    // Audit mirror in the campaign journal (write-only; never read by gates).
+    // Derived mirror in the campaign journal: observability only, never read
+    // back for behavior. Gate records mirror wrapped (the journal's
+    // historical shape); campaign events mirror verbatim via event().
     appendJournal(this.campaignDir, { kind: "note", gate: full });
+    return full;
+  }
+
+  /**
+   * A campaign event (wake, usage, note): same authoritative out-of-tree log
+   * as gate records, mirrored VERBATIM into the in-tree journal so trace and
+   * status keep their input shape. This is the only sanctioned way to record
+   * an event the harness may later read back (standing user guidance,
+   * delivery bookkeeping): the in-tree journal is role-adjacent — on a
+   * degraded-confinement platform a script could append to it — so nothing
+   * behavioral may ever be read from there.
+   */
+  event(record: { kind: "wake" | "usage" | "note" } & Record<string, unknown>): GateRecord {
+    const full = { ts: new Date().toISOString(), ...record };
+    this.records.push(full);
+    fs.appendFileSync(this.file, JSON.stringify(full) + "\n");
+    appendJournal(this.campaignDir, full);
     return full;
   }
 
@@ -318,6 +379,23 @@ export function retractionClosure(
   });
 }
 
+/**
+ * Promotion events whose recorded PROVED.md entry no longer appears in the
+ * file. The same pattern as danglingCitations: mechanical noticing, judgment
+ * stays with the coordinator. An entry legitimately rewritten by a recorded
+ * retraction relabel will show up here once and be recognized as such; an
+ * entry that silently vanished is the ledger corruption this exists to catch.
+ * Only promotions recorded with their entry text (2026-08-07+) are checkable.
+ */
+export function promotionsMissingFromProved(store: GateStore, dir: string): { revision: string }[] {
+  const provedPath = path.join(dir, "PROVED.md");
+  const proved = fs.existsSync(provedPath) ? fs.readFileSync(provedPath, "utf-8") : "";
+  return store
+    .all()
+    .filter((e) => e.kind === "promotion" && typeof e.entry === "string" && !proved.includes(e.entry))
+    .map((e) => ({ revision: String(e.revision) }));
+}
+
 export interface GateDecision {
   allowed: boolean;
   reason?: string;
@@ -486,6 +564,54 @@ function verificationState(store: GateStore, dir: string, revision: string) {
   const stage1 = latest("audit");
   const stage2 = latest("comparison");
   return { stage1Passed: stage1, stage2Passed: stage2, verifierBacked: stage1 && stage2 };
+}
+
+/**
+ * The one carry-forward lookup for every reusable verifier response.
+ *
+ * Reuse soundness in this cadence is information-flow control, not
+ * memoization: a record is reusable iff its output provably could not have
+ * influenced the request now presenting these inputs. Two enforced
+ * conditions always hold — content-keyed on every hash the caller passes (a
+ * repaired candidate changes `candidateHash` and never matches), and
+ * content-bound to the saved artifact (an artifact edited since it was
+ * recorded is no longer the response that was verified). The one policy
+ * difference between the mechanisms lives in `requireStranded`:
+ *
+ * - `true` (audit, bundle-cert): the stage saw the candidate, so its PASS is
+ *   reusable only while its own cadence is stranded — a verification
+ *   dispatch with no completion record, the journal's definition of the
+ *   contract's "protocol or infrastructure failure" (observed: campaign
+ *   2026-08-01 v033/v035). A PASS from a finished cadence is never reused;
+ *   a rebuttal challenge or duplicate re-request owes fresh scrutiny.
+ * - `false` (reconstruction): the reconstructor never sees any candidate,
+ *   so its output cannot have been influenced by a repair — reuse crosses
+ *   completed cadences by design (it is the dominant cost of a clerical
+ *   re-cadence), with `candidateHash` in the keys as an influence-tracking
+ *   bound, not a disclosed input.
+ */
+export function priorReusableRecord(
+  store: GateStore,
+  dir: string,
+  kind: "audit" | "bundle-cert" | "reconstruction",
+  inputHashes: Record<string, string>,
+  policy: { requireStranded: boolean },
+): GateRecord | undefined {
+  const stranded = policy.requireStranded
+    ? new Set(store.dispatchesWithoutCompletion().map((d) => d.id as string))
+    : undefined;
+  return [...store.all()]
+    .reverse()
+    .find(
+      (e) =>
+        e.kind === kind &&
+        (stranded === undefined ||
+          (e.verdict === "PASS" && typeof e.dispatchId === "string" && stranded.has(e.dispatchId))) &&
+        Object.entries(inputHashes).every(([k, v]) => e[k] === v) &&
+        typeof e.artifact === "string" &&
+        fs.existsSync(path.join(dir, e.artifact)) &&
+        e.artifactHash === sha256File(path.join(dir, e.artifact)),
+    );
 }
 
 export function checkPromotion(store: GateStore, dir: string, revision: string): GateDecision {

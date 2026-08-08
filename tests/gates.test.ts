@@ -5,8 +5,15 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const { GateStore, checkDispatch, checkPromotion, statementHash, promotionsNeedingRetraction, retractionClosure } =
-  await import("../src/gates.ts");
+const {
+  GateStore,
+  checkDispatch,
+  checkPromotion,
+  statementHash,
+  priorReusableRecord,
+  promotionsNeedingRetraction,
+  retractionClosure,
+} = await import("../src/gates.ts");
 const { sha256File, sha256Text, danglingCitations } = await import("../src/campaign.ts");
 
 function campaign(label: string) {
@@ -116,18 +123,120 @@ describe("revision-impact rules the launcher states", () => {
     };
     store.append({ kind: "reconstruction", revision: "d.r1.md", candidateHash: sha256File(r1), ...common });
     const reusableFor = (file: string) =>
-      store.all().some(
-        (e) =>
-          e.kind === "reconstruction" &&
-          e.candidateHash === sha256File(file) &&
-          e.statementHash === common.statementHash &&
-          e.bundleHash === common.bundleHash &&
-          e.provedHash === common.provedHash,
-      );
+      priorReusableRecord(
+        store,
+        dir,
+        "reconstruction",
+        {
+          candidateHash: sha256File(file),
+          statementHash: common.statementHash,
+          bundleHash: common.bundleHash,
+          provedHash: common.provedHash,
+        },
+        { requireStranded: false },
+      ) !== undefined;
     expect(reusableFor(r1)).toBe(true); // identical candidate: a legitimate re-run
     const r2 = path.join(dir, "EVIDENCE", "d.r2.md");
     fs.writeFileSync(r2, "# proof v2, hypothesis added\n");
     expect(reusableFor(r2)).toBe(false); // repaired candidate: must regenerate
+  });
+
+  // Shared fixture for the priorReusableRecord tests: a candidate, a saved stage
+  // artifact, the stage record fields binding them, and a stranded dispatch.
+  const stageFixture = (label: string, artifactText: string) => {
+    const { dir, store } = campaign(label);
+    const cand = path.join(dir, "EVIDENCE", "d.r1.md");
+    fs.writeFileSync(cand, "# proof v1\n");
+    const art = path.join(dir, "EVIDENCE", "audits", "d.r1.stage.r1.md");
+    fs.mkdirSync(path.dirname(art), { recursive: true });
+    fs.writeFileSync(art, artifactText);
+    store.append({ kind: "dispatch", id: "v001", role: "verification", mechanism: "verification:d.r1.md", task: "d" });
+    const inputs = { candidateHash: sha256File(cand), statementHash: statementHash(dir) };
+    const record = {
+      revision: "d.r1.md",
+      ...inputs,
+      dispatchId: "v001",
+      artifact: path.relative(dir, art),
+      artifactHash: sha256File(art),
+    };
+    return { dir, store, art, inputs, record };
+  };
+
+  test("a stranded audit PASS is reusable only for a byte-identical re-run", () => {
+    // Restart-lost cadence (campaign 2026-08-01, v033): audit PASS recorded,
+    // process died before stage 2, fresh request re-paid every stage. The
+    // contract's byte-identical re-run clause lets priorReusableRecord carry the
+    // PASS forward — keyed on every stage input, content-bound to the
+    // artifact, and only while the PASS's cadence is stranded (dispatched,
+    // never completed).
+    const { dir, store, record } = stageFixture("stagereuse", "VERDICT: PASS\n");
+    const inputs = { ...record, provedHash: sha256Text("proved"), dependenciesHash: sha256Text("deps") };
+    store.append({ kind: "audit", verdict: "PASS", ...inputs });
+    const lookup = { candidateHash: inputs.candidateHash, statementHash: inputs.statementHash,
+      provedHash: inputs.provedHash, dependenciesHash: inputs.dependenciesHash };
+    expect(priorReusableRecord(store, dir, "audit", lookup, { requireStranded: true })?.revision).toBe("d.r1.md");
+    // Any changed input misses: a repaired candidate, new promotions, edited deps.
+    const changed = (patch: Record<string, string>) =>
+      priorReusableRecord(store, dir, "audit", { ...lookup, ...patch }, { requireStranded: true });
+    expect(changed({ candidateHash: sha256Text("v2") })).toBeUndefined();
+    expect(changed({ provedHash: sha256Text("more") })).toBeUndefined();
+    // Once the cadence completes, it is no longer an infrastructure failure:
+    // a re-request after a finished run (rebuttal challenge, duplicate ask)
+    // owes fresh scrutiny at every stage.
+    store.append({ kind: "completion", id: "v001" });
+    expect(priorReusableRecord(store, dir, "audit", lookup, { requireStranded: true })).toBeUndefined();
+  });
+
+  test("an edited artifact or missing dispatch id blocks stage carry-forward", () => {
+    const { dir, store, art, inputs, record } = stageFixture("stagereuse-artifact", "VERDICT: PASS\n");
+    // A record without a cadence id (pre-dispatchId history) is never reused.
+    store.append({ kind: "audit", verdict: "PASS", ...record, dispatchId: undefined });
+    expect(priorReusableRecord(store, dir, "audit", inputs, { requireStranded: true })).toBeUndefined();
+    store.append({ kind: "audit", verdict: "PASS", ...record });
+    expect(priorReusableRecord(store, dir, "audit", inputs, { requireStranded: true })?.dispatchId).toBe("v001");
+    // An edited artifact is no longer the verified response.
+    fs.writeFileSync(art, "VERDICT: PASS (edited later)\n");
+    expect(priorReusableRecord(store, dir, "audit", inputs, { requireStranded: true })).toBeUndefined();
+  });
+
+  test("a FAIL or verdict-less stage record is never carried forward", () => {
+    const { dir, store, record } = stageFixture("stagereuse-fail", "VERDICT: FAIL\n");
+    const inputs = { ...record, bundleHash: sha256Text("bundle") };
+    store.append({ kind: "bundle-cert", verdict: "FAIL", ...inputs });
+    store.append({ kind: "bundle-cert", verdict: "UNPARSEABLE", ...inputs });
+    const lookup = { candidateHash: inputs.candidateHash, statementHash: inputs.statementHash,
+      bundleHash: inputs.bundleHash };
+    expect(priorReusableRecord(store, dir, "bundle-cert", lookup, { requireStranded: true })).toBeUndefined();
+  });
+});
+
+describe("mirror-based gate-history recovery", () => {
+  test("COVERIFY_ADOPT rebuilds gate history from the journal mirror, taint-marked", () => {
+    const { dir, store } = campaign("adopt-recover");
+    store.append({ kind: "comparison", revision: "d.r1.md", verdict: "FAIL", candidateHash: "x" });
+    store.event({ kind: "note", note: "user message: prioritize the algebraic route" });
+    fs.rmSync(process.env.COVERIFY_STATE_DIR!, { recursive: true, force: true });
+    process.env.COVERIFY_ADOPT = "1";
+    try {
+      const rebuilt = new GateStore(dir);
+      // The recorded FAIL survives the loss of the authoritative log...
+      expect(rebuilt.all().some((e) => e.kind === "comparison" && e.verdict === "FAIL")).toBe(true);
+      // ...as does replayable user guidance (an event, mirrored verbatim)...
+      expect(
+        rebuilt.all().some((e) => e.kind === "note" && String(e.note).startsWith("user message: ")),
+      ).toBe(true);
+      // ...and the lower-trust provenance is on the ledger forever.
+      expect(rebuilt.all().some((e) => typeof e.reconstructedFromMirror === "number")).toBe(true);
+    } finally {
+      delete process.env.COVERIFY_ADOPT;
+    }
+  });
+
+  test("without COVERIFY_ADOPT, lost gate history still refuses to run", () => {
+    const { dir, store } = campaign("adopt-refuse");
+    store.append({ kind: "statement", hash: "h", why: "w" });
+    fs.rmSync(process.env.COVERIFY_STATE_DIR!, { recursive: true, force: true });
+    expect(() => new GateStore(dir)).toThrow(/no gate history/);
   });
 });
 

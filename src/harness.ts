@@ -5,7 +5,6 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import {
   acquireCampaignLock,
-  appendJournal,
   consumeUserMessages,
   danglingCitations,
   newEvidencePath,
@@ -24,22 +23,22 @@ import {
   checkDispatch,
   resolvePremises,
   retractionClosure,
+  promotionsMissingFromProved,
   sameRevision,
   GateStore,
-  parseFirstLineVerdict,
   recordGateVerdict,
-  assertCandidateWithheld,
   statementHash,
   type ReasonerPacket,
   type TechnicianPacket,
 } from "./gates.js";
+import { requestVerificationTool } from "./cadence.js";
 import { loadLauncherContract } from "./launcher.js";
 import {
-  addUsage,
   buildModels,
   CHARGES,
   RUN_MEM_MB,
   RUN_TIMEOUT_MS,
+  createCliRoleSession,
   createHarnessRoleSession,
   isCliProvider,
   roleModelSpec,
@@ -68,8 +67,10 @@ interface Handle {
   kind: "worker" | "gate" | "verification";
   mechanism: string;
   promise: Promise<string>;
-  /** Present when the work can be redirected mid-flight (a pi session).
-   *  A spawned CLI has no such surface — it can be stopped, not steered. */
+  /** The work's session, when it runs as one (workers; the coordinator is
+   *  held separately; a verification cadence has none). What the session can
+   *  do — steered mid-flight, or only stopped — is its explicit
+   *  `capabilities` flag, not the presence of this field. */
   session?: RoleSession;
   /** Stop this work, whatever substrate runs it: abort a session, kill a
    *  spawned child, or make a composite cadence notice it was cancelled.
@@ -135,9 +136,24 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   const models = await buildModels();
   const store = new GateStore(dir);
 
+  // One-time import: standing user guidance recorded before the event-log
+  // unification (2026-08-07) lives only in the in-tree journal. Adopt it into
+  // the authoritative log once, marked as imported — the journal is the
+  // lower-trust surface, and the marker keeps that provenance on the record
+  // forever. The closing marker also makes the import idempotent.
+  if (!store.all().some((e) => e.kind === "note" && e.journalGuidanceImport === true)) {
+    for (const e of readJournal(dir) as unknown as Record<string, unknown>[]) {
+      const note = typeof e.note === "string" ? e.note : "";
+      if (note.startsWith("user message: ") || note.startsWith("user message steered mid-turn: ")) {
+        store.event({ kind: "note", note, journalGuidanceImport: true, originalTs: e.ts });
+      }
+    }
+    store.event({ kind: "note", note: "journal guidance import complete", journalGuidanceImport: true });
+  }
+
   // Version stamp at every run start: attributes this run to an exact
   // (harness, contract) pair. Harness audit metadata — launcher-permitted.
-  appendJournal(dir, {
+  store.event({
     kind: "note",
     note: "run-start",
     // Structural marker: trace epoch-caps open dispatches on this, so it must
@@ -205,9 +221,16 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
 
   const sessionsRoot = path.join(dir, ".coverify", "sessions");
 
-  /** Registers a settled-queue handle: the one async pattern every dispatch shares. */
-  const registerHandle = (h: Omit<Handle, "settled">) => {
-    const handle = h as Handle;
+  /** Registers a settled-queue handle: the one async pattern every dispatch
+   *  shares. The work arrives as a promise or a thunk; a thunk is started
+   *  only after the handle is in `handles`, so work with a synchronous
+   *  prefix (a fully carried-forward verification cadence) can never observe
+   *  its own id as missing and spuriously self-cancel. Already-running
+   *  promises register as before. */
+  const registerHandle = (
+    h: Omit<Handle, "settled" | "promise"> & { promise: Promise<string> | (() => Promise<string>) },
+  ) => {
+    const handle = h as unknown as Handle;
     // Durability happens here, at the moment work settles — not later, when
     // some exit path remembers to harvest. Three separate bugs (pause, the
     // wake-limit exit, the declaration return) each lost an hour of an agent's
@@ -236,15 +259,16 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
         // is journaled as a late artifact rather than a second completion —
         // the work is kept, the accounting is not double-counted, and it never
         // resurfaces to the coordinator as a new report.
-        appendJournal(dir, { kind: "note", note: `late report after cancellation`, id: handle.id, report: rel });
+        store.event({ kind: "note", note: `late report after cancellation`, id: handle.id, report: rel });
       }
     };
+    handles.set(handle.id, handle);
+    handle.promise = typeof h.promise === "function" ? h.promise() : h.promise;
     handle.settled = handle.promise.then(
       (report) =>
         persist(report, report.trim() === "" ? "empty report (no final text returned)" : undefined),
       (err: unknown) => persist("", String(err)),
     );
-    handles.set(handle.id, handle);
     activityThisWake++;
   };
 
@@ -296,7 +320,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
    */
   const standingGuidance = (): string[] => {
     const out: string[] = [];
-    for (const e of readJournal(dir) as unknown as Record<string, unknown>[]) {
+    for (const e of store.all()) {
       const note = typeof e.note === "string" ? e.note : "";
       if (note.startsWith("user message: ")) out.push(note.slice("user message: ".length));
       else if (note.startsWith("user message steered mid-turn: ")) {
@@ -411,88 +435,90 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
         ? `\n\n# Preregistered computation\n\n${(packet as TechnicianPacket).computation}`
         : "") +
       (literature ? `\n\n# Literature question (granted)\n\n${literature}` : "");
+    // One dispatch path: every worker is a RoleSession asked for its packet.
+    // A CLI backend yields a degenerate session (one deep attempt, no tools,
+    // the reply IS the deliverable — created synchronously); an API provider
+    // gets a durable pi AgentHarness session with a JSONL transcript under
+    // .coverify/sessions/ (crash-survivable, prompt_cache_key = the handle
+    // id), created asynchronously — the handle's promise chains behind it so
+    // dispatch stays synchronous for the coordinator.
     let session: RoleSession | undefined;
-    let promise: Promise<string>;
-    let oracleUsage: RoleUsage | undefined;
-    const cliStop = new AbortController();
-    if (isCliProvider(spec.provider)) {
-      // Single-shot oracle reasoner (e.g. chatgpt-cli → gpt-5.6-pro): one
-      // deep attempt, no tools; the reply IS the deliverable.
-      promise = runRole({
-        contract,
-        charge:
-          CHARGES.reasoner +
-          "\nYou have no tools in this run: produce the deliverable directly and completely in your reply.",
-        prompt: packetPrompt,
-        spec,
-        models,
-      }, cliStop.signal).then((r) => {
-        oracleUsage = r.usage;
-        return r.text;
-      });
-    } else {
-      // Redesign phase 1: workers run on pi's AgentHarness with durable
-      // JSONL session trees under .coverify/sessions/ — crash-survivable
-      // transcripts, prompt_cache_key = the handle id. The session is
-      // created asynchronously; the handle's promise chains behind it so
-      // dispatch stays synchronous for the coordinator.
-      const sessionPromise = createHarnessRoleSession(
-        {
-          contract,
-          charge: isTechnician ? CHARGES.technician : CHARGES.reasoner,
-          workspace: {
-            cwd: evidenceDir,
-            scope: { allow: [evidenceDir], deny: [] },
-            code: isTechnician,
-            literature: literature !== undefined,
+    const sessionPromise: Promise<RoleSession> = isCliProvider(spec.provider)
+      ? Promise.resolve(
+          createCliRoleSession({
+            contract,
+            charge:
+              CHARGES.reasoner +
+              "\nYou have no tools in this run: produce the deliverable directly and completely in your reply.",
+            prompt: packetPrompt,
+            spec,
+            models,
+          }),
+        )
+      : createHarnessRoleSession(
+          {
+            contract,
+            charge: isTechnician ? CHARGES.technician : CHARGES.reasoner,
+            workspace: {
+              cwd: evidenceDir,
+              scope: { allow: [evidenceDir], deny: [] },
+              code: isTechnician,
+              literature: literature !== undefined,
+            },
+            spec,
+            models,
           },
-          spec,
-          models,
-        },
-        // cwd is the campaign dir for every session: JsonlSessionRepo groups
-        // by cwd-encoded subdirectory, and one-directory-per-worker keyed on
-        // absolute evidence paths was pure junk layout (review 2026-08-02).
-        { sessionId: id, sessionsRoot, cwd: dir },
-      ).then((s) => {
-        session = s;
-        // The handle was registered before the async session resolved; patch
-        // it in place so steer/cancel/turns-dump see the live session.
-        const h = handles.get(id);
-        if (h) h.session = s;
-        return s;
-      });
-      promise = sessionPromise.then((live) => {
-        // Cancelled while the session was being created: don't launch the
-        // turn at all — nothing could stop it and the report would be dropped.
-        if (!handles.has(id)) return "";
-        return live.ask(`Assigned evidence directory: ${evidenceDir}\n\n${packetPrompt}`).then(
+          // cwd is the campaign dir for every session: JsonlSessionRepo groups
+          // by cwd-encoded subdirectory, and one-directory-per-worker keyed on
+          // absolute evidence paths was pure junk layout (review 2026-08-02).
+          { sessionId: id, sessionsRoot, cwd: dir },
+        );
+    void sessionPromise.then((s) => {
+      session = s;
+      // The handle may register before the async session resolves; patch it
+      // in place so steer/cancel/turns-dump see the live session.
+      const h = handles.get(id);
+      if (h) h.session = s;
+    });
+    const promise = sessionPromise.then((live) => {
+      // Cancelled while the session was being created: don't launch the
+      // turn at all — nothing could stop it and the report would be dropped.
+      if (!handles.has(id)) return "";
+      // A tooled session gets its evidence directory; a toolless oracle has
+      // nowhere to write, so the line would be a false affordance.
+      const opening = live.capabilities.steerable
+        ? `Assigned evidence directory: ${evidenceDir}\n\n${packetPrompt}`
+        : packetPrompt;
+      return live.ask(opening).then(
         // Salvage nudge: deep-reasoning runs sometimes end without emitting a
         // final message (observed live 2026-08-02: four @max scouts, ~2.6M
         // tokens, empty final text). The session context is intact at this
         // point, so ask once for the report before the settle-side classifier
-        // writes the run off as an infrastructure failure.
-          (text) =>
-            // No salvage for a cancelled handle (abort resolves empty by
-            // design) — a nudge there is a full-context turn nobody reads.
-            text.trim() !== "" || !handles.has(id)
-              ? text
-              : live.ask(
-                  "Your previous turn ended with no final message. Emit your complete " +
-                    "conclusion-first report now, per your charge.",
-                ),
-        );
-      });
-    }
+        // writes the run off as an infrastructure failure. Only a multi-turn
+        // session can be nudged — a CLI oracle answers exactly once.
+        (text) =>
+          // No salvage for a cancelled handle (abort resolves empty by
+          // design) — a nudge there is a full-context turn nobody reads.
+          text.trim() !== "" || !handles.has(id) || !live.capabilities.steerable
+            ? text
+            : live.ask(
+                "Your previous turn ended with no final message. Emit your complete " +
+                  "conclusion-first report now, per your charge.",
+              ),
+      );
+    });
     registerHandle({
       id,
       kind: "worker",
       // One verb for both substrates: a pi session aborts, a spawned CLI is
-      // killed. Callers stop work without knowing which it is.
-      stop: () => (session ? session.abort() : cliStop.abort()),
+      // killed — session.abort() means whichever its substrate does. Before
+      // the async session resolves, cancellation is the handles.has(id)
+      // check above: the turn never launches.
+      stop: () => session?.abort(),
       mechanism: packet.mechanism,
       promise,
       session,
-      usage: () => session?.usage() ?? oracleUsage,
+      usage: () => session?.usage(),
     });
     return toolText(
       `dispatched ${id} (${handles.size} live). The report will arrive at a later wake.` +
@@ -628,412 +654,18 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     },
   } as AgentTool;
 
-  const requestVerification: AgentTool = {
-    name: "request_verification",
-    label: "Verification cadence",
-    description:
-      "Run the two-stage verification cadence on one exact candidate revision (an EVIDENCE-relative " +
-      "filename). Stage 1: fresh hostile audit of the candidate. Stage 2: fresh bundle certification " +
-      "(a leaky keyIdeas/allowedSources bundle is refused and hash-blocked), then no-context " +
-      "reconstruction from statement + key ideas + allowed sources + promoted premises (never the " +
-      "proof), then a fresh comparison mapping the reconstruction to the candidate's conclusions and " +
-      "dependencies. Runs async like a worker: returns a handle immediately, verdict at a later " +
-      "wake. A re-run on the identical candidate (after a protocol or infrastructure failure) reuses " +
-      "the blind reconstruction; any change to the candidate regenerates it, because the contract " +
-      "forbids reusing a verifier response that influenced the repair. Code records all verdicts bound to content " +
-      "hashes; promotion (record_promotion) is only legal after both stages PASS on the exact revision.",
-    parameters: Type.Object({
-      revision: Type.String({ description: "EVIDENCE-relative candidate filename (revision identity)" }),
-      declaredDependencies: Type.String({ description: "Declared dependencies of the candidate" }),
-      keyIdeas: Type.String({
-        description: "High-level key ideas for the reconstructor (not the proof or its paraphrase)",
-      }),
-      allowedSources: Type.String({
-        description: "Allowed sources for the reconstructor (named theorems, background references)",
-      }),
-      rebuttalArtifact: Type.Optional(
-        Type.String({
-          description:
-            "EVIDENCE-relative rebuttal artifact refuting a prior substantive FAIL on this exact " +
-            "revision. Required to re-attempt after a FAIL (contract: a FAIL stands; do not rerun " +
-            "a failed stage on an unchanged revision in search of a PASS).",
-        }),
-      ),
-    }),
-    executionMode: "sequential",
-    execute: async (_id: string, params: unknown) => {
-      if (declaration) {
-        return toolText(
-          `VERIFICATION REFUSED: the campaign is already declared ${declaration.state}; cease dispatch ` +
-            "and checkpoint. Re-request verification after resuming.",
-        );
-      }
-      const p = params as {
-        revision: string;
-        declaredDependencies: string;
-        keyIdeas: string;
-        allowedSources: string;
-        rebuttalArtifact?: string;
-      };
-      const rel = evidenceRelative(p.revision);
-      if (!rel) return toolText(`revision must be a path inside EVIDENCE/ (got: ${p.revision})`);
-      const candidatePath = path.join(dir, "EVIDENCE", rel);
-      if (!fs.existsSync(candidatePath)) return toolText(`no such evidence revision: ${rel}`);
-      // One read, one hash: a candidate can live in a live worker's evidence
-      // directory and be rewritten between two reads, which would record a
-      // hash of bytes no verifier ever saw.
-      const candidateBytes = fs.readFileSync(candidatePath);
-      const candidate = candidateBytes.toString("utf-8");
-      const candidateHash = sha256Text(candidate);
-      const stmtHash = statementHash(dir);
-
-      // Anti-verdict-shopping (contract): a substantive FAIL stands against
-      // the exact revision contents; re-attempt only with a recorded rebuttal.
-      // A bundle-cert FAIL is different: it faults the bundle, not the
-      // candidate — retry is legal with a changed bundle (hash-checked below).
-      const bundle = `# High-level key ideas\n\n${p.keyIdeas}\n\n# Allowed sources\n\n${p.allowedSources}`;
-      const sameBundleCertFail = store
-        .all()
-        .some(
-          (e) =>
-            e.kind === "bundle-cert" &&
-            sameRevision(e.revision, rel) &&
-            e.candidateHash === candidateHash &&
-            e.bundleHash === sha256Text(bundle) &&
-            e.verdict === "FAIL",
-        );
-      if (sameBundleCertFail) {
-        return toolText(
-          "VERIFICATION REFUSED: this exact bundle already failed certification as leaking the " +
-            "candidate argument. Revise keyIdeas/allowedSources before retrying.",
-        );
-      }
-      // Matched on content, not on filename. "A substantive FAIL from any
-      // stage stands against the revision that received it" — and identical
-      // bytes under a different name are that revision, so copying a FAILed
-      // candidate to a new path must not clear the requirement for a repair,
-      // a retraction, or a recorded rebuttal.
-      const priorFail = store
-        .all()
-        .some(
-          (e) =>
-            (e.kind === "audit" || e.kind === "comparison") &&
-            e.candidateHash === candidateHash &&
-            e.statementHash === stmtHash &&
-            e.verdict === "FAIL",
-        );
-      if (priorFail) {
-        const rebuttalRel = p.rebuttalArtifact ? evidenceRelative(p.rebuttalArtifact) : undefined;
-        if (!rebuttalRel || !fs.existsSync(path.join(dir, "EVIDENCE", rebuttalRel))) {
-          return toolText(
-            "VERIFICATION REFUSED: a substantive FAIL is on record for this exact revision. Per the " +
-              "contract, respond with a load-bearing repair (new revision), retraction, or a recorded " +
-              "rebuttal artifact refuting the exact reported gap (pass rebuttalArtifact).",
-          );
-        }
-        store.append({ kind: "rebuttal", revision: rel, artifact: rebuttalRel });
-      }
-      const statement = readLedger(dir, "STATEMENT.md");
-      const proved = promotedStatementsView(dir);
-      const slug = rel.replace(/[\/]/g, "_");
-      const bundleHash = sha256Text(bundle);
-      const provedHash = sha256Text(proved);
-      const usages: RoleUsage[] = [];
-      const recordUsage = (u?: RoleUsage) => {
-        if (u) usages.push(u);
-      };
-
-      // The cadence runs as an async handle, like a worker: during a long
-      // blind reconstruction the coordinator keeps gating, dispatching, and
-      // writing ledgers; the verdict arrives at a later wake.
-      // Set once the handle exists; a cancelled cadence must stop recording
-      // verdicts — otherwise cancel_agent would hide a verification that keeps
-      // running and can still authorize promotion off an unseen PASS.
-      const cadenceStop = new AbortController();
-      let cancelled: () => boolean = () => cadenceStop.signal.aborted;
-      const abortIfCancelled = () => {
-        if (cancelled()) throw new Error(`verification cancelled; no verdict recorded for ${rel}`);
-      };
-      /**
-       * One verdict stage of the cadence: a fresh role call, a first-line
-       * PASS/FAIL parse, the output saved as a citable artifact, and a gate
-       * record bound to the candidate + statement hashes. Audit, bundle
-       * certification, and comparison differ only in inputs and disclosure —
-       * the stage sequence itself stays spelled out in `cadence` below.
-       */
-      // One list drives both the prompt and the journal's suppliedInputs
-      // (2026-08-02 uniformity review): what the model was sent and what the
-      // record testifies can no longer drift. `blindness` stays hand-authored
-      // per call — it carries enforcement-modality and content-provenance
-      // claims a section list cannot derive.
-      const sectionsOf = (sections: { heading: string; name: string; text: string }[]) => ({
-        prompt: sections.map((s) => `# ${s.heading}\n\n${s.text}`).join("\n\n"),
-        suppliedInputs: sections.map((s) => s.name),
-      });
-      // Derivable half of the launcher's "workspace/tool visibility" honesty
-      // obligation: single-shot verdict roles get no workspace from us, but an
-      // official-CLI backend carries the CLI's own tools (instructed-only).
-      const toolVisibilityOf = (provider: string) =>
-        isCliProvider(provider)
-          ? "no workspace granted; official-CLI backend may expose its own tools (instructed only)"
-          : "none (single-shot, no tools granted)";
-
-      const verdictStage = async (stage: {
-        kind: "audit" | "bundle-cert" | "comparison";
-        role: "hostileAuditor" | "bundleCertifier" | "comparator";
-        ctx: { prompt: string; suppliedInputs: string[] };
-        blindness: string;
-        extra?: Record<string, unknown>;
-      }): Promise<{ text: string; pass: boolean; unparseable: boolean; artifact: string }> => {
-        const spec = roleModelSpec(stage.role);
-        const { text, usage, promptChars, durationMs } = await runRole({
-          contract,
-          charge: CHARGES[stage.role],
-          prompt: stage.ctx.prompt,
-          spec,
-          models,
-        });
-        recordUsage(usage);
-        abortIfCancelled();
-        const evidence = newEvidencePath(dir, `audits/${slug}.${stage.kind}`);
-        fs.writeFileSync(evidence, text);
-        const artifact = path.relative(dir, evidence);
-        const verdictLine = parseFirstLineVerdict(text, ["VERDICT: PASS", "VERDICT: FAIL"]);
-        const pass = verdictLine === "VERDICT: PASS";
-        // A reply with no verdict line is a protocol failure: never PASS
-        // (launcher), but recorded as UNPARSEABLE rather than FAIL so it
-        // neither arms anti-verdict-shopping against the revision nor
-        // hash-blocks a legitimate bundle forever — re-running the stage is
-        // the contract's legitimate response to an infrastructure failure.
-        const verdict = pass ? "PASS" : verdictLine === undefined ? "UNPARSEABLE" : "FAIL";
-        store.append({
-          kind: stage.kind,
-          revision: rel,
-          verdict,
-          candidateHash,
-          statementHash: stmtHash,
-          ...stage.extra,
-          artifact,
-          suppliedInputs: stage.ctx.suppliedInputs,
-          blindness: stage.blindness,
-          toolVisibility: toolVisibilityOf(spec.provider),
-          modelFamily: specLabel(spec),
-          usage,
-          promptChars,
-          durationMs,
-        });
-        return { text, pass, unparseable: verdictLine === undefined, artifact };
-      };
-
-      const cadence = async (): Promise<string> => {
-        // Stage 1 — hostile audit (bundle includes PROVED.md so promoted claims are checkable).
-        const audit = await verdictStage({
-          kind: "audit",
-          role: "hostileAuditor",
-          ctx: sectionsOf([
-            { heading: "Statement", name: "statement", text: statement },
-            { heading: "Currently promoted (PROVED.md)", name: "PROVED.md (statements view)", text: proved },
-            {
-              heading: "Declared dependencies (coordinator-authored)",
-              name: "declared dependencies",
-              text: p.declaredDependencies,
-            },
-            { heading: `Candidate revision ${rel}`, name: "candidate revision", text: candidate },
-          ]),
-          blindness:
-            "fresh instance (enforced); bundle built by harness (enforced); declaredDependencies coordinator-authored (instructed only)",
-        });
-        if (!audit.pass) {
-          if (audit.unparseable) {
-            return (
-              `STAGE 1 PROTOCOL FAILURE — the auditor's reply had no verdict line; recorded as ` +
-              `UNPARSEABLE (never PASS, but not a substantive FAIL). Re-running the stage is ` +
-              `legitimate. Saved: ${audit.artifact}\n\n${audit.text}`
-            );
-          }
-          return `STAGE 1 FAIL — not verifier-backed. Audit saved: ${audit.artifact}\n\n${audit.text}`;
-        }
-
-        // Bundle certification (contract): a fresh agent shown both the
-        // candidate and the bundle certifies no element is a stepwise
-        // paraphrase of — or contains — the candidate argument. Always rerun:
-        // the certifier sees the candidate, so a new revision needs its own cert.
-        const cert = await verdictStage({
-          kind: "bundle-cert",
-          role: "bundleCertifier",
-          ctx: sectionsOf([
-            { heading: `Candidate revision ${rel}`, name: "candidate revision", text: candidate },
-            { heading: "Proposed reconstruction bundle", name: "proposed bundle", text: bundle },
-          ]),
-          blindness: "fresh instance (enforced); sees candidate by design (certification step)",
-          extra: { bundleHash },
-        });
-        if (!cert.pass) {
-          if (cert.unparseable) {
-            return (
-              `BUNDLE CERTIFICATION PROTOCOL FAILURE — the certifier's reply had no verdict line; ` +
-              `recorded as UNPARSEABLE (the bundle is neither certified nor refused; this does not ` +
-              `hash-block it). Re-running the stage is legitimate. Saved: ${cert.artifact}\n\n${cert.text}`
-            );
-          }
-          return (
-            `BUNDLE CERTIFICATION FAIL — the bundle leaks the candidate argument; stage 2 refused. ` +
-            `Revise keyIdeas/allowedSources and retry. Cert saved: ${cert.artifact}\n\n${cert.text}`
-          );
-        }
-
-        // Stage 2a — blind reconstruction (no verdict; the PASS belongs to
-        // the comparison).
-        //
-        // Reuse is allowed ONLY for the identical candidate — a re-run after a
-        // protocol or infrastructure failure. The contract is explicit for a
-        // repaired candidate: "Invalidate both stages; rerun a fresh hostile
-        // audit and then a fresh reconstruction. Never reuse a verifier
-        // response that influenced the repair." Keying reuse on the bundle
-        // alone broke exactly that: the comparator's FAIL is quoted verbatim
-        // into the coordinator's wake, the repair is written to address it,
-        // and the same reconstruction then judges the candidate written
-        // against it — independence in name only. Carrying stages forward for
-        // a *non-load-bearing* diff is legal, but the contract requires a
-        // fresh delta auditor's PASS to authorize it, and there is no delta
-        // auditor here yet (roadmap), so anything but identical bytes
-        // regenerates.
-        const priorRecon = [...store.all()]
-          .reverse()
-          .find(
-            (e) =>
-              e.kind === "reconstruction" &&
-              e.candidateHash === candidateHash &&
-              e.statementHash === stmtHash &&
-              e.bundleHash === bundleHash &&
-              e.provedHash === provedHash &&
-              typeof e.artifact === "string" &&
-              fs.existsSync(path.join(dir, e.artifact)) &&
-              // Content-bound: an artifact edited since it was recorded is
-              // no longer the independent reconstruction that was verified,
-              // so it must be regenerated rather than reused.
-              e.artifactHash === sha256File(path.join(dir, e.artifact)),
-          );
-        abortIfCancelled();
-        let reconText: string;
-        let reconArtifact: string;
-        if (priorRecon) {
-          reconArtifact = priorRecon.artifact as string;
-          reconText = fs.readFileSync(path.join(dir, reconArtifact), "utf-8");
-          const carriedHash = priorRecon.artifactHash as string;
-          store.append({
-            kind: "reconstruction",
-            revision: rel,
-            candidateHash,
-            statementHash: stmtHash,
-            bundleHash,
-            provedHash,
-            artifact: reconArtifact,
-            artifactHash: carriedHash,
-            carriedForwardFrom: priorRecon.revision,
-            suppliedInputs: ["statement", "key ideas", "allowed sources", "promoted premises"],
-            blindness:
-              "carried forward (enforced): statement, bundle, and promoted premises byte-identical " +
-              "to the prior reconstruction's inputs; the reconstructor never saw any candidate",
-            modelFamily: priorRecon.modelFamily,
-          });
-        } else {
-          const reconCtx = sectionsOf([
-            { heading: "Statement", name: "statement", text: statement },
-            { heading: "High-level key ideas", name: "key ideas", text: p.keyIdeas },
-            { heading: "Allowed sources", name: "allowed sources", text: p.allowedSources },
-            { heading: "Promoted premises", name: "promoted premises (statements view)", text: proved },
-          ]);
-          // Platform-enforced blindness: the "(enforced)" claim below is a
-          // checked fact for whole-file interpolation, not testimony. Partial
-          // paraphrase remains the bundle certifier's judgment.
-          assertCandidateWithheld(reconCtx.prompt, candidate);
-          const {
-            text,
-            usage: reconTextUsage,
-            promptChars: reconPromptChars,
-            durationMs: reconDurationMs,
-          } = await runRole({
-            contract,
-            charge: CHARGES.reconstructor,
-            prompt: reconCtx.prompt,
-            spec: roleModelSpec("reconstructor"),
-            models,
-          });
-          recordUsage(reconTextUsage);
-          abortIfCancelled();
-          reconText = text;
-          const reconEvidence = newEvidencePath(dir, `audits/${slug}.reconstruction`);
-          fs.writeFileSync(reconEvidence, reconText);
-          reconArtifact = path.relative(dir, reconEvidence);
-          store.append({
-            kind: "reconstruction",
-            revision: rel,
-            candidateHash,
-            statementHash: stmtHash,
-            bundleHash,
-            provedHash,
-            artifact: reconArtifact,
-            artifactHash: sha256File(reconEvidence),
-            suppliedInputs: reconCtx.suppliedInputs,
-            blindness:
-              "fresh instance (enforced); candidate file withheld by harness (enforced — rendered prompt checked); keyIdeas coordinator-authored (instructed only — paraphrase risk not machine-checked)",
-            toolVisibility: toolVisibilityOf(roleModelSpec("reconstructor").provider),
-            modelFamily: specLabel(roleModelSpec("reconstructor")),
-            usage: reconTextUsage,
-            promptChars: reconPromptChars,
-            durationMs: reconDurationMs,
-          });
-        }
-
-        // Stage 2b — comparison: maps the reconstruction to the candidate's
-        // conclusions and declared dependencies. This verdict is stage 2's PASS.
-        const compare = await verdictStage({
-          kind: "comparison",
-          role: "comparator",
-          ctx: sectionsOf([
-            { heading: "Statement", name: "statement", text: statement },
-            { heading: "Independent reconstruction", name: "reconstruction", text: reconText },
-            { heading: `Candidate revision ${rel}`, name: "candidate", text: candidate },
-            { heading: "Declared dependencies", name: "declared dependencies", text: p.declaredDependencies },
-          ]),
-          blindness: "fresh instance (enforced); sees both sides by design (comparison step)",
-        });
-        const promotion = checkPromotion(store, dir, rel);
-        return (
-          `STAGE 1 PASS; STAGE 2 ${compare.pass ? "PASS" : compare.unparseable ? "UNPARSEABLE (protocol failure — never PASS; re-run is legitimate)" : "FAIL"} (comparison verdict). ` +
-          (promotion.allowed
-            ? `Revision ${rel} is verifier-backed; record_promotion is now legal for it.`
-            : `Not promotable: ${promotion.reason}`) +
-          (priorRecon ? `\nReconstruction carried forward from revision ${priorRecon.revision}.` : "") +
-          `\nArtifacts: ${audit.artifact}, ${reconArtifact}, ${compare.artifact}` +
-          `\n\n## Stage 1 (hostile audit)\n\n${audit.text}\n\n## Stage 2b (comparison)\n\n${compare.text}`
-        );
-      };
-
-      const id = `v${String(nextId++).padStart(3, "0")}`;
-      // Journaled like an agent dispatch so ids stay unique across restarts
-      // (maxHandleId reads dispatch records only).
-      store.append({ kind: "dispatch", id, role: "verification", mechanism: `verification:${rel}`, task: rel });
-      cancelled = () => cadenceStop.signal.aborted || !handles.has(id);
-      registerHandle({
-        id,
-        kind: "verification",
-        // A cadence is composite work: stopping it means its stage calls stop
-        // recording, which abortIfCancelled already enforces between stages.
-        stop: () => cadenceStop.abort(),
-        mechanism: `verification:${rel}`,
-        promise: cadence(),
-        // Summed over the cadence's role calls; undefined when no backend
-        // reported usage.
-        usage: () => (usages.length === 0 ? undefined : usages.reduce(addUsage)),
-      });
-      return toolText(
-        `verification ${id} dispatched on ${rel} (${handles.size} live). The verdict arrives at a ` +
-          "later wake; keep gating, dispatching, and ledger work going meanwhile.",
-      );
-    },
-  } as AgentTool;
+  const requestVerification = requestVerificationTool({
+    dir,
+    store,
+    contract,
+    models,
+    evidenceRelative,
+    declaration: () => declaration,
+    mintVerificationId: () => `v${String(nextId++).padStart(3, "0")}`,
+    hasHandle: (id) => handles.has(id),
+    liveCount: () => handles.size,
+    registerHandle,
+  });
 
   const recordPromotion: AgentTool = {
     name: "record_promotion",
@@ -1105,6 +737,10 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
         revision: rel,
         candidateHash: verifiedHash,
         statement: p.exactStatement,
+        // The exact appended entry: lets the wake check that PROVED.md still
+        // contains what the events say it does (a skill-session resume can
+        // edit the file; retraction relabeling is supposed to).
+        entry,
         ...(premises.length > 0 ? { premises: premises.map((pr) => pr.revision) } : {}),
       });
       activityThisWake++;
@@ -1153,14 +789,19 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       const p = params as { id: string; message: string };
       const handle = handles.get(p.id);
       if (!handle) return toolText(`no live agent ${p.id}`);
-      if (!handle.session) return toolText(`${p.id} has no steerable session (CLI oracle or verification cadence); cancel or wait`);
+      if (!handle.session || !handle.session.capabilities.steerable) {
+        return toolText(
+          `${p.id} is not steerable (a CLI oracle answers once and can only be stopped; a ` +
+            `verification cadence has no session); cancel or wait`,
+        );
+      }
       const delivered = await handle.session.steer(p.message);
       if (!delivered) {
         return toolText(
           `${p.id} is idle (its turn just finished); steering dropped — its report arrives at the next wake regardless.`,
         );
       }
-      appendJournal(dir, { kind: "note", note: `steered ${p.id}`, message: p.message });
+      store.event({ kind: "note", note: `steered ${p.id}`, message: p.message });
       return toolText(`steering message delivered to ${p.id} mid-run.`);
     },
   } as AgentTool;
@@ -1264,7 +905,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       // Harvest before returning: what unblocked this loop is usually an agent
       // finishing, and its report lives only in the queue until persisted.
       const atLimit = harvestSettled();
-      appendJournal(dir, {
+      store.event({
         kind: "note",
         note: `user wake limit ${opts.maxWakes} reached; pausing`,
         ...(atLimit.total > 0 ? { harvested: atLimit.total } : {}),
@@ -1294,7 +935,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
         : `Still running (do not interrupt for slowness): ${[...handles.values()]
             .map((h) => `${h.id} [${h.mechanism}]`)
             .join(", ")}`) + (limits.length > 0 ? `\nUser limits: ${limits.join("; ")}.` : "");
-    appendJournal(dir, {
+    store.event({
       kind: "wake",
       wake: wakeCount,
       live: handles.size,
@@ -1307,10 +948,17 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     // later verdict has contradicted.
     const dangling = danglingCitations(dir);
     const retractions = retractionClosure(store);
+    const missingEntries = promotionsMissingFromProved(store, dir);
     const bookkeeping =
       (dangling.length > 0
         ? `\n\nLEDGER CITATIONS THAT POINT AT NOTHING (fix or remove them):\n` +
           dangling.map((d) => `- ${d.ledger} cites ${d.citation}, which does not exist`).join("\n")
+        : "") +
+      (missingEntries.length > 0
+        ? `\n\nPROMOTION ENTRIES NO LONGER IN PROVED.md — the recorded entry text for these ` +
+          `promotions does not appear in the file. If this is a recorded retraction relabel, note ` +
+          `that in REGISTRY.md; otherwise the ledger was edited out from under its events — restore it:\n` +
+          missingEntries.map((m) => `- ${m.revision}`).join("\n")
         : "") +
       (retractions.length > 0
         ? `\n\nPROMOTED CLAIMS WITH A LATER SUBSTANTIVE FAIL — the contract requires a retraction ` +
@@ -1341,7 +989,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
         // anticipated "context compaction") instead of session kill+rebuild.
         // The reread rule fires in the next wake message; the summary is
         // explicitly subordinated to the ledgers.
-        appendJournal(dir, {
+        store.event({
           kind: "note",
           note: `coordinator context cap (${COORDINATOR_CONTEXT_TOKENS} tok) reached; compacting (restart rule applies)`,
         });
@@ -1358,14 +1006,14 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           // Compaction is a real LLM call and can fail (quota, provider);
           // the campaign must not die with workers live — fall back to the
           // infallible restart-rule rebuild (review 2026-08-02).
-          appendJournal(dir, {
+          store.event({
             kind: "note",
             note: `compaction failed (${String(e).slice(0, 200)}); rebuilding via restart rule`,
           });
           coordinator = undefined;
         }
       } else {
-        appendJournal(dir, {
+        store.event({
           kind: "note",
           note: `coordinator context cap (${COORDINATOR_CONTEXT_TOKENS} tok) reached; rebuilding via restart rule`,
         });
@@ -1476,7 +1124,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
             );
             if (!delivered) break; // turn just ended; the wake boundary takes over
             steeredCount++;
-            appendJournal(dir, { kind: "note", note: `user message steered mid-turn: ${m}` });
+            store.event({ kind: "note", note: `user message steered mid-turn: ${m}` });
           }
         } catch {
           /* transport only; never break the campaign */
@@ -1491,7 +1139,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           ? `${resumeBundle(dir)}${readingDiscipline}${guidanceBlock}\n\n---\n\nCampaign directory: ${dir}\n${lostNote}${digest}${bookkeeping}${idleNudge}\n\n${newsBlock}${userBlock}`
           : `${rereadBlock}${guidanceBlock}${lostNote}${digest}${bookkeeping}${idleNudge}${compactionWarning}${growthNote}\n\n${newsBlock}${userBlock}`,
       );
-      for (const m of userMessages) appendJournal(dir, { kind: "note", note: `user message: ${m}` });
+      for (const m of userMessages) store.event({ kind: "note", note: `user message: ${m}` });
       consumeUserMessages(dir, userMessages.length + steeredCount);
       if (pending.length > 0) store.append({ kind: "delivery", ids: pending.map((p) => p.id) });
     } catch (e) {
@@ -1504,7 +1152,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       // nothing. Back off, and give up into a pause rather than burn a
       // bounded run's whole wake budget on one broken credential.
       turnFailures++;
-      appendJournal(dir, {
+      store.event({
         kind: "note",
         note: `coordinator turn failed (${String(e).slice(0, 200)}); rebuilding via restart rule`,
         consecutiveFailures: turnFailures,
@@ -1512,7 +1160,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       coordinator = undefined;
       wakeCount--; // a failed turn is not a wake the user asked to spend
       if (turnFailures >= TURN_FAILURE_LIMIT) {
-        appendJournal(dir, {
+        store.event({
           kind: "note",
           note: `pausing after ${turnFailures} consecutive coordinator failures`,
         });
@@ -1540,7 +1188,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           )}k cap). If much of that was wholesale file reads, prefer grep or read with ` +
           "offset/limit — re-reads are cheap, residency is not."
         : "";
-    appendJournal(dir, {
+    store.event({
       kind: "usage",
       role: "coordinator",
       cumulative: coordinator.usage(),
@@ -1553,7 +1201,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       // Anything that settled during the rest of the turn (including agents
       // left running under supervision) is persisted before the process ends.
       const finalHarvest = harvestSettled();
-      appendJournal(dir, {
+      store.event({
         kind: "note",
         note: `declared ${declaration.state}: ${declaration.reason}`,
         ...(finalHarvest.total > 0 ? { harvested: finalHarvest.total } : {}),
@@ -1567,7 +1215,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     if (handles.size === 0 && settledQueue.length === 0) {
       noopWakes = activityThisWake === 0 ? noopWakes + 1 : 0;
       if (noopWakes >= NOOP_WAKE_PAUSE) {
-        appendJournal(dir, {
+        store.event({
           kind: "note",
           note: `harness safety pause after ${NOOP_WAKE_PAUSE} no-op wakes; campaign remains authorized`,
         });
