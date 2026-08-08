@@ -101,3 +101,40 @@ The verification-cadence spend of the coverify arm counts INSIDE its
 budget (the discipline's cost is real and must be paid on the meter); the
 grader's post-hoc verification of the raw arm counts outside (it is the
 judge, not the method).
+
+## Measured baselines (retrospective, 2026-08-08 — no new tokens spent)
+
+Raw-launcher corpus (`~/playground/research/explore/`, 12 campaigns,
+Jul 25–Aug 2, plain Codex sessions, usage from codex rollout JSONL;
+billable = input − cached + output): **~3.29B billable tokens, 291 PROVED
+entries, 4–5/12 problems resolved** → ~11.3M billable per self-labeled
+PROVED entry; resolved-easy campaigns 1.6M–39M each; hard-unresolved ones
+119M–2.3B each. Known ledger defects: one explicit retraction
+(bounded-hedge-cut, loop-counting), one audit-forced correction
+(ttp2-hardness), one whole-campaign novelty misclassification (67M billable
+on re-derived prior art). No systematic re-verification of the 291 entries
+exists, so the per-verified-TRUE-claim cost is higher by an unknown factor.
+
+Coverify arm (lin-3-cut campaign 3, full accounting): 30.7M billable /
+0 promotions before the candidate-scope discipline; **33.6M / 4 promotions
+(≈8.4M per verified theorem) after**, verification ≈35% of spend.
+Campaign 2 partial accounting: ≈1.2M per (lemma-scale) promotion,
+undercounted.
+
+External prompt-family system (Danus directed-cut-union, design.md):
+618M input / 74 facts, 85% off the answer's dependency path → ≈56M per
+on-path fact, no resolution.
+
+2026-06 proof-evals matrix (jupiter /srv/proof-evals, 10 problems, 3h,
+one-shot): ChatGPT Pro 6/10, direct Codex 5/10, coverify-1.0+Codex 5/10 —
+the old wrapper added nothing; and self-attested artifact scores (9/10)
+collapsed to 2–6/10 under verified grading.
+
+Reading: token cost per claimed result is at PARITY between coverify and
+the raw skill (8.4M vs ~11.3M) — the cadence's ~35% share is offset by
+gate-killed retreads — while coverify's claims carry enforced (not
+instructed) blindness and hash binding. Problem difficulty, not harness
+choice, dominates total cost (raw corpus spans three orders of magnitude
+per campaign). The single biggest measured economy lever is candidate
+scope discipline, worth 30M+ tokens on one campaign — a skill lesson, not
+a harness feature.
