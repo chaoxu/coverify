@@ -95,6 +95,7 @@ export const STYLES = String.raw`
   .vis-item.stage-none .vis-dot { border-color: var(--ink-3); }
   .vis-item.vis-point .vis-item-content { color: var(--ink-2); }
   .vis-item.vis-background.wake { background: color-mix(in oklab, var(--ink) 6%, transparent); }
+  .vis-item.vis-point.gapmark { color: color-mix(in oklab, var(--ink) 55%, transparent); font-style: italic; }
   .vis-tooltip { font-family: var(--body) !important; font-size: 12.5px !important; background: var(--panel) !important; color: var(--ink) !important; border: 1px solid var(--rule-strong) !important; border-radius: 3px !important; box-shadow: var(--shadow) !important; padding: 9px 11px !important; max-width: 340px !important; white-space: normal !important; }
   .vis-tooltip .t-mono { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); }
   .vis-tooltip .t-task { color: var(--ink-2); margin-top: 4px; }
@@ -148,6 +149,7 @@ export const BODY = String.raw`
         <h2>Agent lifetimes and verification calls</h2>
         <p class="note" id="hint">Shaded bands mark coordinator wakes (hover for live/report counts;
           the band's width is a fixed marker, not the turn's duration).</p>
+        <p class="note" id="gapnote"></p>
       </div>
       <div class="controls">
         <button class="ctl" id="fit">Fit all</button>
@@ -337,11 +339,52 @@ export const VIEW = String.raw`
   const roleGroups = usedRoles.map((r) => ({ id: r, content: ROLES[r].toLowerCase() }))
     .concat([{ id: "verify", content: "verification stages" }, { id: "gates", content: "idea gates & promotions" }]);
 
+  // ---- idle-gap compression ----
+  // Long stretches with no events (harness stopped, overnight pauses)
+  // otherwise dominate the axis and flatten all activity into slivers.
+  // Gaps > 20 min are hidden (vis-timeline hiddenDates), keeping 60s of
+  // margin on each side, with a labeled marker at each cut.
+  const stamps = [];
+  items.forEach((it) => {
+    if (it.start != null) stamps.push(+it.start);
+    if (it.end != null) stamps.push(+it.end);
+  });
+  stamps.sort((a, b) => a - b);
+  const GAP_MS = 20 * 60 * 1000, KEEP_MS = 60 * 1000;
+  const hiddenDates = [];
+  let hiddenMs = 0;
+  for (let i = 1; i < stamps.length; i++) {
+    const a = stamps[i - 1], b = stamps[i];
+    if (b - a > GAP_MS + 2 * KEEP_MS) {
+      hiddenDates.push({ start: a + KEEP_MS, end: b - KEEP_MS });
+      hiddenMs += b - a - 2 * KEEP_MS;
+      items.push({
+        id: "gap" + i,
+        start: a + KEEP_MS,
+        type: "point",
+        group: "gates",
+        className: "gapmark",
+        content: "&#8987; " + fmtH((b - a) / 3600000) + " idle (collapsed)",
+        title: "<strong>idle gap collapsed</strong><div class='t-mono'>" + fmtH((b - a) / 3600000) + " with no journal events</div>",
+        kind: "gap",
+      });
+    }
+  }
+  const gapNote = document.getElementById("gapnote");
+  if (gapNote && hiddenDates.length > 0) {
+    gapNote.textContent = hiddenDates.length + " idle gap(s) collapsed (" + fmtH(hiddenMs / 3600000) + " hidden); drag or shift-scroll to pan, ctrl-scroll to zoom";
+  }
+
   const container = document.getElementById("tl");
   const dataset = new vis.DataSet(items);
   const groupSet = new vis.DataSet(flatGroups);
   const pad = Math.max(DATA.span * 0.02, 120) * 1000;
   const options = {
+    hiddenDates: hiddenDates,
+    // Pan when zoomed: plain wheel/trackpad scrolls the time axis
+    // horizontally (vertical stays on the group panel's own scrollbar);
+    // ctrl+wheel zooms, drag pans too.
+    horizontalScroll: true,
     stack: true,
     stackSubgroups: true,
     showCurrentTime: false,
