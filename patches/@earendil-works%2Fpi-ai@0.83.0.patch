@@ -1,0 +1,80 @@
+diff --git a/dist/api/openai-codex-responses.js b/dist/api/openai-codex-responses.js
+index bb9fa794ee6cb9f73149dda5733b286941bbb550..9d5d1c061526f1d2f6005862003ed6c0545c90f4 100644
+--- a/dist/api/openai-codex-responses.js
++++ b/dist/api/openai-codex-responses.js
+@@ -257,6 +257,10 @@ export const stream = (model, context, options) => {
+                 sseHeaders.set("content-encoding", "zstd");
+             }
+             const sseBody = compressedBody ?? bodyJson;
++            // coverify patch: outer bounded retry for mid-stream transport
++            // deaths; re-issues the request and re-consumes the stream.
++            let coverifyMidStreamAttempt = 0;
++            coverifyMidStreamLoop: while (true) {
+             // Fetch with retry logic for rate limits and transient errors
+             let response;
+             let lastError;
+@@ -334,11 +338,30 @@ export const stream = (model, context, options) => {
+                 startEmitted = true;
+                 stream.push({ type: "start", partial: output });
+             }
+-            await processStream(response, output, stream, model, grammarToolInputProperties, options);
++            try {
++                await processStream(response, output, stream, model, grammarToolInputProperties, options);
++            }
++            catch (error) {
++                if (options?.signal?.aborted ||
++                    coverifyMidStreamAttempt >= COVERIFY_MIDSTREAM_RETRIES ||
++                    !coverifyIsMidStreamTransportError(error)) {
++                    throw error;
++                }
++                coverifyMidStreamAttempt++;
++                appendAssistantMessageDiagnostic(output, createAssistantMessageDiagnostic("provider_transport_failure", error, {
++                    phase: "mid_stream_retry",
++                    attempt: coverifyMidStreamAttempt,
++                }));
++                coverifyResetOutputForRetry(output);
++                await sleep(BASE_DELAY_MS * 2 ** coverifyMidStreamAttempt, options?.signal);
++                continue coverifyMidStreamLoop;
++            }
+             if (options?.signal?.aborted) {
+                 throw new Error("Request was aborted");
+             }
+             assertSuccessfulOutput(output);
++            break coverifyMidStreamLoop;
++            }
+             stream.push({ type: "done", reason: output.stopReason, message: output });
+             stream.end();
+         }
+@@ -356,6 +379,32 @@ export const stream = (model, context, options) => {
+     })();
+     return stream;
+ };
++// --- coverify patch: mid-stream retry (see patches/ and coverify docs) ---
++// The request phase already retries, but a transport death during
++// processStream (socket reset mid-reasoning) was always fatal. Codex's own
++// CLI retries these with backoff (stream_max_retries); this patch gives the
++// SSE path the same resilience. Bounded, transport-errors only, in-place
++// output reset so the single started message stays coherent for consumers.
++const COVERIFY_MIDSTREAM_RETRIES = (() => {
++    const n = Number(globalThis.process?.env?.PI_CODEX_MIDSTREAM_RETRIES ?? 2);
++    return Number.isFinite(n) && n >= 0 ? n : 2;
++})();
++function coverifyIsMidStreamTransportError(error) {
++    const msg = String(error?.message ?? error ?? "");
++    if (/usage limit|quota|billing/i.test(msg)) return false;
++    return /socket|network|terminated|connection|closed|reset|EPIPE|ECONNRESET|fetch failed|timed? out/i.test(msg);
++}
++function coverifyResetOutputForRetry(output) {
++    output.content.length = 0;
++    output.usage.input = 0;
++    output.usage.output = 0;
++    output.usage.cacheRead = 0;
++    output.usage.cacheWrite = 0;
++    delete output.stopReason;
++    delete output.errorMessage;
++}
++// --- end coverify patch helpers ---
++
+ export const streamSimple = (model, context, options) => {
+     const apiKey = options?.apiKey;
+     if (!apiKey) {

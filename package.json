@@ -24,5 +24,8 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0"
+  },
+  "patchedDependencies": {
+    "@earendil-works/pi-ai@0.83.0": "patches/@earendil-works%2Fpi-ai@0.83.0.patch"
   }
 }
