@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -199,6 +200,21 @@ export function acquireCampaignLock(dir: string): () => void {
 }
 
 /** Harness-generated audit metadata — permitted by the launcher's EVIDENCE bullet. */
+/** The coverify checkout root (src/'s parent) — shared so the expression
+ *  stops being copy-pasted per file (4 copies before extraction). */
+export function repoRoot(): string {
+  return path.dirname(path.dirname(new URL(import.meta.url).pathname));
+}
+
+/** Run a git command in the coverify checkout; undefined on any failure. */
+export function gitInRepo(cmd: string): string | undefined {
+  try {
+    return execSync(cmd, { cwd: repoRoot() }).toString().trim();
+  } catch {
+    return undefined;
+  }
+}
+
 export function appendJournal(
   dir: string,
   entry: { kind: JournalEntry["kind"] } & Record<string, unknown>,

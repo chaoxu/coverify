@@ -81,7 +81,9 @@ function optionalInt(name: string): number | undefined {
   // NaN would pass every `!== undefined` check and lose every comparison, so a
   // typo'd limit silently meant *no* limit while the coordinator was still
   // told one was in force. This is the user's only budget control; a bad value
-  // must stop the run, not disable itself.
+  // must stop the run, not disable itself. One documented exception routes
+  // around this guard: agentLimit() below treats the literal "0" as the
+  // unlimited sentinel before delegating here.
   if (!Number.isInteger(n) || n < 1) {
     console.error(`--${name} must be a positive whole number (got: ${v})`);
     process.exit(2);

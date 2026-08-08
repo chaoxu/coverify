@@ -23,7 +23,7 @@ import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-code
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import { fileCredentialStore } from "./credentials.js";
 import { CLAUDE_BRIDGE_ID, claudeBridgeProvider } from "./claude-bridge.js";
-import { installReaperHooks, liveReapers, workspaceTools, type WriteScope } from "./supervise.js";
+import { envNumber, installReaperHooks, liveReapers, workspaceTools, type WriteScope } from "./supervise.js";
 
 export type Models = ReturnType<typeof createModels>;
 
@@ -572,16 +572,11 @@ export type HarnessSessionOpts = {
  * AgentTools, with zero disk/env discovery (docs/redesign-proposal.md).
  * prompt_cache_key threads automatically from the session id.
  */
-/** Non-negative env integer (0 is meaningful: it disables); malformed → fallback. */
-const envCount = (raw: string | undefined, fallback: number): number => {
-  const n = Number(raw);
-  return raw !== undefined && Number.isFinite(n) && n >= 0 ? n : fallback;
-};
-
-/** Turn-level retry policy for harness sessions, read at call time. */
+/** Turn-level retry policy for harness sessions, read at call time
+ *  (min 0: zero is meaningful — it disables retries). */
 export function retryPolicy(): { enabled: boolean; maxRetries: number; baseDelayMs: number } {
-  const maxRetries = envCount(process.env.COVERIFY_RETRY_MAX, 3);
-  return { enabled: maxRetries > 0, maxRetries, baseDelayMs: envCount(process.env.COVERIFY_RETRY_BASE_MS, 2_000) };
+  const maxRetries = envNumber(process.env.COVERIFY_RETRY_MAX, 3, 0);
+  return { enabled: maxRetries > 0, maxRetries, baseDelayMs: envNumber(process.env.COVERIFY_RETRY_BASE_MS, 2_000, 0) };
 }
 
 export async function createHarnessRoleSession(

@@ -29,7 +29,7 @@ import {
   type TechnicianPacket,
 } from "./gates.js";
 import { requestVerificationTool } from "./cadence.js";
-import { archiveLedgerHistory, recordRefusal, recordRunConfig, wakeBookkeeping } from "./observe.js";
+import { archiveLedgerHistory, recordRunConfig, refuse, wakeBookkeeping } from "./observe.js";
 import { loadLauncherContract } from "./launcher.js";
 import {
   buildModels,
@@ -395,8 +395,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       liveOnMechanism(packet.mechanism),
     );
     if (!decision.allowed) {
-      recordRefusal(store, "dispatch", { reason: decision.reason ?? "", mechanism: packet.mechanism, role });
-      return toolText(`DISPATCH REFUSED: ${decision.reason}`);
+      return refuse(store, "dispatch", decision.reason ?? "", { mechanism: packet.mechanism, role });
     }
     const spec = roleModelSpec(role);
     const isTechnician = role === "technician";
@@ -404,8 +403,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       const reason =
         "the configured technician backend is a tool-less CLI oracle; a computation packet needs " +
         "a tool-running backend";
-      recordRefusal(store, "dispatch", { reason, mechanism: packet.mechanism, role });
-      return toolText(`DISPATCH REFUSED: ${reason}`);
+      return refuse(store, "dispatch", reason, { mechanism: packet.mechanism, role });
     }
     const id = `${isTechnician ? "t" : "r"}${String(nextId++).padStart(3, "0")}`;
     const evidenceDir = path.join(dir, "EVIDENCE", id);
@@ -697,7 +695,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       const rel = evidenceRelative(p.revision);
       if (!rel) return toolText(`revision must be a path inside EVIDENCE/ (got: ${p.revision})`);
       const decision = checkPromotion(store, dir, rel);
-      if (!decision.allowed) return toolText(`PROMOTION REFUSED: ${decision.reason}`);
+      if (!decision.allowed) return refuse(store, "promotion", decision.reason ?? "", { revision: rel });
       const resolved = resolvePremises(store, p.premises ?? []);
       if ("unresolved" in resolved) {
         return toolText(

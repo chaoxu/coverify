@@ -418,7 +418,9 @@ call), and the ask-boundary wrapper retries the whole turn
 therefore ≤12 stream attempts per turn with exponential backoff at both
 layers; quota/billing errors are never retried at either. cancel_agent
 interrupts the stack between attempts (the wrapper's backoff honors the
-session's abort signal).
+session's abort signal). The provider layer is a local bun patch
+(patches/) carried while upstream earendil-works/pi#7820 is open — drop
+it when pi ships provider-level stream retry.
 
 ## Efficiency commitments
 

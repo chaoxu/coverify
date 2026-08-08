@@ -1,20 +1,17 @@
 /**
  * Observability, separated from operations (Chao, 2026-08-08): everything
- * here RECORDS what happened or NOTICES what the records imply — it
+ * here RECORDS what happened or NOTICES what the records imply. It
  * generates prompt text and records, and never itself gates, dispatches,
- * schedules, or writes ledgers (wakeBookkeeping's digest DOES reach the
- * coordinator's prompt: noticing is surfaced, deciding stays with the
- * model, per the ambient-status-digest mechanics precedent). House rule
- * from the same
- * day's review (issue #21): every record ships with the derived query that
- * makes it actionable — an unread log is not an audit trail. Removing this
- * module changes what the campaign can prove about itself, never what it
- * does (design rule 2).
+ * schedules, or writes ledgers. The boundary criterion with harness.ts:
+ * anything derived from durable history (journal, ledgers, gate records)
+ * belongs here; anything derived from the process's live scheduler state
+ * (handles, queues, wake counters) stays in the harness. House rule from
+ * the 2026-08-08 review (issue #21): every record ships with the derived
+ * query that makes it actionable — an unread log is not an audit trail.
  */
-import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { danglingCitations, readLedger, sha256Text } from "./campaign.js";
+import { danglingCitations, gitInRepo, readLedger, repoRoot, sha256Text } from "./campaign.js";
 import {
   GateStore,
   normalizeMechanism,
@@ -28,6 +25,7 @@ import {
   roleModelSpec,
   sandboxMode,
   specLabel,
+  toolText,
 } from "./roles.js";
 
 /**
@@ -44,23 +42,18 @@ export function recordRunConfig(
   store: GateStore,
   extra: { harnessRev: string; launcherSha256: string; userAgentLimit?: number; maxWakes?: number },
 ): void {
-  const repo = path.dirname(new URL(import.meta.url).pathname);
-  const git = (cmd: string) => {
-    try {
-      return execSync(cmd, { cwd: repo }).toString().trim();
-    } catch {
-      return undefined;
-    }
-  };
+  const repo = repoRoot();
   const piVersion = (pkg: string): string | undefined => {
     try {
-      const p = path.join(repo, "..", "node_modules", "@earendil-works", pkg, "package.json");
+      const p = path.join(repo, "node_modules", "@earendil-works", pkg, "package.json");
       return (JSON.parse(fs.readFileSync(p, "utf-8")) as { version?: string }).version;
     } catch {
       return undefined;
     }
   };
-  const patchDir = path.join(repo, "..", "patches");
+  // Tri-state: a failed git probe must not masquerade as a dirty tree.
+  const gitStatus = gitInRepo("git status --porcelain");
+  const patchDir = path.join(repo, "patches");
   let patches: Record<string, string> | undefined;
   try {
     patches = Object.fromEntries(
@@ -76,8 +69,7 @@ export function recordRunConfig(
     // not depend on the prose note's exact wording.
     runStart: true,
     ...extra,
-    // Tri-state: a failed git probe must not masquerade as a dirty tree.
-    gitDirty: ((st) => (st === undefined ? "unknown" : st !== ""))(git("git status --porcelain")),
+    gitDirty: gitStatus === undefined ? "unknown" : gitStatus !== "",
     bunVersion: process.versions.bun,
     piVersions: { "pi-agent-core": piVersion("pi-agent-core"), "pi-ai": piVersion("pi-ai") },
     ...(patches && Object.keys(patches).length > 0 ? { patches } : {}),
@@ -116,7 +108,7 @@ export function archiveLedgerHistory(store: GateStore, dir: string, wakeCount: n
     const content = readLedger(dir, ledger);
     if (!content) continue;
     const hash = sha256Text(content);
-    const last = [...store.all()].reverse().find((e) => e.ledgerRevision === ledger);
+    const last = store.all().findLast((e) => e.ledgerRevision === ledger);
     if (last?.hash === hash) continue;
     const snap = path.join(histDir, `${hash}.md`);
     if (!fs.existsSync(snap)) fs.writeFileSync(snap, content);
@@ -133,7 +125,7 @@ export function archiveLedgerHistory(store: GateStore, dir: string, wakeCount: n
  */
 export function recordRefusal(
   store: GateStore,
-  site: "dispatch" | "verification",
+  site: "dispatch" | "verification" | "promotion",
   fields: { reason: string; mechanism?: string; revision?: string; role?: string; candidateHash?: string },
 ): void {
   store.event({
@@ -142,6 +134,21 @@ export function recordRefusal(
     ...fields,
     reason: fields.reason.slice(0, 300),
   });
+}
+
+/**
+ * Record a refusal and produce the tool reply in one step — the idiom every
+ * refusal site shares, factored so the next site cannot record-skip (the
+ * promotion site did, on the first pass).
+ */
+export function refuse(
+  store: GateStore,
+  site: "dispatch" | "verification" | "promotion",
+  reason: string,
+  fields: { mechanism?: string; revision?: string; role?: string; candidateHash?: string } = {},
+): ReturnType<typeof toolText> {
+  recordRefusal(store, site, { reason, ...fields });
+  return toolText(`${site.toUpperCase()} REFUSED: ${reason}`);
 }
 
 /**
@@ -157,29 +164,34 @@ export function refusalsWithoutFollowup(
   const out: { site: string; subject: string; reason: string }[] = [];
   records.forEach((r, i) => {
     if (r.refusal === undefined) return;
-    const later = records.slice(i + 1);
+    // Index-bounded scans (no per-refusal array copy).
+    const after = (pred: (e: (typeof records)[number]) => boolean) =>
+      records.some((e, j) => j > i && pred(e));
     if (r.refusal === "dispatch" && typeof r.mechanism === "string") {
       const key = normalizeMechanism(r.mechanism);
-      const followed = later.some(
+      const followed = after(
         (e) => e.kind === "dispatch" && typeof e.mechanism === "string" && normalizeMechanism(e.mechanism) === key,
       );
       if (!followed) out.push({ site: "dispatch", subject: r.mechanism, reason: String(r.reason ?? "") });
-    } else if (r.refusal === "verification" && typeof r.revision === "string") {
+    } else if (typeof r.revision === "string" && (r.refusal === "verification" || r.refusal === "promotion")) {
       const rev = r.revision.toLowerCase();
       // Follow-up by name OR by content: a refused candidate re-verified
       // under a new filename (same bytes) must clear the flag, so stage
-      // records' candidateHash counts as follow-up too.
-      const followed = later.some(
+      // records' candidateHash counts as follow-up too. A refused promotion
+      // is cleared by a later promotion or any later verification activity
+      // on the revision.
+      const followed = after(
         (e) =>
           (e.kind === "dispatch" &&
             typeof e.mechanism === "string" &&
             e.mechanism.startsWith("verification:") &&
             e.mechanism.slice("verification:".length).toLowerCase() === rev) ||
+          (e.kind === "promotion" && typeof e.revision === "string" && e.revision.toLowerCase() === rev) ||
           (typeof r.candidateHash === "string" &&
             (e.kind === "audit" || e.kind === "bundle-cert" || e.kind === "comparison") &&
             e.candidateHash === r.candidateHash),
       );
-      if (!followed) out.push({ site: "verification", subject: r.revision, reason: String(r.reason ?? "") });
+      if (!followed) out.push({ site: String(r.refusal), subject: r.revision, reason: String(r.reason ?? "") });
     }
   });
   // Dedup by subject: only the newest unaddressed refusal per subject matters.

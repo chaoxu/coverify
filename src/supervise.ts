@@ -49,10 +49,11 @@ export function installReaperHooks(): void {
 
 /** A malformed limit must not silently become NaN: setTimeout(fn, NaN) fires
  *  immediately, which would time out every batch instantly. */
-function positiveEnvNumber(raw: string | undefined, fallback: number): number {
+export function envNumber(raw: string | undefined, fallback: number, min: number): number {
   const n = Number(raw);
-  return raw !== undefined && Number.isFinite(n) && n > 0 ? n : fallback;
+  return raw !== undefined && Number.isFinite(n) && n >= min ? n : fallback;
 }
+const positiveEnvNumber = (raw: string | undefined, fallback: number) => envNumber(raw, fallback, 1);
 
 /** Wall limit for one run_script batch / one librarian call. Never a
  *  proof-work timebox (the launcher forbids those) — supervision only. */

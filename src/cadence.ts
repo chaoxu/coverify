@@ -10,7 +10,7 @@ import * as path from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { newEvidencePath, promotedStatementsView, readLedger, sha256File, sha256Text } from "./campaign.js";
-import { recordRefusal } from "./observe.js";
+import { refuse } from "./observe.js";
 import {
   GateStore,
   assertCandidateWithheld,
@@ -136,11 +136,13 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             e.verdict === "FAIL",
         );
       if (sameBundleCertFail) {
-        const reason =
+        return refuse(
+          store,
+          "verification",
           "this exact bundle already failed certification as leaking the candidate argument. " +
-          "Revise keyIdeas/allowedSources before retrying.";
-        recordRefusal(store, "verification", { reason, revision: rel, candidateHash });
-        return toolText(`VERIFICATION REFUSED: ${reason}`);
+            "Revise keyIdeas/allowedSources before retrying.",
+          { revision: rel, candidateHash },
+        );
       }
       // Matched on content, not on filename. "A substantive FAIL from any
       // stage stands against the revision that received it" — and identical
@@ -159,12 +161,14 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
       if (priorFail) {
         const rebuttalRel = p.rebuttalArtifact ? deps.evidenceRelative(p.rebuttalArtifact) : undefined;
         if (!rebuttalRel || !fs.existsSync(path.join(dir, "EVIDENCE", rebuttalRel))) {
-          const reason =
+          return refuse(
+            store,
+            "verification",
             "a substantive FAIL is on record for this exact revision. Per the contract, respond " +
-            "with a load-bearing repair (new revision), retraction, or a recorded rebuttal " +
-            "artifact refuting the exact reported gap (pass rebuttalArtifact).";
-          recordRefusal(store, "verification", { reason, revision: rel, candidateHash });
-          return toolText(`VERIFICATION REFUSED: ${reason}`);
+              "with a load-bearing repair (new revision), retraction, or a recorded rebuttal " +
+              "artifact refuting the exact reported gap (pass rebuttalArtifact).",
+            { revision: rel, candidateHash },
+          );
         }
         store.append({ kind: "rebuttal", revision: rel, artifact: rebuttalRel });
       }
