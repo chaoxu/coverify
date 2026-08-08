@@ -255,7 +255,13 @@ interface CliBackend {
 const CLI_BACKENDS: Record<"claude-cli" | "codex-cli" | "chatgpt-cli", CliBackend> = {
   "claude-cli": {
     env: "COVERIFY_CLAUDE_CMD",
-    cmd: "claude -p --model {model} --output-format json",
+    // --effort max (user decision 2026-08-08): the hostile audit is the one
+    // cross-family check behind every promotion — "otherwise it's hard to
+    // believe the result". The codex verdict roles already run max-tier
+    // reasoning (user's ~/.codex config: model_reasoning_effort ultra), so
+    // this closes the last default-effort gap in the cadence. Audits are
+    // ~1% of token spend; several-fold deeper thinking stays negligible.
+    cmd: "claude -p --model {model} --effort max --output-format json",
     output: "claude-json",
   },
   "codex-cli": {

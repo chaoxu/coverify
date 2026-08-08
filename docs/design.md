@@ -681,7 +681,9 @@ the cheaper thing to fix first.
       billed: coordinator and workers `openai-codex/gpt-5.6-sol@max`
       (tooled Sol agents, ChatGPT-subscription OAuth); verdict roles
       `codex-cli/gpt-5.6-sol` except the hostile auditor on
-      `claude-cli/opus` — user decision 2026-08-01; the audit stage is
+      `claude-cli/opus` at `--effort max` (user decisions 2026-08-01 and
+      2026-08-08 — the cross-family audit behind every promotion runs at
+      maximum effort); the audit stage is
       still cross-family out of the box)
 - [ ] Per-wake model routing and eval-driven per-role tuning (cheap wakes vs
       promotion wakes; cheap critics) — decided by eval evidence
