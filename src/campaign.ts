@@ -145,6 +145,21 @@ export function citedEvidencePaths(text: string): Set<string> {
  * second run is easy to do by accident — an idle campaign parked on a handle
  * looks dead.
  */
+/** Read the campaign lock file; `held` is absent when missing or torn. The
+ *  lock's location and {pid, startedAt} shape are owned here — `coverify
+ *  stop` and the acquire path must agree on both. */
+export function readCampaignLock(dir: string): {
+  lockPath: string;
+  held?: { pid?: number; startedAt?: string };
+} {
+  const lockPath = path.join(dir, JOURNAL_DIR, "lock.json");
+  try {
+    return { lockPath, held: JSON.parse(fs.readFileSync(lockPath, "utf-8")) };
+  } catch {
+    return { lockPath };
+  }
+}
+
 export function acquireCampaignLock(dir: string): () => void {
   const lock = path.join(dir, JOURNAL_DIR, "lock.json");
   fs.mkdirSync(path.dirname(lock), { recursive: true });
@@ -154,12 +169,7 @@ export function acquireCampaignLock(dir: string): () => void {
     claim();
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-    let held: { pid?: number; startedAt?: string } = {};
-    try {
-      held = JSON.parse(fs.readFileSync(lock, "utf-8"));
-    } catch {
-      /* torn lock file: treat as stale */
-    }
+    const held = readCampaignLock(dir).held ?? {};
     let alive = false;
     if (typeof held.pid === "number") {
       try {

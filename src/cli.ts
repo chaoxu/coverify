@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
-import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   campaignExists,
   initCampaign,
   peekUserMessages,
   queueUserMessage,
+  readCampaignLock,
   readJournal,
   readLedger,
 } from "./campaign.js";
@@ -162,11 +162,22 @@ async function prove(resume: boolean): Promise<void> {
     console.error(`no campaign at ${dir}`);
     process.exit(1);
   }
+  // Reasoning-only is a per-CAMPAIGN user policy (design.md rule 3), so a
+  // resume inherits it from the last run's stamp — otherwise a plain
+  // `coverify resume` after a crash would silently re-allow technicians.
+  let noComputation = flags.get("no-computation") === "true";
+  if (resume && !noComputation) {
+    const last = readJournal(dir).findLast((e) => (e as { runStart?: boolean }).runStart === true);
+    if ((last as { noComputation?: boolean } | undefined)?.noComputation === true) {
+      noComputation = true;
+      console.error("[coverify] reasoning-only policy inherited from the prior run (--no-computation)");
+    }
+  }
   const synthesis = await runCampaign({
     campaignDir: dir,
     userAgentLimit: agentLimit(),
     maxWakes: optionalInt("max-wakes"),
-    noComputation: flags.get("no-computation") === "true",
+    noComputation,
   });
   console.log(synthesis);
 }
@@ -247,24 +258,24 @@ switch (command) {
     // Signal the lock-holding harness (issue #19: killing by hand-hunted PID
     // is error-prone — first attempt hit the zsh wrapper). SIGTERM only; the
     // reaper takes the CLI process groups down with it.
-    const lockPath = path.join(dir, ".coverify", "lock.json");
-    let held: { pid?: number; startedAt?: string } = {};
-    try {
-      held = JSON.parse(fs.readFileSync(lockPath, "utf-8"));
-    } catch {
-      console.error(`no running campaign at ${dir} (no readable lock)`);
+    const { lockPath, held } = readCampaignLock(dir);
+    if (held === undefined || typeof held.pid !== "number") {
+      console.error(`no running campaign at ${dir} (no readable lock at ${lockPath})`);
       process.exit(1);
     }
-    if (typeof held.pid !== "number") {
-      console.error(`torn lock at ${lockPath}; inspect and remove it by hand`);
+    // Pid-reuse guard: a lock left by a SIGKILLed harness can point at a
+    // recycled pid — verify the command line looks like a coverify harness
+    // before signaling an innocent process.
+    const { spawnSync } = await import("node:child_process");
+    const cmdline = spawnSync("ps", ["-p", String(held.pid), "-o", "command="]).stdout?.toString() ?? "";
+    if (!/coverify|cli\.ts/.test(cmdline)) {
+      console.error(
+        `lock-holder pid ${held.pid} is ${cmdline.trim() === "" ? "not running" : `an unrelated process (${cmdline.trim().slice(0, 80)})`} — ` +
+          "stale lock; next run reclaims it",
+      );
       process.exit(1);
     }
-    try {
-      process.kill(held.pid, "SIGTERM");
-    } catch {
-      console.error(`lock-holder pid ${held.pid} is not running (stale lock; next run reclaims it)`);
-      process.exit(1);
-    }
+    process.kill(held.pid, "SIGTERM");
     console.error(`[coverify] SIGTERM sent to campaign harness pid ${held.pid} (started ${held.startedAt})`);
     break;
   }

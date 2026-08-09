@@ -4,11 +4,12 @@
 // surface. Semantics-invisible mechanics (design rule 2): everything here is
 // about confining compute, never about campaign policy.
 import { execFile, spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { type AgentTool } from "@earendil-works/pi-agent-core";
-import { repoRoot } from "./campaign.js";
+import { campaignExists, repoRoot } from "./campaign.js";
 import {
   createGrepTool,
   createLsTool,
@@ -40,7 +41,9 @@ export function installReaperHooks(): void {
     }
   };
   process.on("exit", reapAll);
-  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+  // SIGQUIT included: detached CLI children no longer share the terminal's
+  // foreground group, so JS hooks are their only kill path short of SIGKILL.
+  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"] as const) {
     process.on(sig, () => {
       reapAll();
       process.exit(sig === "SIGINT" ? 130 : 143);
@@ -214,9 +217,10 @@ function realResolve(p: string): string {
  * well, because a *not-yet-existing* `proved.md` resolves to that spelling
  * while naming the same file as `PROVED.md` on a case-insensitive volume.
  */
+const under = (child: string, root: string) => child === root || child.startsWith(root + path.sep);
+
 function inScope(scope: WriteScope, target: string): boolean {
   const real = realResolve(target);
-  const under = (child: string, root: string) => child === root || child.startsWith(root + path.sep);
   const allowed = scope.allow.some((root) => under(real, realResolve(root)));
   const denied = scope.deny.some((root) => {
     const r = realResolve(root);
@@ -647,7 +651,7 @@ export function readRoots(cwd: string): string[] {
   // a worker's evidence dir or the campaign dir itself.
   let root = realResolve(cwd);
   for (let d = root; ; d = path.dirname(d)) {
-    if (fs.existsSync(path.join(d, "STATEMENT.md"))) {
+    if (campaignExists(d)) {
       root = d;
       break;
     }
@@ -657,15 +661,58 @@ export function readRoots(cwd: string): string[] {
   try {
     const stmt = fs.readFileSync(path.join(root, "STATEMENT.md"), "utf-8");
     // Path-like tokens: ~/x, /x, or ../x (relative to the campaign root, the
-    // lin3cut convention for sibling campaigns). Only existing paths count.
-    for (const tok of stmt.match(/(?:~\/|\.\.\/|\/)[\w.@+-][\w.@/+-]*/g) ?? []) {
+    // lin3cut convention for sibling campaigns). The preceding character must
+    // not be a word char or ':', so `https://host/tmp` does not grant /tmp.
+    // Trailing sentence punctuation is stripped ("... at ~/research/x." must
+    // not silently drop the root). Only existing paths at depth >= 3 count —
+    // a bare `/var` or `/tmp` mentioned in prose is never a read grant.
+    for (const m of stmt.matchAll(/(?:^|[^\w:])((?:~\/|\.\.\/|\/)[\w.@+-][\w.@/+-]*)/g)) {
+      const tok = (m[1] ?? "").replace(/[.,;:!?]+$/, "");
+      if (!tok) continue;
       const abs = tok.startsWith("~/") ? path.join(os.homedir(), tok.slice(2)) : path.resolve(root, tok);
+      if (abs.split(path.sep).filter(Boolean).length < 3) continue;
       if (fs.existsSync(abs)) roots.push(realResolve(abs));
     }
   } catch {
     /* foreign campaign without a statement: campaign tree only */
   }
   return roots;
+}
+
+/** Mirror of pi's resolveToCwd (core/tools/path-utils.ts, 0.83.0): the read
+ *  tools strip a leading '@', expand `~`, and accept file:// URLs BEFORE
+ *  touching the filesystem — so the guard must judge the path the tool will
+ *  actually use. Judging the raw param lets `grep {path: "~"}` resolve to
+ *  `<evidenceDir>/~` for the check and to $HOME for the search — reopening
+ *  the exact issue-#22 hole. (Deep-importing pi's helper is blocked by its
+ *  package exports map; drift is pinned by tests/read-scope.test.ts.) */
+function normalizeLikePi(v: string, cwd: string): string {
+  let s = v.replace(/[\u00A0\u2000-\u200B\u202F\u205F\u3000]/g, " ");
+  if (s.startsWith("@")) s = s.slice(1);
+  if (s === "~") s = os.homedir();
+  else if (s.startsWith("~/")) s = path.join(os.homedir(), s.slice(2));
+  if (/^file:\/\//.test(s)) s = fileURLToPath(s);
+  return path.isAbsolute(s) ? path.resolve(s) : path.resolve(cwd, s);
+}
+
+const COVERIFY_STATE_RE = /(^|\/)\.coverify(\/|$)/;
+
+/** Drop grep/ls result lines that reference .coverify/ content: ripgrep runs
+ *  with --hidden, so a pathless or campaign-root grep would otherwise return
+ *  journal and session-transcript lines — a verification-blindness leak the
+ *  param check alone cannot stop (the param was in scope). */
+function dropCoverifyLines(text: string): string {
+  const lines = text.split("\n");
+  const kept = lines.filter((l) => !/(^|\/)\.coverify(\/|:)/.test(l));
+  const dropped = lines.length - kept.length;
+  return dropped === 0 ? text : `${kept.join("\n")}\n[${dropped} line(s) under .coverify/ withheld: harness state]`;
+}
+
+function dropCoverifyResult(result: Awaited<ReturnType<AgentTool["execute"]>>): typeof result {
+  return {
+    ...result,
+    content: result.content.map((b) => (b.type === "text" ? { ...b, text: dropCoverifyLines(b.text) } : b)),
+  };
 }
 
 /** Cap a read-tool result's text to OUTPUT_LIMIT chars — the same bound
@@ -684,7 +731,9 @@ function capResultText(result: Awaited<ReturnType<AgentTool["execute"]>>): typeo
     budget = 0;
     return {
       ...block,
-      text: block.text.slice(0, kept) + "\n[truncated: result exceeded the 50k read budget; narrow the query]",
+      text:
+        block.text.slice(0, kept) +
+        `\n[truncated: result exceeded the ${OUTPUT_LIMIT}-char read budget; narrow the query]`,
     };
   });
   return { ...result, content };
@@ -693,11 +742,16 @@ function capResultText(result: Awaited<ReturnType<AgentTool["execute"]>>): typeo
 function confineReads(tool: AgentTool, roots: string[], cwd: string): AgentTool {
   const execute: AgentTool["execute"] = async (toolCallId, params, signal, onUpdate) => {
     const rec = (params ?? {}) as Record<string, unknown>;
-    for (const key of ["path", "file", "dir", "directory"]) {
-      const v = rec[key];
-      if (typeof v !== "string" || v.trim() === "") continue;
-      const real = realResolve(path.isAbsolute(v) ? v : path.resolve(cwd, v));
-      if (!roots.some((r) => real === r || real.startsWith(r + path.sep))) {
+    // All three pi tools name their path parameter `path` (read/ls/grep
+    // schemas, verified 0.83.0); grep's is optional and defaults to cwd,
+    // which is in scope by construction.
+    {
+      const v = rec.path;
+      if (typeof v !== "string" || v.trim() === "") {
+        return capResultText(dropCoverifyResult(await tool.execute(toolCallId, params, signal, onUpdate)));
+      }
+      const real = realResolve(normalizeLikePi(v, cwd));
+      if (!roots.some((r) => under(real, r))) {
         return toolText(
           `READ SCOPE REFUSED: ${v} is outside this campaign's read scope — the campaign ` +
             "directory and the prior-route paths STATEMENT.md declares. For literature or any " +
@@ -709,14 +763,17 @@ function confineReads(tool: AgentTool, roots: string[], cwd: string): AgentTool 
       // transcripts, and gate mirrors live under .coverify/, and reading a
       // transcript would also breach verification blindness (another agent's
       // reasoning must stay unseen).
-      if (/(^|\/)\.coverify(\/|$)/.test(real)) {
+      if (COVERIFY_STATE_RE.test(real)) {
         return toolText(
           `READ SCOPE REFUSED: ${v} is harness state (.coverify/ journals and transcripts), ` +
             "not campaign reasoning material. Read the ledgers and EVIDENCE/ instead.",
         );
       }
     }
-    return capResultText(await tool.execute(toolCallId, params, signal, onUpdate));
+    // Result-side filtering as well: an in-scope directory grep/ls still
+    // traverses .coverify/ (ripgrep runs --hidden), so matched transcript
+    // lines are withheld even when the param was legal.
+    return capResultText(dropCoverifyResult(await tool.execute(toolCallId, params, signal, onUpdate)));
   };
   return { ...tool, execute };
 }

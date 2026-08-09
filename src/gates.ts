@@ -44,8 +44,19 @@ export interface GateRecord {
  * Existing campaigns keep their id by writing the legacy path hash into the
  * file on first read, so nothing in flight is disturbed.
  */
+/** The out-of-tree state root — one authority, shared with dev tooling
+ *  (scripts/smoke.ts) so cleanup never guesses at this path. */
+export function stateRootDir(): string {
+  return process.env.COVERIFY_STATE_DIR ?? path.join(os.homedir(), ".local/state/coverify");
+}
+
+/** Where a campaign records its opaque state-dir id (16 hex chars). */
+export function campaignIdPath(campaignDir: string): string {
+  return path.join(campaignDir, ".coverify", "campaign-id");
+}
+
 function campaignIdentity(campaignDir: string, stateDir: string): string {
-  const idFile = path.join(campaignDir, ".coverify", "campaign-id");
+  const idFile = campaignIdPath(campaignDir);
   if (fs.existsSync(idFile)) {
     const id = fs.readFileSync(idFile, "utf-8").trim();
     if (/^[0-9a-f]{16}$/.test(id)) return id;
@@ -72,8 +83,7 @@ export class GateStore {
   constructor(campaignDir: string) {
     const resolved = path.resolve(campaignDir);
     this.campaignDir = fs.existsSync(resolved) ? fs.realpathSync.native(resolved) : resolved;
-    const stateDir =
-      process.env.COVERIFY_STATE_DIR ?? path.join(os.homedir(), ".local/state/coverify");
+    const stateDir = stateRootDir();
     const id = campaignIdentity(this.campaignDir, stateDir);
     const dir = path.join(stateDir, id);
     fs.mkdirSync(dir, { recursive: true });
