@@ -707,7 +707,17 @@ const COVERIFY_STATE_RE = /(^|\/)\.coverify(\/|$)/;
  *  is also why the read tool (raw file content, no path prefix) is exempt. */
 function dropCoverifyLines(text: string): string {
   const lines = text.split("\n");
-  const kept = lines.filter((l) => !/^[^\s:]*(?:^|\/)\.coverify(?:\/|[:-])/.test(l));
+  const kept = lines.filter((l) => {
+    // Extract the leading path structurally, then judge it segment-exact:
+    // grep match/context lines are "<path>:12: text" / "<path>-12- text"
+    // (pi builds both; the \d+ requirement keeps a ':' or '-' inside a
+    // directory name from ending the path early); anything else (ls
+    // entries) is judged whole. Character-class prefix guessing broke both
+    // ways — paths with spaces leaked, .coverify-* siblings were dropped.
+    const m = /^(.*?)[:-]\d+[:-] /.exec(l);
+    const prefix = m?.[1] ?? l.trimEnd();
+    return !COVERIFY_STATE_RE.test(prefix);
+  });
   const dropped = lines.length - kept.length;
   return dropped === 0 ? text : `${kept.join("\n")}\n[${dropped} line(s) under .coverify/ withheld: harness state]`;
 }
@@ -750,6 +760,12 @@ function confineReads(tool: AgentTool, roots: string[], cwd: string): AgentTool 
   const filterResults = tool.name !== "read";
   const guard = (r: Awaited<ReturnType<AgentTool["execute"]>>) =>
     capResultText(filterResults ? dropCoverifyResult(r) : r);
+  // Stated up front in the schema so roles do not discover the fence by
+  // bumping into it (63 refusal round-trips measured on the first night).
+  const scopeNote =
+    " Readable scope: this campaign's directory and the prior-route paths its STATEMENT.md " +
+    "declares; .coverify/ is harness state and is never readable. Results are capped at " +
+    `${OUTPUT_LIMIT} chars — narrow queries beat broad sweeps.`;
   const execute: AgentTool["execute"] = async (toolCallId, params, signal, onUpdate) => {
     const rec = (params ?? {}) as Record<string, unknown>;
     // All three pi tools name their path parameter `path` (read/ls/grep
@@ -785,7 +801,7 @@ function confineReads(tool: AgentTool, roots: string[], cwd: string): AgentTool 
     // lines are withheld even when the param was legal.
     return guard(await tool.execute(toolCallId, params, signal, onUpdate));
   };
-  return { ...tool, execute };
+  return { ...tool, description: `${tool.description}${scopeNote}`, execute };
 }
 
 /**

@@ -301,7 +301,11 @@ switch (command) {
       .map((e) => (e as { gate?: { kind?: string; ts?: string; revision?: string; artifact?: string } }).gate)
       .filter((g) => g?.kind === "rebuttal");
     if (rebuttals.length > 0) {
-      console.log(`## Recorded rebuttals (${rebuttals.length} — each sanctions one fresh attempt on an unchanged revision)\n`);
+      const shown = Math.min(rebuttals.length, 10);
+      console.log(
+        `## Recorded rebuttals (${shown < rebuttals.length ? `last ${shown} of ` : ""}${rebuttals.length} — ` +
+          "each sanctions one fresh attempt on an unchanged revision)\n",
+      );
       for (const r of rebuttals.slice(-10)) {
         console.log(`- ${String(r?.ts ?? "").slice(0, 19)} ${r?.revision}: ${r?.artifact}`);
       }

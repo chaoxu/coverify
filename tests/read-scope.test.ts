@@ -94,6 +94,13 @@ describe("read scope", () => {
     const read = tool(tools, "read");
     const body = text(await read.execute("h3", { path: path.join(dir, "EVIDENCE", "r001", "mentions.md") }));
     expect(body).toContain(".coverify/journal.jsonl");
+    // Same for grep: a MATCH line whose content mentions .coverify/ is kept
+    // (the filter judges the structural path prefix, not the content), and
+    // a legitimate sibling named .coverify-* is never dropped.
+    fs.writeFileSync(path.join(dir, "EVIDENCE", "r001", ".coverify-notes.md"), "SECRETMARKER sibling\n");
+    const out2 = text(await grep.execute("h4", { pattern: "SECRETMARKER|journal", path: dir }));
+    expect(out2).toContain(".coverify/journal.jsonl and that is fine");
+    expect(out2).toContain(".coverify-notes.md");
   });
 
   test("statement paths with trailing punctuation still grant; bare top-level dirs never do", () => {

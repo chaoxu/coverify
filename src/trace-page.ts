@@ -317,6 +317,24 @@ export const VIEW = String.raw`
       title: "<strong>promotion</strong><div class='t-mono'>" + esc(p.revision) + " &middot; " + clock(p.t) + "</div>",
     });
   });
+  ev.filter((e) => e.type === "rebuttal").forEach((r, i) => {
+    items.push({
+      id: "rb" + i,
+      group: "verify",
+      start: ms(r.t),
+      type: "point",
+      className: "stage stage-none",
+      content: "rebuttal " + esc(r.revision),
+      kind: "rebuttal",
+      ev: r,
+      title:
+        "<strong>rebuttal recorded</strong><div class='t-mono'>" +
+        esc(r.revision) +
+        " &middot; " +
+        clock(r.t) +
+        "</div>",
+    });
+  });
   wakes.forEach((w, i) => {
     items.push({
       id: "w" + i,
@@ -459,6 +477,12 @@ export const VIEW = String.raw`
     } else if (item.kind === "promotion") {
       parts.push(row("promotion", "<b>" + esc(e.revision) + "</b>"));
       parts.push(row("recorded", clock(e.t), "mono"));
+    } else if (item.kind === "rebuttal") {
+      parts.push(row("rebuttal", "<b>" + esc(e.revision) + "</b>"));
+      parts.push(row("artifact", esc(e.artifact), "mono"));
+      parts.push(row("recorded", clock(e.t), "mono"));
+      parts.push(row("note", "Permission record: sanctions one fresh verification attempt on the " +
+        "unchanged revision after a substantive FAIL, per the contract's rebuttal option. The FAIL stays on record."));
     }
     box.className = "inspect";
     box.innerHTML = parts.join("");

@@ -176,13 +176,9 @@ export function traceData(dir: string): TraceData {
       // Verdict-permission record: rendered beside the verdicts so a
       // FAIL->fresh-attempt->PASS sequence is legible as the contract's
       // rebuttal lane rather than verdict shopping (skill-feedback
-      // 2026-08-09).
-      events.push({
-        type: "gate",
-        t,
-        verdict: "REBUTTAL",
-        mechanism: `${String(g.revision ?? "")} rebutted via ${String(g.artifact ?? "")}`.slice(0, 70),
-      });
+      // 2026-08-09). Own event type: folding it into "gate" corrupted the
+      // idea-gate pass-rate tile.
+      events.push({ type: "rebuttal", t, revision: g.revision, artifact: g.artifact });
     }
   }
   // Inline each report so the page is inspectable on its own; capped, with the
