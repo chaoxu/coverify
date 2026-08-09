@@ -28,7 +28,7 @@ const REQUIRED: { token: string; usedBy: string }[] = [
   { token: "hostile auditor", usedBy: "roles.ts CHARGES.hostileAuditor (stage 1)" },
   { token: "fresh comparison agent", usedBy: "roles.ts CHARGES.comparator" },
   { token: "stepwise paraphrase", usedBy: "roles.ts CHARGES.bundleCertifier" },
-  { token: "Do not rerun a failed stage", usedBy: "harness.ts anti-verdict-shopping gate" },
+  { token: "Do not rerun a failed stage", usedBy: "cadence.ts anti-verdict-shopping gate" },
 ];
 
 const contract = loadLauncherContract();

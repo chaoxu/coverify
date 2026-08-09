@@ -25,7 +25,20 @@ Three implementation rules follow:
    a user decision the CLI carries, same provenance rule as the model
    defaults. `--no-computation` (opt-in per campaign) is likewise a user-set
    scope constraint, not a harness default: it refuses every technician
-   dispatch so the campaign is pure reasoning (Chao, 2026-08-08). No
+   dispatch so the campaign is pure reasoning (Chao, 2026-08-08), and a
+   resume re-arms it from the last run-start stamp in the GATE STORE (the
+   authority, never the role-adjacent journal) so a crash-resume cannot
+   silently re-allow technicians. Ideation families (Chao, 2026-08-09,
+   Danus-study grounding in docs/skill-feedback.md) are the same provenance
+   pattern: dispatch_reasoner's optional family field routes one reasoner to
+   fable (claude-cli/fable, Max subscription), gemini (agy/gemini-3.1-pro-high,
+   Google subscription via bin/agy-oracle), or pro (chatgpt-cli/gpt-5-6-pro)
+   as toolless single-shot consults — subscription CLIs, never metered APIs;
+   specs env-overridable via COVERIFY_FAMILY_<NAME>. For pro, the oracle's
+   server-attested served_model must equal the requested slug exactly or the
+   reply is discarded as "no useful response" (Chao, 2026-08-09; issue #20 —
+   ChatGPT's router measurably downgrades, and weak-model advice must not
+   enter a campaign wearing a Pro label). No
    wall-clock timeouts on proof work, ever.
 
 ## Campaign state — the skill's own format
@@ -94,6 +107,17 @@ stated rather than claimed away.
 
 Roles have no general shell. The workspace surface is pi's `read`, `ls`, and
 `grep` (read-only) plus pi's `write` wrapped with an in-process scope check.
+Reads are CONFINED (2026-08-09, issue #22 — measured harm: workers grepping
+$HOME literature-hunted their sessions past the model context window and
+leaked unrelated files into provider prompts): read/ls/grep accept only the
+campaign tree plus prior-route paths declared in the user-frozen
+STATEMENT.md (readRoots, supervise.ts; path normalization mirrors pi's own,
+bypass-pinned in tests/read-scope.test.ts); `.coverify/` is refused
+param-side and filtered result-side (harness state, and transcript reads
+would breach verification blindness); every read result is capped at the
+same 50k budget as run_script output. The read cap is a hard constant, not
+env-tunable — an asymmetry with the batch caps, accepted as context-capacity
+supervision, not a work timeout.
 Code is a gated role, not a default: a `dispatch_technician` packet's `computation` declaration (launcher: "Use computation only for a
 preregistered finite domain and stopping rule…") dispatches a *computation technician* — a distinct role whose mathematics is confined to
 faithfully encoding the preregistered statement into code; it advances no
@@ -175,7 +199,7 @@ scheduler front door, per the launcher.
 ## Runtime shape
 
 ```
-cli.ts           prove / resume / status / amend / trace
+cli.ts           prove / resume / stop / status / trace / turns / say / amend / login / logout
 campaign.ts      state layer: init, revisions, append-only evidence, resume bundle
 launcher.ts      load + extract the fenced launcher contract (no fallback)
 roles.ts         role charges (the only coverify-authored role text); re-exports the two below
@@ -349,7 +373,7 @@ stateDiagram-v2
 | Claim-label vocabulary quoted verbatim into the ledger templates at init; label discipline and weakest-premise inheritance are contract-instructed model judgment | "Claim labels — literal, never inflated" |
 | Dispatch schema requires the FAILED.md check field (`no close prior route` / `closest is X; differs because…`) | "Before every route, materially changed retry, or variant, check `FAILED.md`…" |
 | Worker packet schema requires a finite mathematical deliverable; the deliverable-or-precise-gap report form is charged in the role prompt, not parsed | "Every exploration agent must return a proved lemma, explicit construction, counterexample/certificate, or a precise failing implication" |
-| No harness timeouts on proof/audit/reconstruction work (the per-run_script batch cap is surfaced in the tool description and env-tunable) | "Do not impose a coordinator-created elapsed-time limit…" |
+| No harness timeouts on proof/audit/reconstruction work (the per-run_script batch cap is surfaced in the tool description and env-tunable; the 50k read-result cap is context-capacity supervision, not a work timeout; bin/agy-oracle's `--print-timeout 90m` is CLI-transport supervision with the `COVERIFY_FAMILY_GEMINI`/`COVERIFY_AGY_CMD` escape hatch — the 90m figure awaits explicit user sign-off, flagged 2026-08-09) | "Do not impose a coordinator-created elapsed-time limit…" |
 | Code tools (`run_script` + non-prose writes) exist only on a technician dispatched with a computation declaration with concrete bounds; dispatch gate refuses thin declarations; coordinator is prose-only; the dispatch returns the REGISTRY.md launch record (workload, limits, output paths, cancellation) | "Use computation only for a preregistered finite domain and stopping rule yielding a small witness, certificate, or table." / "Never run unsupervised detached compute." |
 | Mechanism identity for gate keys is normalized (trimmed, whitespace-collapsed, case-folded), so retyping a mechanism neither evades the wave gate nor discards an IDEA PASS already earned | "Do not allow recursive subagent fan-out or a large route wave before the parent mechanism receives `IDEA PASS`…" |
 | Wave gate: a second **concurrent** worker on a mechanism requires `IDEA PASS` on file; sequential retries get an advisory reminder, not a refusal (that judgment is the coordinator's); single first-wave scouts exempt | "Do not allow recursive subagent fan-out or a large route wave before the parent mechanism receives `IDEA PASS`…" |
@@ -504,9 +528,11 @@ with a fixed ~20k-token verbatim tail, is billed at the coordinator's model
 and thinking level, its spend is counted into the usage journal via the
 compaction entry, and the ledgers remain authoritative (re-supplied in the
 next wake). (2) Session JSONL trees under `.coverify/sessions/` are full
-transcripts on disk; reads are unrestricted by design, so any role could in
-principle read another's transcript (threat-model item 3 class; same
-exposure class as world-readable EVIDENCE/, blind roles remain toolless).
+transcripts on disk. The pi read tools now refuse and filter `.coverify/`
+(2026-08-09), so the transcript-read block is tool-surface-enforced for
+prose roles — but a technician's run_script executes at the OS level where
+both sandbox backends deny writes only, so against a script the block is
+(instructed only), not (enforced). Blind roles remain toolless.
 (3) Prompt purity of harness sessions is by construction — AgentHarness
 uses the `systemPrompt` string verbatim with no hooks registered and empty
 resources — verified against pi source at 0.83.0; re-verify on pi upgrades.

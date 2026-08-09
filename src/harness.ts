@@ -424,8 +424,21 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     // with guidance (not errored) when the family has no usable auth, so a
     // coordinator can fall back to a default dispatch in the same turn.
     const family =
-      role === "reasoner" ? (packet as ReasonerPacket & { family?: string }).family : undefined;
+      role === "reasoner" ? (packet as ReasonerPacket).family : undefined;
     if (family !== undefined) {
+      // A family-routed reasoner is a toolless single-shot CLI consult: it
+      // cannot hold the librarian, so granting a literature question would
+      // render a "(granted)" prompt for a tool that does not exist.
+      if ((packet as ReasonerPacket).literature !== undefined) {
+        return refuse(
+          store,
+          "dispatch",
+          "family-routed reasoners are toolless single-shot consults and cannot carry a " +
+            "literature grant — dispatch the literature scout without the family field, or " +
+            "drop the literature field from this packet",
+          { mechanism: packet.mechanism, role },
+        );
+      }
       const resolved = await resolveFamily(models, family);
       if ("reason" in resolved) {
         return refuse(store, "dispatch", resolved.reason, { mechanism: packet.mechanism, role });
@@ -490,7 +503,11 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       : createHarnessRoleSession(
           {
             contract,
-            charge: isTechnician ? CHARGES.technician : CHARGES.reasoner,
+            charge: isTechnician
+              ? CHARGES.technician
+              : family !== undefined
+                ? CHARGES.reasonerToolless
+                : CHARGES.reasoner,
             workspace: {
               cwd: evidenceDir,
               scope: { allow: [evidenceDir], deny: [] },

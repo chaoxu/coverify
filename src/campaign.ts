@@ -263,6 +263,14 @@ export function readJournal(dir: string): JournalEntry[] {
   return entries;
 }
 
+/** Unwrap the mirrored gate record from a journal entry ({kind:"note", gate})
+ *  — the one tolerant reading of that wrapper shape, shared by every
+ *  journal-side consumer (status, trace, adopt-rebuild). */
+export function gateOf(e: unknown): Record<string, unknown> | undefined {
+  const g = (e as Record<string, unknown> | null)?.gate;
+  return typeof g === "object" && g !== null ? (g as Record<string, unknown>) : undefined;
+}
+
 /**
  * User→coordinator message channel (`coverify say`). The inbox lives under
  * .coverify/, which every role's write scope denies, so only the user (via

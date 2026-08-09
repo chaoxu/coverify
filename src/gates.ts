@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { appendJournal, readLedger, sha256File, sha256Text } from "./campaign.js";
+import { appendJournal, gateOf, readLedger, sha256File, sha256Text } from "./campaign.js";
 
 /**
  * Gate state store. Gate decisions must not depend on files any role's
@@ -132,7 +132,7 @@ export class GateStore {
         if (!raw.trim()) continue;
         try {
           const e = JSON.parse(raw) as Record<string, unknown>;
-          const gate = e.gate as Record<string, unknown> | undefined;
+          const gate = gateOf(e);
           if (gate && typeof gate.kind === "string") lines.push(JSON.stringify(gate));
           else if (e.kind === "wake" || e.kind === "usage" || e.kind === "note") lines.push(JSON.stringify(e));
         } catch {
@@ -286,6 +286,9 @@ export interface ReasonerPacket extends DispatchPacket {
    *  question. Grants the delegated librarian search tool (an external
    *  web-searching agent). Reasoners never hold code tools. */
   literature?: string;
+  /** Optional ideation family ("fable" | "gemini" | "pro"): routes this one
+   *  reasoner to a different model family (providers.ts resolveFamily). */
+  family?: string;
 }
 
 /** A computation technician: encodes and runs one preregistered computation. */

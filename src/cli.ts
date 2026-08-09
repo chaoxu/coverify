@@ -5,6 +5,7 @@ import {
   initCampaign,
   peekUserMessages,
   queueUserMessage,
+  gateOf,
   readCampaignLock,
   readJournal,
   readLedger,
@@ -153,12 +154,14 @@ async function prove(resume: boolean): Promise<void> {
     process.exit(1);
   }
   // Reasoning-only is a per-CAMPAIGN user policy (design.md rule 3), so a
-  // resume inherits it from the last run's stamp — otherwise a plain
-  // `coverify resume` after a crash would silently re-allow technicians.
+  // resume inherits it from the last run's stamp. Read from the GATE STORE,
+  // never the in-tree journal: the journal is role-adjacent, and on an
+  // instructed-only confinement platform a forged trailing runStart line
+  // could silently re-arm technicians (2026-08-09 architecture review).
   let noComputation = flags.get("no-computation") === "true";
   if (resume && !noComputation) {
-    const last = readJournal(dir).findLast((e) => (e as { runStart?: boolean }).runStart === true);
-    if ((last as { noComputation?: boolean } | undefined)?.noComputation === true) {
+    const last = new GateStore(dir).all().findLast((e) => e.runStart === true);
+    if (last?.noComputation === true) {
       noComputation = true;
       console.error("[coverify] reasoning-only policy inherited from the prior run (--no-computation)");
     }
@@ -287,16 +290,14 @@ switch (command) {
     // 2026-08-09): a FAIL followed by a PASS on the same revision is only
     // legible next to its recorded rebuttal — without this section the
     // contract's legitimate rebuttal lane reads as verdict shopping.
-    const rebuttals = journal
-      .map((e) => (e as { gate?: { kind?: string; ts?: string; revision?: string; artifact?: string } }).gate)
-      .filter((g) => g?.kind === "rebuttal");
+    const rebuttals = journal.map(gateOf).filter((g) => g?.kind === "rebuttal");
     if (rebuttals.length > 0) {
-      const shown = Math.min(rebuttals.length, 10);
+      const shown = rebuttals.slice(-10);
       console.log(
-        `## Recorded rebuttals (${shown < rebuttals.length ? `last ${shown} of ` : ""}${rebuttals.length} — ` +
+        `## Recorded rebuttals (${shown.length < rebuttals.length ? `last ${shown.length} of ` : ""}${rebuttals.length} — ` +
           "each sanctions one fresh attempt on an unchanged revision)\n",
       );
-      for (const r of rebuttals.slice(-10)) {
+      for (const r of shown) {
         console.log(`- ${String(r?.ts ?? "").slice(0, 19)} ${r?.revision}: ${r?.artifact}`);
       }
       console.log("");

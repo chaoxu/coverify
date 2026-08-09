@@ -8,7 +8,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { citedEvidencePaths, readJournal, readLedger, repoRoot } from "./campaign.js";
+import { citedEvidencePaths, gateOf, readJournal, readLedger, repoRoot } from "./campaign.js";
 import { BODY, STYLES, VIEW } from "./trace-page.js";
 
 export interface TraceAgent {
@@ -123,7 +123,7 @@ export function traceData(dir: string): TraceData {
     if (at_ === undefined) continue;
     const t = at_ - base;
     if (t > last) last = t;
-    const g = row.gate && typeof row.gate === "object" ? (row.gate as Record<string, any>) : undefined;
+    const g = gateOf(row) as Record<string, any> | undefined;
     if (row.kind === "wake") {
       events.push({ type: "wake", t, n: row.wake, live: row.live ?? 0, reports: row.newReports ?? 0 });
     } else if (row.kind === "note" && (row.runStart === true || row.note === "run-start")) {

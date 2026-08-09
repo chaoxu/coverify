@@ -159,24 +159,26 @@ export function roleModelSpec(role: RoleName): ModelSpec {
  *  the same gates (Danus study: same-family swarms added no new ideas; the
  *  different-family consult carried the plan). Model routing is harness
  *  mechanics (design rule 2); specs overridable via COVERIFY_FAMILY_<NAME>. */
-const FAMILY_SPECS: Record<string, { env: string; fallback: string }> = {
-  // Subscription-billed CLIs, not metered APIs (same policy as the role
-  // defaults): fable through the official Claude CLI (Max), gemini through
-  // agy (Google). Both are single-shot toolless consults like "pro".
-  fable: { env: "COVERIFY_FAMILY_FABLE", fallback: "claude-cli/fable" },
-  gemini: { env: "COVERIFY_FAMILY_GEMINI", fallback: "agy/gemini-3.1-pro-high" },
-  // The Danus-style advisor lane: ChatGPT-subscription gpt-5.6-pro through
-  // the chatgpt-cli oracle — a single-shot toolless consult (the packet must
-  // inline everything). Served-model attestation is enforced at the oracle
-  // parse: a router-downgraded reply is discarded as "no useful response"
-  // (user policy, Chao 2026-08-09), so weak-model advice cannot enter the
-  // campaign wearing a Pro label.
-  pro: { env: "COVERIFY_FAMILY_PRO", fallback: "chatgpt-cli/gpt-5-6-pro" },
+// Family -> default spec; env override is derived (COVERIFY_FAMILY_<NAME>).
+// Subscription-billed CLIs, not metered APIs (same policy as the role
+// defaults): fable through the official Claude CLI (Max), gemini through
+// agy (Google), and "pro" — the Danus-style advisor lane — through the
+// chatgpt-cli oracle. All three are single-shot toolless consults (the
+// packet must inline everything). For "pro", served-model attestation is
+// enforced at the oracle parse: a router-downgraded reply is discarded as
+// "no useful response" (user policy, Chao 2026-08-09), so weak-model advice
+// cannot enter the campaign wearing a Pro label.
+const FAMILY_SPECS: Record<string, string> = {
+  fable: "claude-cli/fable",
+  gemini: "agy/gemini-3.1-pro-high",
+  pro: "chatgpt-cli/gpt-5-6-pro",
 };
 export const IDEATION_FAMILIES = Object.keys(FAMILY_SPECS);
 export function familyModelSpec(family: string): ModelSpec | undefined {
-  const f = FAMILY_SPECS[family];
-  return f === undefined ? undefined : envSpec(f.env, f.fallback);
+  const fallback = FAMILY_SPECS[family];
+  return fallback === undefined
+    ? undefined
+    : envSpec(`COVERIFY_FAMILY_${family.toUpperCase()}`, fallback);
 }
 
 /** Resolve an ideation-family request to a usable spec, or a refusal reason
