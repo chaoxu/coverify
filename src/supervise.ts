@@ -687,7 +687,7 @@ export function readRoots(cwd: string): string[] {
  *  the exact issue-#22 hole. (Deep-importing pi's helper is blocked by its
  *  package exports map; drift is pinned by tests/read-scope.test.ts.) */
 function normalizeLikePi(v: string, cwd: string): string {
-  let s = v.replace(/[\u00A0\u2000-\u200B\u202F\u205F\u3000]/g, " ");
+  let s = v.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ");
   if (s.startsWith("@")) s = s.slice(1);
   if (s === "~") s = os.homedir();
   else if (s.startsWith("~/")) s = path.join(os.homedir(), s.slice(2));
@@ -697,13 +697,17 @@ function normalizeLikePi(v: string, cwd: string): string {
 
 const COVERIFY_STATE_RE = /(^|\/)\.coverify(\/|$)/;
 
-/** Drop grep/ls result lines that reference .coverify/ content: ripgrep runs
- *  with --hidden, so a pathless or campaign-root grep would otherwise return
- *  journal and session-transcript lines — a verification-blindness leak the
- *  param check alone cannot stop (the param was in scope). */
+/** Drop grep/ls result lines whose LEADING PATH sits under .coverify/:
+ *  ripgrep runs with --hidden, so a pathless or campaign-root grep would
+ *  otherwise return journal and session-transcript lines — a verification-
+ *  blindness leak the param check alone cannot stop (the param was in
+ *  scope). Anchored to the relpath prefix of grep's `path:line:` / `path-
+ *  line-` and ls's bare-entry formats: a result line whose CONTENT merely
+ *  mentions .coverify/ (after the separator) is legitimate and kept — which
+ *  is also why the read tool (raw file content, no path prefix) is exempt. */
 function dropCoverifyLines(text: string): string {
   const lines = text.split("\n");
-  const kept = lines.filter((l) => !/(^|\/)\.coverify(\/|:)/.test(l));
+  const kept = lines.filter((l) => !/^[^\s:]*(?:^|\/)\.coverify(?:\/|[:-])/.test(l));
   const dropped = lines.length - kept.length;
   return dropped === 0 ? text : `${kept.join("\n")}\n[${dropped} line(s) under .coverify/ withheld: harness state]`;
 }
@@ -740,6 +744,12 @@ function capResultText(result: Awaited<ReturnType<AgentTool["execute"]>>): typeo
 }
 
 function confineReads(tool: AgentTool, roots: string[], cwd: string): AgentTool {
+  // Result-side .coverify filtering applies to the directory-traversing tools
+  // (grep/ls, whose lines carry a path prefix); read returns raw file content
+  // where a .coverify mention is content, not a leak.
+  const filterResults = tool.name !== "read";
+  const guard = (r: Awaited<ReturnType<AgentTool["execute"]>>) =>
+    capResultText(filterResults ? dropCoverifyResult(r) : r);
   const execute: AgentTool["execute"] = async (toolCallId, params, signal, onUpdate) => {
     const rec = (params ?? {}) as Record<string, unknown>;
     // All three pi tools name their path parameter `path` (read/ls/grep
@@ -748,7 +758,7 @@ function confineReads(tool: AgentTool, roots: string[], cwd: string): AgentTool 
     {
       const v = rec.path;
       if (typeof v !== "string" || v.trim() === "") {
-        return capResultText(dropCoverifyResult(await tool.execute(toolCallId, params, signal, onUpdate)));
+        return guard(await tool.execute(toolCallId, params, signal, onUpdate));
       }
       const real = realResolve(normalizeLikePi(v, cwd));
       if (!roots.some((r) => under(real, r))) {
@@ -773,7 +783,7 @@ function confineReads(tool: AgentTool, roots: string[], cwd: string): AgentTool 
     // Result-side filtering as well: an in-scope directory grep/ls still
     // traverses .coverify/ (ripgrep runs --hidden), so matched transcript
     // lines are withheld even when the param was legal.
-    return capResultText(dropCoverifyResult(await tool.execute(toolCallId, params, signal, onUpdate)));
+    return guard(await tool.execute(toolCallId, params, signal, onUpdate));
   };
   return { ...tool, execute };
 }

@@ -85,6 +85,15 @@ describe("read scope", () => {
     const listing = text(await ls.execute("h2", { path: dir }));
     expect(listing).not.toContain("session-transcript");
     expect(listing).toContain("withheld: harness state");
+    // A file whose CONTENT mentions .coverify/ is legitimate reasoning
+    // material — the read tool must return it unfiltered.
+    fs.writeFileSync(
+      path.join(dir, "EVIDENCE", "r001", "mentions.md"),
+      "the journal lives at .coverify/journal.jsonl and that is fine to say\n",
+    );
+    const read = tool(tools, "read");
+    const body = text(await read.execute("h3", { path: path.join(dir, "EVIDENCE", "r001", "mentions.md") }));
+    expect(body).toContain(".coverify/journal.jsonl");
   });
 
   test("statement paths with trailing punctuation still grant; bare top-level dirs never do", () => {
