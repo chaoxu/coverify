@@ -6,6 +6,15 @@ The skill is the spec; coverify is a mechanical referee for it. It adds no
 mathematical policy of its own — its edge over running the skill in a frontier
 harness is that the rules that matter are enforced in code and cannot drift.
 
+The goal is **cost-efficient proof search**: verified mathematical results for
+as few tokens as possible, measured as verified-true output per billable token
+and arbitrated by a budget-matched A/B against the raw skill (`docs/design.md`,
+"Token-controlled A/B"). Efficiency is pursued in harness mechanics — what each
+role reads, how ledgers are addressed, what survives a compaction — never by
+searching less or verifying less: the harness imposes no agent ceiling and no
+wall-clock timeout on proof work, and verification spend counts inside the
+budget.
+
 A project is a folder. There is no server, no worker daemon, and no deploy
 pipeline. The campaign directory uses the launcher's exact
 file layout (`STATEMENT.md`, `CURRENT_FRONTIER.md`, `REGISTRY.md`,

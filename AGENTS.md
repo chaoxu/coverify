@@ -1,5 +1,32 @@
 # Coverify Agent Guidance
 
+## The goal: cost-efficient proof search
+
+Coverify exists to obtain verified mathematical results using as few tokens
+as possible. The metric is verified-true output per billable token, and the
+arbiter is the budget-matched A/B against the raw skill in `docs/design.md`
+("Token-controlled A/B") — not wall-clock, not wake count, not artifact
+volume.
+
+The goal binds harness mechanics, never the search itself:
+
+- In scope: what each role is made to read, how the ledgers are addressed,
+  what a wake carries, what must be re-read after compaction, what is
+  reused. A token not spent re-reading something the agent already has is
+  the whole win.
+- Out of scope, and still forbidden by rule 3 below: capping agents, timing
+  out proof work, defaulting a budget the user did not set. Efficiency is
+  never bought by searching less.
+- Verification spend counts inside the budget and is never what gets cut.
+  Shipping a false theorem costs more than shipping nothing.
+
+Efficiency claims are measured, not asserted — quote before/after tokens or
+context chars from real campaign sessions (`coverify turns`, the journal's
+usage records), the way `docs/design.md` records its baselines. Follow
+`docs/measurement-protocol.md` when you do: it fixes the unit conventions
+(cached inside or beside input, reasoning inside output), requires the
+three-way cross-check, and records why a token count is not a cost.
+
 ## The skill is the spec
 
 Coverify enforces the `math-proof-search` launcher contract
