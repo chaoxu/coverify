@@ -230,7 +230,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         extra?: Record<string, unknown>;
       }): Promise<{ text: string; pass: boolean; unparseable: boolean; artifact: string }> => {
         const spec = roleModelSpec(stage.role);
-        const { text, usage, promptChars, durationMs } = await runRole({
+        const { text, usage, promptChars, durationMs, servedModel } = await runRole({
           contract,
           charge: CHARGES[stage.role],
           prompt: stage.ctx.prompt,
@@ -265,7 +265,9 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           suppliedInputs: stage.ctx.suppliedInputs,
           blindness: stage.blindness,
           toolVisibility: toolVisibilityOf(spec.provider),
-          modelFamily: specLabel(spec),
+          // Attested served model when the backend reports one (issue #20):
+          // the requested spec label is testimony; the attestation is truth.
+          modelFamily: servedModel ?? specLabel(spec),
           usage,
           promptChars,
           durationMs,

@@ -31,6 +31,7 @@ export function createCliRoleSession(
   if (signal?.aborted) stop.abort();
   else signal?.addEventListener("abort", onOuterAbort, { once: true });
   let usage: RoleUsage | undefined;
+  let servedModel: string | undefined;
   let sentChars = 0;
   let asked = false;
   return {
@@ -42,10 +43,15 @@ export function createCliRoleSession(
       sentChars = fullPrompt.length;
       const r = await runCliRole(provider, run.spec.modelId, fullPrompt, stop.signal);
       usage = r.usage;
+      servedModel = r.servedModel;
       return r.text;
     },
     approxTokens: () => 0,
     usage: () => usage,
+    // Server-attested served model (oracle backends only): the honest value
+    // for a record's modelFamily — the requested spec is testimony, this is
+    // attestation (issue #20).
+    servedModel: () => servedModel,
     steer: () => Promise.resolve(false),
     abort: () => stop.abort(),
     promptChars: () => sentChars,
@@ -174,7 +180,7 @@ function runCliRole(
   modelId: string,
   fullPrompt: string,
   signal?: AbortSignal,
-): Promise<{ text: string; usage?: RoleUsage }> {
+): Promise<{ text: string; usage?: RoleUsage; servedModel?: string }> {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "coverify-cli-"));
   const outFile = path.join(cwd, "last-message.txt");
   const backend = CLI_BACKENDS[provider];
@@ -262,6 +268,7 @@ function runCliRole(
           }
           return resolve({
             text: `${payload.text.trim()}\n\n[served model: ${served} (server-attested)]`,
+            servedModel: `${provider}/${served} (server-attested)`,
           });
         } catch {
           return reject(new Error(`${provider} returned non-JSON output (exit ${code}): ${err.slice(0, 300)}`));

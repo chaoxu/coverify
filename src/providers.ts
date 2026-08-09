@@ -266,6 +266,7 @@ export async function runRole(
   return {
     text,
     usage: session.usage(),
+    servedModel: cli?.servedModel?.(),
     // promptChars counts what actually went over the wire: the CLI path
     // inlines the contract+charge into one prompt string.
     promptChars: cli ? cli.promptChars() : run.prompt.length,
@@ -286,6 +287,9 @@ export interface RoleSession {
   /** Cumulative provider-reported token usage across the session's calls;
    *  undefined when the backend reported none (never fabricated zeros). */
   usage(): RoleUsage | undefined;
+  /** Server-attested served model, when the backend reports one (oracle
+   *  backends only; issue #20). Undefined everywhere else — never an echo. */
+  servedModel?(): string | undefined;
   /** In-place lossy compaction (harness-backed sessions only): summarize
    *  older turns, keep a recent tail verbatim. The caller owns the policy
    *  and the contract's post-compaction reread rule. */
@@ -376,6 +380,10 @@ interface RoleResult {
   /** Request-shape telemetry for single-shot roles (their only "turn"). */
   promptChars?: number;
   durationMs?: number;
+  /** Server-attested served model (oracle backends): when present, records
+   *  must prefer it over the requested spec label (issue #20 — the spec is
+   *  testimony, this is attestation). */
+  servedModel?: string;
 }
 
 export type HarnessSessionOpts = {

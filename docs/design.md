@@ -1032,3 +1032,5 @@ choice, dominates total cost (raw corpus spans three orders of magnitude
 per campaign). The single biggest measured economy lever is candidate
 scope discipline, worth 30M+ tokens on one campaign — a skill lesson, not
 a harness feature.
+
+Evals gap note update (2026-08-09, issue #20): chatgpt-cli now reports the server-attested served model on both /v1 and oracle paths; gate records for CLI-backed verdict roles stamp modelFamily from the attestation when present. Token usage remains unavailable on the browser bridge.
