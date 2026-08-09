@@ -383,6 +383,39 @@ this harness already prevents. Whether **diverse** fan-out beats serial
 exploration of the same routes at equal budget is untested and is not what
 those papers measured.
 
+## 13. What must be recorded
+
+Derived by working backwards from the questions the 2026-08-09 study could not
+answer. Each row is a question, the field that answers it, and whether the
+journal answers it today.
+
+| question | needs | today |
+|---|---|---|
+| is this record's `input` disjoint from `cacheRead`? | `meter` on every usage | **no** — inferred from lane + commit date |
+| which run does this cumulative series belong to? | `runId` on `runStart` + every usage | **no** — inferred from a decreasing counter |
+| which wake ordered this spend? | `wake` on usage *and dispatch* | coordinator only |
+| is this usage a roll-up of other records? | `rollup: true` | **no** — cost 80.4M in double-counting |
+| what model, at what effort? | run-config `roleSpecs` | **yes**, except where a lane varies within a run (reasoner consults) |
+| what model actually served it? | `servedModel` per call | verification stages only; gate lane discards it |
+| how many provider requests did this record span? | `requests` / `attempts` | **no** — one record spans a whole tool loop |
+| when did the call start? | `durationMs` on every completion | verdict roles and coordinator only |
+| did this run hit the rate limit? | `providerSessionId` + `backendCwd` | **no** — the rollouts hold it, unjoined |
+| why did the run stop? | terminating-condition enum | **no** |
+| what did a compaction cost? | compaction event with usage | **no** — folded into the cumulative |
+| was this work on the answer's path? | premise-closure query | **derivable**, never computed |
+
+The generalisable lesson is not the list. It is that **every field above was
+write-only for the project's whole history**, because there was no reader
+(`providers.ts:346`: "nothing reads this except the journal"). Write-only
+fields are untested fields, and the first real read found defects in most of
+them at once.
+
+So: **ship the reader with the fields.** A recorder with no consumer is a
+speculative field; a recorder with a consumer is an instrument. And where a
+rule can be enforced at the type level rather than documented — mixing meters
+should be a compile error, not a paragraph in this file — enforce it, in
+keeping with this repo's preference for gates over prose.
+
 ## Standing gauges
 
 Cheap to compute from records already kept, worth reporting every campaign:
