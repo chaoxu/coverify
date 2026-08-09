@@ -576,7 +576,21 @@ export async function createHarnessRoleSession(
         // message still exists (issue #24) — the appended marker is what the
         // harness diagnosis keys on, independent of provider phrasing.
         const overflow = isContextOverflow(final) ? " [context window exceeded]" : "";
-        throw new Error((final.errorMessage ?? "provider error (no message)") + overflow);
+        const err = new Error((final.errorMessage ?? "provider error (no message)") + overflow);
+        // Salvage: pi's errored message IS the object that accumulated the
+        // stream, so a turn that dies at minute 29 of 30 still holds every
+        // block it received. Throwing it away loses real reasoning — BET
+        // measured a 50% failure rate on ~30-minute turns, each a total
+        // loss. Attach it; the harness persists it as PARTIAL evidence and
+        // the completion stays a failure (never a deliverable, never a
+        // verdict — verdict roles run through the CLI path, not here).
+        const partial = (Array.isArray(final.content) ? final.content : [])
+          .filter((b): b is { type: "text"; text: string } => (b as { type?: string }).type === "text")
+          .map((b) => b.text)
+          .join("\n")
+          .trim();
+        if (partial.length > 0) Object.assign(err, { partialText: partial });
+        throw err;
       }
       if (final.stopReason === "aborted") return "";
       if (typeof final.content === "string") return final.content;

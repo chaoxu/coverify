@@ -213,10 +213,32 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     // Failure is classified here too — a rejected call or empty final text is
     // an infrastructure failure — so `failed` is the single source of truth
     // and `failed` set ⟺ no report artifact exists.
-    const persist = (report: string, failed?: string) => {
+    const persist = (report: string, failed?: string, partialText?: string) => {
       const live = handles.has(handle.id);
       if (failed !== undefined) {
-        store.append({ kind: "completion", id: handle.id, failed, usage: handle.usage?.() });
+        // Preserve whatever the dead stream had produced. It is NOT a
+        // deliverable — the completion stays an infrastructure failure, the
+        // assignment stays unfinished, and redispatch stays legitimate —
+        // but half an hour of reasoning is worth more on disk than in a
+        // dropped socket, and the coordinator can mine it when redispatching.
+        let partial: string | undefined;
+        if (partialText !== undefined && partialText.trim() !== "") {
+          const p = newEvidencePath(dir, `${handle.id}/partial`);
+          fs.writeFileSync(
+            p,
+            `# PARTIAL work from ${handle.id} — the provider connection failed mid-response\n\n` +
+              `This is NOT a completed deliverable and carries no claim label. The assignment was ` +
+              `not finished; treat this as notes from an interrupted attempt.\n\n---\n\n${partialText}\n`,
+          );
+          partial = path.relative(dir, p);
+        }
+        store.append({
+          kind: "completion",
+          id: handle.id,
+          failed,
+          ...(partial !== undefined ? { partial } : {}),
+          usage: handle.usage?.(),
+        });
         if (live) settledQueue.push({ h: handle, report: "", failed });
         return;
       }
@@ -261,7 +283,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
             "accumulated reads and reasoning, not packet size. Packet-splitting will not help. " +
             "Redispatch with a tighter exploration scope: name the exact files to read.]";
         }
-        persist("", failure);
+        persist("", failure, (err as { partialText?: string })?.partialText);
       },
     );
     activityThisWake++;
@@ -345,8 +367,12 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           mechanism,
           section:
             `## ${e.id} [${mechanism}] FAILED (infrastructure): ${e.failed}\n\n` +
-            `No report artifact exists. Per the contract this is never PASS and carries no ` +
-            `mathematical content; re-dispatching the assignment is legitimate.`,
+            (typeof e.partial === "string"
+              ? `No completed report exists. Partial work from the interrupted attempt is preserved ` +
+                `at ${e.partial} — notes only, no claim label; mine it if useful when redispatching.`
+              : `No report artifact exists.`) +
+            ` Per the contract this is never PASS and carries no mathematical content; ` +
+            `re-dispatching the assignment is legitimate.`,
         });
         continue;
       }
