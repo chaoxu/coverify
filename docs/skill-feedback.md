@@ -349,6 +349,16 @@ computations per the reporting clause; a technician dispatch returns the
 the computation clause requires; the librarian charge carries the
 public-search scope limit verbatim.
 
+## Landed 2026-08-09: stall consult + reasoning-only + the three adapter divergences (launcher edits)
+
+With Chao's go-ahead ('make these so it matches living system'), five launcher
+edits landed in ~/kb: the different-family/stronger-backend stall consult
+(advice-never-fact, gated entry only); the user-may-close-the-computation-
+channel sentence; supervision-properties-not-scheduler wording; technician-
+as-agent; delegated-searcher scope inheritance. Items 6-8 below and the
+Danus consult item are therefore LANDED; their entries remain as evidence
+records.
+
 ## Evidence from the Danus comparison study (2026-08-07)
 
 Source: measured analysis of a real frenzymath-Danus campaign

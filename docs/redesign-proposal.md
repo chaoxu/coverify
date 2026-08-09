@@ -1,3 +1,7 @@
+> **HISTORICAL RECORD (marked 2026-08-09).** Every decision below was executed
+> in the 2026-08-02 rewrite and refined since; the living authority is
+> docs/design.md. Kept for provenance — do not read the tables as current.
+
 # Redesign proposal: pi harness below the waterline
 
 Status: accepted 2026-08-02 (Chao: "reimplement everything using what

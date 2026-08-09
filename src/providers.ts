@@ -20,6 +20,7 @@ import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import { cliBackendCommand, createCliRoleSession, isCliProvider, systemText } from "./backends.js";
+import { repoRoot } from "./campaign.js";
 import { fileCredentialStore } from "./credentials.js";
 import { CLAUDE_BRIDGE_ID, claudeBridgeProvider } from "./claude-bridge.js";
 import { envNumber, workspaceTools, type WriteScope } from "./supervise.js";
@@ -123,7 +124,12 @@ const envSpec = (env: string, fallback: string): ModelSpec =>
 export async function providerUsable(models: Models, provider: ModelSpec["provider"]): Promise<boolean> {
   if (isCliProvider(provider)) {
     const { spawnSync } = await import("node:child_process");
-    return spawnSync("which", [cliBackendCommand(provider).split(/\s+/)[0]]).status === 0;
+    // Substitute template placeholders BEFORE probing: the agy backend's
+    // command starts with "{repo}/bin/agy-oracle", and `which "{repo}/..."`
+    // refused every gemini dispatch on the first live night (10/10) while
+    // the wrapper worked fine — audit finding, 2026-08-09.
+    const head = cliBackendCommand(provider).replaceAll("{repo}", repoRoot()).split(/\s+/)[0];
+    return (head.startsWith("/") ? fs.existsSync(head) : spawnSync("which", [head]).status === 0);
   }
   try {
     return (await models.getAuth(provider)) !== undefined;

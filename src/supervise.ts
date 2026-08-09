@@ -783,13 +783,22 @@ function confineReads(tool: AgentTool, roots: string[], cwd: string): AgentTool 
       if (typeof v !== "string" || v.trim() === "") {
         return guard(await tool.execute(toolCallId, params, signal, onUpdate));
       }
-      const real = realResolve(normalizeLikePi(v, cwd));
+      let real = realResolve(normalizeLikePi(v, cwd));
+      // Packets conventionally cite campaign-root-relative paths
+      // (EVIDENCE/rNNN/...), but a worker's cwd is its own evidence dir —
+      // five mandated reads ENOENT'd in one audited session before the
+      // worker guessed ../. Fall back to root-relative when the cwd-relative
+      // target does not exist (2026-08-09 session audit).
+      if (!path.isAbsolute(v) && !fs.existsSync(real)) {
+        const atRoot = realResolve(path.resolve(roots[0], v));
+        if (fs.existsSync(atRoot)) real = atRoot;
+      }
       if (!roots.some((r) => under(real, r))) {
         return toolText(
-          `READ SCOPE REFUSED: ${v} is outside this campaign's read scope — the campaign ` +
-            "directory and the prior-route paths STATEMENT.md declares. For literature or any " +
-            "other external material, use literature_search (if granted) or state the need in " +
-            "your report.",
+          `READ SCOPE REFUSED: ${v} is outside this campaign's read scope. In scope: ` +
+            `${roots.join(", ")}. For literature or any other external material, use ` +
+            "literature_search (if granted) or state the need in your report — repeating " +
+            "out-of-scope attempts wastes your turn.",
         );
       }
       // Harness state is never reasoning material: journals, session

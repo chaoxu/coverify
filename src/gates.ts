@@ -89,7 +89,7 @@ export class GateStore {
     fs.mkdirSync(dir, { recursive: true });
     this.file = path.join(dir, "gates.jsonl");
     // meta.json names the opaque 16-hex state dir for cross-campaign
-    // analytics (docs/queries.md): the campaign path and its statement's
+    // analytics (design.md, Appendix: Canonical analytics queries): the campaign path and its statement's
     // first line, best-effort, refreshed each construction.
     try {
       const stmt = readLedger(this.campaignDir, "STATEMENT.md");
