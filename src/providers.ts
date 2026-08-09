@@ -271,6 +271,7 @@ export async function runRole(
     text,
     usage: session.usage(),
     servedModel: cli?.servedModel?.(),
+    reportedModel: cli?.reportedModel?.(),
     // promptChars counts what actually went over the wire: the CLI path
     // inlines the contract+charge into one prompt string.
     promptChars: cli ? cli.promptChars() : run.prompt.length,
@@ -294,6 +295,8 @@ export interface RoleSession {
   /** Server-attested served model, when the backend reports one (oracle
    *  backends only; issue #20). Undefined everywhere else — never an echo. */
   servedModel?(): string | undefined;
+  /** Self-reported model, when the backend states one (#21 P3). */
+  reportedModel?(): string | undefined;
   /** In-place lossy compaction (harness-backed sessions only): summarize
    *  older turns, keep a recent tail verbatim. The caller owns the policy
    *  and the contract's post-compaction reread rule. */
@@ -388,6 +391,9 @@ interface RoleResult {
    *  must prefer it over the requested spec label (issue #20 — the spec is
    *  testimony, this is attestation). */
   servedModel?: string;
+  /** Self-reported model (claude-cli's own JSON). Journalled beside the
+   *  requested spec; never enforced (#21 P3, rule 3). */
+  reportedModel?: string;
 }
 
 export type HarnessSessionOpts = {

@@ -218,6 +218,54 @@ export function refusalsWithoutFollowup(
 }
 
 /**
+ * Model substitutions (#21 P3): verdict records whose backend self-reported
+ * or attested a model that disagrees with the requested spec. Journal-only
+ * by design — the harness never refuses on mismatch (that would invent
+ * policy, design rule 3); it surfaces the disagreement so a cross-family
+ * guarantee cannot quietly become a same-family one. The hostile auditor is
+ * the highest-value watch: its claude-cli call IS the cross-family check
+ * behind every promotion.
+ */
+export function modelSubstitutions(
+  store: GateStore,
+): { kind: string; revision: string; requested: string; actual: string }[] {
+  const out: { kind: string; revision: string; requested: string; actual: string }[] = [];
+  for (const e of store.all()) {
+    const actual = typeof e.reportedModel === "string" ? e.reportedModel : undefined;
+    const requested = typeof e.modelFamily === "string" ? e.modelFamily : undefined;
+    if (actual === undefined || requested === undefined || actual === requested) continue;
+    // Same-provider model-id drift is the signal; a bare provider prefix
+    // match is not enough (claude-cli/opus vs claude-cli/claude-opus-5 is
+    // the CLI's canonical spelling of the same request, not a substitution).
+    if (sameModelId(actual, requested)) continue;
+    out.push({
+      kind: String(e.kind),
+      revision: String(e.revision ?? ""),
+      requested,
+      actual,
+    });
+  }
+  return out;
+}
+
+/** Alias vs substitution. A CLI answers a short request name with its own
+ *  canonical spelling (`opus` -> `claude-opus-5`), which is the same model;
+ *  a router serving `gpt-5-5-mini` for `gpt-5-6-pro` is not. Comparing by
+ *  prefix containment after stripping the provider and vendor prefix keeps
+ *  aliases quiet and every real swap loud. */
+function sameModelId(a: string, b: string): boolean {
+  const canon = (label: string) =>
+    label
+      .slice(label.indexOf("/") + 1)
+      .toLowerCase()
+      .replace(/^claude-/, "")
+      .replace(/-\d{8}$/, "")
+      .replace(/-latest$/, "");
+  const [x, y] = [canon(a), canon(b)];
+  return x.startsWith(y) || y.startsWith(x);
+}
+
+/**
  * The wake's bookkeeping digest: mechanical noticing the coordinator would
  * otherwise have to remember — dangling citations, promotions contradicted
  * or edited out from under their events, and refused work nothing followed
@@ -229,6 +277,7 @@ export function wakeBookkeeping(store: GateStore, dir: string): string {
   const retractions = retractionClosure(store);
   const missingEntries = promotionsMissingFromProved(store, dir);
   const unaddressed = refusalsWithoutFollowup(store);
+  const substitutions = modelSubstitutions(store);
   return (
     (dangling.length > 0
       ? `\n\nLEDGER CITATIONS THAT POINT AT NOTHING (fix or remove them):\n` +
@@ -252,6 +301,15 @@ export function wakeBookkeeping(store: GateStore, dir: string): string {
                 ? `; recorded dependents standing on it (transitive, via premises): ${r.dependents.join(", ")}`
                 : ""),
           )
+          .join("\n")
+      : "") +
+    (substitutions.length > 0
+      ? `\n\nMODEL SUBSTITUTIONS ON RECORD (a verdict backend answered with a model other than the ` +
+        `one requested; a cross-family audit that ran same-family is weaker evidence than its label ` +
+        `suggests — judge whether the affected verdict still carries the weight you gave it):\n` +
+        substitutions
+          .slice(-5)
+          .map((s) => `- ${s.kind} ${s.revision}: requested ${s.requested}, answered ${s.actual}`)
           .join("\n")
       : "") +
     (unaddressed.length > 0

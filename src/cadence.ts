@@ -230,7 +230,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         extra?: Record<string, unknown>;
       }): Promise<{ text: string; pass: boolean; unparseable: boolean; artifact: string }> => {
         const spec = roleModelSpec(stage.role);
-        const { text, usage, promptChars, durationMs, servedModel } = await runRole({
+        const { text, usage, promptChars, durationMs, servedModel, reportedModel } = await runRole({
           contract,
           charge: CHARGES[stage.role],
           prompt: stage.ctx.prompt,
@@ -268,6 +268,9 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           // Attested served model when the backend reports one (issue #20):
           // the requested spec label is testimony; the attestation is truth.
           modelFamily: servedModel ?? specLabel(spec),
+          // Self-reported model beside it (#21 P3) — journal-only, never a
+          // refusal trigger; modelSubstitutions() surfaces disagreements.
+          ...(reportedModel !== undefined ? { reportedModel } : {}),
           usage,
           promptChars,
           durationMs,
@@ -467,6 +470,8 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             usage: reconTextUsage,
             promptChars: reconPromptChars,
             durationMs: reconDurationMs,
+            servedModel: reconServedModel,
+            reportedModel: reconReportedModel,
           } = await runRole({
             contract,
             charge: CHARGES.reconstructor,
@@ -493,7 +498,8 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             blindness:
               "fresh instance (enforced); candidate file withheld by harness (enforced — rendered prompt checked); keyIdeas coordinator-authored (instructed only — paraphrase risk not machine-checked)",
             toolVisibility: toolVisibilityOf(roleModelSpec("reconstructor").provider),
-            modelFamily: specLabel(roleModelSpec("reconstructor")),
+            modelFamily: reconServedModel ?? specLabel(roleModelSpec("reconstructor")),
+            ...(reconReportedModel !== undefined ? { reportedModel: reconReportedModel } : {}),
             usage: reconTextUsage,
             promptChars: reconPromptChars,
             durationMs: reconDurationMs,

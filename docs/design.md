@@ -462,6 +462,19 @@ fresh instances are mandatory where they buy trust (critics, verifiers).
 
 ## Observability
 
+Reported-model identity (#21 P3, 2026-08-09): verdict records carry
+`reportedModel` when the backend states what actually answered —
+`claude-cli` reports it in its JSON (`modelUsage`/`canonicalModel`);
+`codex-cli` emits no model echo in its JSONL (verified 2026-08-09), so it
+stays undefined rather than fabricated; `chatgpt-cli` reports a
+server-attested `served_model`, which is stronger and drives `modelFamily`
+itself (issue #20). The companion query `modelSubstitutions()` surfaces
+disagreements in the wake digest — journal-only, never a refusal: the
+harness states the fact that a cross-family audit may have run same-family
+and leaves the judgment to the coordinator (rule 3).
+
+
+
 `coverify trace [--dir campaign] [--out file.html]` renders the campaign
 journal as a self-contained HTML timeline: agent lifetimes as ranges,
 verification and gate verdicts as points, coordinator wakes as bands, plus

@@ -32,6 +32,7 @@ export function createCliRoleSession(
   else signal?.addEventListener("abort", onOuterAbort, { once: true });
   let usage: RoleUsage | undefined;
   let servedModel: string | undefined;
+  let reportedModel: string | undefined;
   let sentChars = 0;
   let asked = false;
   return {
@@ -44,6 +45,7 @@ export function createCliRoleSession(
       const r = await runCliRole(provider, run.spec.modelId, fullPrompt, stop.signal);
       usage = r.usage;
       servedModel = r.servedModel;
+      reportedModel = r.reportedModel;
       return r.text;
     },
     approxTokens: () => 0,
@@ -52,6 +54,10 @@ export function createCliRoleSession(
     // for a record's modelFamily — the requested spec is testimony, this is
     // attestation (issue #20).
     servedModel: () => servedModel,
+    /** Self-reported model (claude-cli). Journal-only: recorded beside the
+     *  requested spec, never enforced (#21 P3). codex-cli emits no model
+     *  echo in its JSONL (verified 2026-08-09), so it stays undefined. */
+    reportedModel: () => reportedModel,
     steer: () => Promise.resolve(false),
     abort: () => stop.abort(),
     promptChars: () => sentChars,
@@ -122,6 +128,9 @@ export function systemText(run: Pick<RoleRun, "contract" | "charge">): string {
 interface ClaudeJsonResult {
   is_error?: boolean;
   result?: string;
+  /** Per-model usage map; its key (and canonicalModel) is the CLI's own
+   *  report of what answered — self-reported, not server-attested (#21 P3). */
+  modelUsage?: Record<string, { canonicalModel?: string }>;
   usage?: {
     input_tokens?: number;
     output_tokens?: number;
@@ -180,7 +189,7 @@ function runCliRole(
   modelId: string,
   fullPrompt: string,
   signal?: AbortSignal,
-): Promise<{ text: string; usage?: RoleUsage; servedModel?: string }> {
+): Promise<{ text: string; usage?: RoleUsage; servedModel?: string; reportedModel?: string }> {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "coverify-cli-"));
   const outFile = path.join(cwd, "last-message.txt");
   const backend = CLI_BACKENDS[provider];
@@ -290,8 +299,16 @@ function runCliRole(
           const payload = JSON.parse(out) as ClaudeJsonResult;
           if (payload.is_error) return reject(new Error(`${provider} reported an error result`));
           const u = payload.usage;
+          // Self-reported model (#21 P3): journal it beside the requested
+          // spec, NEVER refuse on mismatch — auto-refusing would invent
+          // policy (design rule 3). Highest-value case is the hostile
+          // auditor's cross-family guarantee.
+          const mu = payload.modelUsage ?? {};
+          const reportedKey = Object.keys(mu)[0];
+          const reported = reportedKey ? (mu[reportedKey].canonicalModel ?? reportedKey) : undefined;
           return resolve({
             text: (payload.result ?? "").trim(),
+            reportedModel: reported ? `${provider}/${reported}` : undefined,
             usage: u && {
               input: u.input_tokens ?? 0,
               output: u.output_tokens ?? 0,
