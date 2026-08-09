@@ -292,7 +292,22 @@ switch (command) {
     }
     console.log(readLedger(dir, "STATEMENT.md"));
     console.log(readLedger(dir, "CURRENT_FRONTIER.md"));
-    const tail = readJournal(dir).slice(-10);
+    const journal = readJournal(dir);
+    // Verdict-permission records beside the verdicts (skill-feedback
+    // 2026-08-09): a FAIL followed by a PASS on the same revision is only
+    // legible next to its recorded rebuttal — without this section the
+    // contract's legitimate rebuttal lane reads as verdict shopping.
+    const rebuttals = journal
+      .map((e) => (e as { gate?: { kind?: string; ts?: string; revision?: string; artifact?: string } }).gate)
+      .filter((g) => g?.kind === "rebuttal");
+    if (rebuttals.length > 0) {
+      console.log(`## Recorded rebuttals (${rebuttals.length} — each sanctions one fresh attempt on an unchanged revision)\n`);
+      for (const r of rebuttals.slice(-10)) {
+        console.log(`- ${String(r?.ts ?? "").slice(0, 19)} ${r?.revision}: ${r?.artifact}`);
+      }
+      console.log("");
+    }
+    const tail = journal.slice(-10);
     if (tail.length > 0) {
       console.log("## Recent harness journal entries\n");
       for (const e of tail) console.log(JSON.stringify(e));

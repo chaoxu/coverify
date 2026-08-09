@@ -949,6 +949,20 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     const limits: string[] = [];
     if (opts.userAgentLimit !== undefined) limits.push(`workers ${liveWorkers()}/${opts.userAgentLimit}`);
     if (opts.maxWakes !== undefined) limits.push(`wakes ${wakeCount}/${opts.maxWakes}`);
+    // Mechanical fact only (allocation judgment stays the coordinator's):
+    // idle worker capacity alongside live judges is easy to overlook from
+    // inside a wake, and stated plainly it lets the coordinator decide
+    // whether waiting is deliberate (skill-feedback 2026-08-09).
+    const liveJudges = [...handles.values()].filter((h) => h.kind !== "worker").length;
+    if (
+      opts.userAgentLimit !== undefined &&
+      liveJudges > 0 &&
+      liveWorkers() < opts.userAgentLimit
+    ) {
+      limits.push(
+        `${opts.userAgentLimit - liveWorkers()} worker slot(s) idle while ${liveJudges} judge handle(s) run`,
+      );
+    }
     const digest =
       (handles.size === 0
         ? "No workers are currently running."
