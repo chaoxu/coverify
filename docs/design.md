@@ -80,6 +80,24 @@ candidate and of `STATEMENT.md` at verification time) — a file edited after
 its PASS is no longer verifier-backed, and a statement edit without
 `coverify amend` hard-stops the next run.
 
+### Layering: core vs. read-only consumers
+
+`src/view/` (trace rendering, session telemetry) holds **pure consumers**:
+they read durable state and render it, and NOTHING that runs a campaign may
+import them. `scripts/conformance-check.ts` fails the build on the reverse
+edge, so observation cannot drift into operations — which also means the two
+can be reasoned about, and counted, separately (2026-08-09, Chao: "observation
+should be pure consumer"). `cli.ts` is the operator surface and is the single
+module permitted to render a view.
+
+The distinction that decides membership is WHO the noticing is for.
+`observe.ts` stays in core because its queries feed the coordinator's wake
+digest — noticing that changes what the campaign does next is operational.
+`view/` is noticing for humans, after the fact, with no path back into a
+decision.
+
+Current sizes: core 6,023 lines (4,348 code), view 1,008 lines (820 code).
+
 ## Threat model
 
 Roles are **careless, not adversarial**, and the host is expected to be a
@@ -200,6 +218,7 @@ scheduler front door, per the launcher.
 
 ```
 cli.ts           prove / resume / stop / status / trace / turns / say / amend / login / logout
+                 (the operator surface — the one module allowed to render a view)
 campaign.ts      state layer: init, revisions, append-only evidence, resume bundle
 launcher.ts      load + extract the fenced launcher contract (no fallback)
 roles.ts         role charges + LIBRARIAN_CHARGE (all coverify-authored role text; no re-exports)
@@ -214,7 +233,7 @@ harness.ts       handle table, event loop, wakes; the only persistent process
 observe.ts       records + noticing queries: run-config stamp, ledger history,
                  refusal events + unaddressed-refusal noticing, wake bookkeeping
                  (prompt-surfaced noticing; never gates, dispatches, or ledgers)
-trace.ts         journal -> self-contained HTML timeline (read-only observability)
+view/trace.ts         journal -> self-contained HTML timeline (read-only observability)
 trace-page.ts    that page's markup, styles, and view code
 pi-extension.ts  interactive-pi boundary layer: supervised run_script in
                  place of raw bash (phase 3; never writes trusted state)

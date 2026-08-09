@@ -20,8 +20,8 @@ import {
   specLabel,
 } from "./providers.js";
 import { runCampaign } from "./harness.js";
-import { writeTrace } from "./trace.js";
-import { campaignTurns } from "./turns.js";
+import { writeTrace } from "./view/trace.js";
+import { campaignTurns } from "./view/turns.js";
 
 function usage(): never {
   console.error(`usage:

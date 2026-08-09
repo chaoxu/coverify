@@ -5,6 +5,9 @@
  * loudly and names the drifted coupling. Deliberately dumb — a flat list of
  * literal substring checks, never a parser of the spec.
  */
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { repoRoot } from "../src/campaign.js";
 import { loadLauncherContract } from "../src/launcher.js";
 
 const REQUIRED: { token: string; usedBy: string }[] = [
@@ -39,4 +42,25 @@ if (missing.length > 0) {
   console.error("Update the coupled enforcement (see docs/design.md conformance table) or the launcher.");
   process.exit(1);
 }
-console.log(`conformance ok: ${REQUIRED.length} launcher tokens present`);
+// Layer boundary (Chao, 2026-08-09): src/view/ is READ-ONLY CONSUMERS —
+// trace rendering and session telemetry. Nothing that runs a campaign may
+// depend on them, so observation can never change what a campaign concludes
+// and can be reasoned about (and counted) separately. cli.ts is the operator
+// surface and is the one module allowed to render a view.
+// A view may read core; core may not read a view — only the reverse edge
+// needs guarding.
+const violations: string[] = [];
+for (const f of fs.readdirSync(path.join(repoRoot(), "src"))) {
+  if (!f.endsWith(".ts") || f === "cli.ts") continue;
+  const text = fs.readFileSync(path.join(repoRoot(), "src", f), "utf-8");
+  if (/from "\.\/view\//.test(text)) violations.push(`src/${f}`);
+}
+if (violations.length > 0) {
+  console.error("LAYER VIOLATION — operational code imported a read-only view:");
+  for (const v of violations) console.error(`  ${v} imports src/view/*`);
+  console.error("Views are pure consumers: move the shared logic into core, or read it from cli.ts.");
+  process.exit(1);
+}
+console.log(
+  `conformance ok: ${REQUIRED.length} launcher tokens present; view/ layer boundary intact`,
+);

@@ -8,9 +8,9 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { citedEvidencePaths, gateOf, readJournal, readLedger, repoRoot } from "./campaign.js";
+import { citedEvidencePaths, gateOf, readJournal, readLedger, repoRoot } from "../campaign.js";
 import { BODY, STYLES, VIEW } from "./trace-page.js";
-import { sameModelId } from "./observe.js";
+import { sameModelId } from "../observe.js";
 
 export interface TraceAgent {
   id: string;

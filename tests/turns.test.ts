@@ -5,7 +5,7 @@ import { expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const { campaignTurns } = await import("../src/turns.ts");
+const { campaignTurns } = await import("../src/view/turns.ts");
 
 test("campaignTurns derives records and usage from a session tree", () => {
   const dir = fs.mkdtempSync("/private/tmp/coverify-turns-");

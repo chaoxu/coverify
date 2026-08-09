@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const { traceData, renderTrace, writeTrace } = await import("../src/trace.ts");
+const { traceData, renderTrace, writeTrace } = await import("../src/view/trace.ts");
 
 function campaign(rows: object[]) {
   const dir = fs.mkdtempSync("/private/tmp/coverify-trace-");
