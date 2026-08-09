@@ -6,7 +6,7 @@
 // semantics must fail here, not silently drop user guidance.
 import { expect, test } from "bun:test";
 
-const { createHarnessRoleSession } = await import("../src/roles.ts");
+const { createHarnessRoleSession } = await import("../src/providers.ts");
 
 const fakeModel = { id: "fake-model", provider: "anthropic", api: "anthropic-messages" };
 const mkMessage = (text: string) => ({

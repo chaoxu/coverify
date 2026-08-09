@@ -5,7 +5,7 @@
 // every field is a pure function of the stored messages.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { RoleUsage } from "./roles.js";
+import type { RoleUsage } from "./providers.js";
 
 /** One message's telemetry: sizes + provider accounting, no content. For
  *  assistant messages `usage.input` is the uncached billed input of THAT

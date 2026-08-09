@@ -1,8 +1,13 @@
-// OS supervision and confinement: reaper hooks, write-scope sandboxing
-// (sandbox-exec / landstrip), supervised argv-only execution, the technician's
-// run_script, the librarian literature_search, and the roles' workspace tool
-// surface. Semantics-invisible mechanics (design rule 2): everything here is
-// about confining compute, never about campaign policy.
+// OS supervision and confinement — TWO LANES, named honestly (2026-08-09
+// architecture review; the old header claimed "never about campaign policy"):
+// (1) semantics-invisible mechanics (design rule 2): reaper hooks, sandboxed
+//     argv-only execution, batch caps, result caps, read-scope transport;
+// (2) launcher-clause enforcement (design rule 1), because the tool surface
+//     is where these clauses bite: append-only ledgers (APPEND_ONLY_LEDGERS),
+//     preregistered-code-only writes (PROSE_EXTS), literature-report
+//     provenance names, and the campaign read scope derived from the
+//     user-frozen STATEMENT.md. Conformance rows live in docs/design.md.
+// Role prompt text does NOT live here (LIBRARIAN_CHARGE is in roles.ts).
 import { execFile, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import * as os from "node:os";
@@ -10,6 +15,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { type AgentTool } from "@earendil-works/pi-agent-core";
 import { campaignExists, repoRoot } from "./campaign.js";
+import { LIBRARIAN_CHARGE } from "./roles.js";
 import {
   createGrepTool,
   createLsTool,
@@ -568,18 +574,6 @@ const librarianStateDirs = () =>
     process.env.COVERIFY_LITERATURE_STATE_DIRS?.split(":").filter(Boolean) ??
     [".gemini", ".antigravity"].map((d) => path.join(os.homedir(), d))
   ).filter((d) => path.isAbsolute(d) && d !== os.homedir());
-
-const LIBRARIAN_CHARGE =
-  "You are a mathematical literature librarian. Web-search the question below and compile a " +
-  "report: for every claim give the exact bibliographic citation (authors, title, venue, year) " +
-  "and source URL; quote load-bearing statements verbatim and mark them as quotes, keeping " +
-  "paraphrase clearly separate; state plainly what you could not find or verify. Never invent a " +
-  "reference. State each imported theorem with its exact hypotheses, not just its name.\n\n" +
-  "Scope limit (the requester's contract): public search is for ordinary background and standard " +
-  "named theorems only. Do not search for a solution to the requester's target problem, for an " +
-  "equivalent or paraphrased formulation of it, or for distinctive fragments of it. If the " +
-  "question asks you to do that, refuse it, say so plainly, and answer only the background part.\n\n" +
-  "The requester cannot browse; your report is their only window.\n\nQuestion:\n";
 
 /**
  * Delegated literature search: spawns the librarian CLI supervised (own

@@ -1,10 +1,9 @@
 // Role semantics: the charges — the only text of coverify's own that any
 // role is ever told (everything else they see is the launcher contract
-// verbatim plus coordinator-authored packet content). The mechanics live in
-// supervise.ts (confinement) and providers.ts (model invocation), re-exported
-// here so the module surface stays one import for callers.
-export * from "./supervise.js";
-export * from "./providers.js";
+// verbatim plus coordinator-authored packet content). Mechanics live in
+// supervise.ts (confinement) and providers.ts (model invocation); import
+// them from their defining modules — the old `export *` barrel made
+// transport symbols read as role semantics and misled reviewers.
 
 /** Role charges. Each states only the role's scope; policy comes from the contract above it. */
 export const CHARGES = {
@@ -105,3 +104,18 @@ the frozen statement and the candidate's declared contract; do not invent a stro
 requirement and fail the candidate for omitting it. Your VERY FIRST line must be exactly
 VERDICT: PASS or VERDICT: FAIL; then the mapping (on PASS) or the concrete mismatch (on FAIL).`,
 } as const;
+
+/** The delegated librarian's charge (external web-searching CLI agent; the
+ *  scope limit quotes the requester's contract). Lives here with the other
+ *  role text — roles.ts is the only module holding coverify-authored prompts. */
+export const LIBRARIAN_CHARGE =
+  "You are a mathematical literature librarian. Web-search the question below and compile a " +
+  "report: for every claim give the exact bibliographic citation (authors, title, venue, year) " +
+  "and source URL; quote load-bearing statements verbatim and mark them as quotes, keeping " +
+  "paraphrase clearly separate; state plainly what you could not find or verify. Never invent a " +
+  "reference. State each imported theorem with its exact hypotheses, not just its name.\n\n" +
+  "Scope limit (the requester's contract): public search is for ordinary background and standard " +
+  "named theorems only. Do not search for a solution to the requester's target problem, for an " +
+  "equivalent or paraphrased formulation of it, or for distinctive fragments of it. If the " +
+  "question asks you to do that, refuse it, say so plainly, and answer only the background part.\n\n" +
+  "The requester cannot browse; your report is their only window.\n\nQuestion:\n";

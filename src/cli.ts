@@ -18,7 +18,7 @@ import {
   ROLE_NAMES,
   roleModelSpec,
   specLabel,
-} from "./roles.js";
+} from "./providers.js";
 import { runCampaign } from "./harness.js";
 import { writeTrace } from "./trace.js";
 import { campaignTurns } from "./turns.js";

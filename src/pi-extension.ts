@@ -16,7 +16,7 @@
  *   import coverify from ".../coverify/src/pi-extension.ts";
  */
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { runScriptTool } from "./roles.js";
+import { runScriptTool } from "./supervise.js";
 
 export default function coverifyExtension(pi: ExtensionAPI): void {
   const cwd = process.cwd();
