@@ -440,3 +440,26 @@ leave worker capacity idle; hedging routes (including the other disjunct)
 should run concurrently unless the user restricted capacity. Watch whether
 the steered campaigns' subsequent wakes actually rebalance before proposing
 the canonical edit.
+
+## 2026-08-09: reasoning-only as a verifiability regularizer (hypothesis)
+
+One-night observation, confounded: P3 (P3|prec,p=1|Cmax, --no-computation,
+hardest statement in the fleet) promoted 10 results in ~6h — all small
+finite certificates (enumerations, infeasibility certificates, barrier
+theorems) carried by hand. Flushing-coin (computation allowed, friendlier
+statement) promoted 0 in the same window; its candidates claimed more per
+artifact and died at comparison. Plausible mechanism: forbidding
+computation forces candidates to hand-checkable granularity, which is
+exactly what survives blind reconstruction. Confounds: different problems,
+different prior-route maturity, different coordinators' drafting styles.
+Candidate skill change IF replicated: recommend reasoning-only mode for
+theory campaigns unless a computation is declared load-bearing up front.
+Test: next paired launch, run one theory campaign each way.
+
+## 2026-08-09: monitors must surface rebuttal records
+
+Operator-side lesson from the retracted issue #23: a journal view showing
+comparison verdicts but not kind:rebuttal records makes the contract's
+legitimate FAIL->rebuttal->fresh-attempt lane look like verdict shopping.
+Any status/trace/monitor surface that prints verdicts should print the
+permission records (rebuttals, reconciliations) beside them.
