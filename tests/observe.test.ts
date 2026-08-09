@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 const { GateStore } = await import("../src/gates.ts");
-const { archiveLedgerHistory, refuse, refusalsWithoutFollowup } = await import("../src/observe.ts");
+const { archiveLedgerHistory, gateFailStreak, refuse, refusalsWithoutFollowup } = await import("../src/observe.ts");
 
 function campaign(label: string) {
   const dir = fs.mkdtempSync(`/private/tmp/coverify-observe-${label}-`);
@@ -52,5 +52,26 @@ describe("ledger history", () => {
     expect(snaps.length).toBe(2);
     // Integrity: each event's hash matches a stored snapshot's content hash.
     expect(new Set(events.map((e) => `${e.hash}.md`)).size).toBe(2);
+  });
+});
+
+describe("gate-fail streak", () => {
+  test("counts consecutive non-PASS gate verdicts and stops at the last PASS", () => {
+    const { store } = campaign("gatestreak");
+    store.append({ kind: "gate-verdict", mechanism: "ATLAS-A", verdict: "IDEA PASS" });
+    store.append({ kind: "gate-verdict", mechanism: "ATLAS-B", verdict: "IDEA FAIL" });
+    store.append({ kind: "gate-verdict", mechanism: "RADIX-C", verdict: "IDEA REPAIR" });
+    store.append({ kind: "gate-verdict", mechanism: "GF-JOIN-D", verdict: "IDEA FAIL" });
+    const s = gateFailStreak(store);
+    expect(s.streak).toBe(3);
+    // Newest first, so the coordinator reads the most recent family first.
+    expect(s.mechanisms).toEqual(["GF-JOIN-D", "RADIX-C", "ATLAS-B"]);
+  });
+
+  test("a fresh PASS clears it", () => {
+    const { store } = campaign("gateclear");
+    store.append({ kind: "gate-verdict", mechanism: "X", verdict: "IDEA FAIL" });
+    store.append({ kind: "gate-verdict", mechanism: "Y", verdict: "IDEA PASS" });
+    expect(gateFailStreak(store).streak).toBe(0);
   });
 });

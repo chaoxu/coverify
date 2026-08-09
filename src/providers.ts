@@ -353,15 +353,21 @@ export interface RoleUsage {
   costUSD?: number;
 }
 
-/** Field-wise RoleUsage sum (reduce-friendly). */
+/** Field-wise RoleUsage sum (reduce-friendly). Optional fields stay absent
+ *  unless some addend reported them: a cadence of CLI stages, none of which
+ *  price their tokens, must not journal `costUSD: 0` over millions of tokens —
+ *  "not reported" and "cost nothing" are different records, and only the
+ *  first one is true. */
 export function addUsage(a: RoleUsage, b: RoleUsage): RoleUsage {
+  const reported = (x: number | undefined, y: number | undefined) =>
+    x === undefined && y === undefined ? undefined : (x ?? 0) + (y ?? 0);
   return {
     input: a.input + b.input,
     output: a.output + b.output,
     cacheRead: a.cacheRead + b.cacheRead,
     cacheWrite: a.cacheWrite + b.cacheWrite,
-    reasoning: (a.reasoning ?? 0) + (b.reasoning ?? 0),
-    costUSD: (a.costUSD ?? 0) + (b.costUSD ?? 0),
+    reasoning: reported(a.reasoning, b.reasoning),
+    costUSD: reported(a.costUSD, b.costUSD),
   };
 }
 

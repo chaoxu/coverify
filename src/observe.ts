@@ -277,6 +277,30 @@ export function sameModelId(a: string, b: string): boolean {
 }
 
 /**
+ * Gate-verdict streak: consecutive idea gates that produced no IDEA PASS.
+ *
+ * The blind spot this closes (flushing-coin, 2026-08-09): 26 of 45 gate
+ * verdicts were FAIL and the campaign kept sampling one mechanism family,
+ * because nothing ever reads closures TOGETHER. Critics are minimal-context
+ * by design and cannot notice recurrence; the retry-novelty check is
+ * pairwise, so N routes sharing one root each differ from their nearest
+ * neighbour and no pairwise test fires. This states the count and leaves
+ * the reading to the coordinator — the contract already asks it to classify
+ * a stalled route as method failure or evidence about the target.
+ */
+export function gateFailStreak(store: GateStore): { streak: number; mechanisms: string[] } {
+  const verdicts = store.all().filter((e) => e.kind === "gate-verdict");
+  const mechanisms: string[] = [];
+  let streak = 0;
+  for (const e of [...verdicts].reverse()) {
+    if (typeof e.verdict === "string" && e.verdict.includes("PASS")) break;
+    streak++;
+    if (typeof e.mechanism === "string") mechanisms.push(e.mechanism);
+  }
+  return { streak, mechanisms: mechanisms.slice(0, 8) };
+}
+
+/**
  * The wake's bookkeeping digest: mechanical noticing the coordinator would
  * otherwise have to remember — dangling citations, promotions contradicted
  * or edited out from under their events, and refused work nothing followed
@@ -289,6 +313,7 @@ export function wakeBookkeeping(store: GateStore, dir: string): string {
   const missingEntries = promotionsMissingFromProved(store, dir);
   const unaddressed = refusalsWithoutFollowup(store);
   const substitutions = modelSubstitutions(store);
+  const gateStreak = gateFailStreak(store);
   return (
     (dangling.length > 0
       ? `\n\nLEDGER CITATIONS THAT POINT AT NOTHING (fix or remove them):\n` +
@@ -313,6 +338,14 @@ export function wakeBookkeeping(store: GateStore, dir: string): string {
                 : ""),
           )
           .join("\n")
+      : "") +
+    (gateStreak.streak >= 6
+      ? `\n\nNO IDEA PASS IN THE LAST ${gateStreak.streak} GATE VERDICTS. Nothing in this harness ` +
+        `reads closures together, so this is stated rather than concluded: the refused mechanisms ` +
+        `were ${gateStreak.mechanisms.join(", ")}. Per the contract, classify whether these share ` +
+        `ONE terminal gap — if they do, the family they are drawn from is the thing that is closed, ` +
+        `and the next packet must come from outside it (or the closures are evidence about the ` +
+        `target itself, which moves the working hypothesis).`
       : "") +
     (substitutions.length > 0
       ? `\n\nMODEL SUBSTITUTIONS ON RECORD (a verdict backend answered with a model other than the ` +

@@ -26,13 +26,26 @@ export interface TurnRecord {
   usage?: RoleUsage;
 }
 
+/** Usage as pi writes it to the session log: the priced total lives under
+ *  `cost.total`, not the flattened `costUSD` RoleUsage carries in-process.
+ *  Reading the wrong key fails silently: every priced coordinator session
+ *  reports as unpriced. */
+type SessionUsage = RoleUsage & { cost?: { total?: number } };
+
+/** Normalize a session-log usage to the in-process shape, so per-turn records
+ *  and session totals report cost the same way instead of one nesting it and
+ *  the other flattening it. */
+function toRoleUsage({ cost, ...u }: SessionUsage): RoleUsage {
+  return cost?.total !== undefined ? { ...u, costUSD: cost.total } : u;
+}
+
 interface SessionMessage {
   role?: string;
   content?: unknown;
   timestamp?: number;
   stopReason?: string;
   errorMessage?: string;
-  usage?: RoleUsage;
+  usage?: SessionUsage;
 }
 
 /** Walk a message history into TurnRecords (content sizes only). */
@@ -61,7 +74,7 @@ function messagesToTurns(messages: readonly SessionMessage[]): TurnRecord[] {
       toolCalls,
       stopReason: msg.stopReason,
       errorMessage: msg.errorMessage,
-      usage: msg.usage,
+      usage: msg.usage && toRoleUsage(msg.usage),
     };
     if (msg.role === "assistant") {
       if (prevAssistantTs !== undefined && msg.timestamp !== undefined) {
@@ -100,19 +113,22 @@ export function campaignTurns(campaignDir: string): SessionTelemetry[] {
   const root = path.join(campaignDir, ".coverify", "sessions");
   return walkJsonl(root).map((file) => {
     const messages: SessionMessage[] = [];
-    const usage: RoleUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, costUSD: 0 };
-    const add = (u: RoleUsage | undefined) => {
-      if (!u) return;
+    // Optional fields seeded absent, not zero: a session of unpriced turns
+    // reports "no cost recorded", never "cost nothing" (same rule as addUsage).
+    const usage: RoleUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+    const add = (raw: SessionUsage | undefined) => {
+      if (!raw) return;
+      const u = toRoleUsage(raw);
       usage.input += u.input ?? 0;
       usage.output += u.output ?? 0;
       usage.cacheRead += u.cacheRead ?? 0;
       usage.cacheWrite += u.cacheWrite ?? 0;
-      usage.reasoning = (usage.reasoning ?? 0) + (u.reasoning ?? 0);
-      usage.costUSD = (usage.costUSD ?? 0) + (u.costUSD ?? 0);
+      if (u.reasoning !== undefined) usage.reasoning = (usage.reasoning ?? 0) + u.reasoning;
+      if (u.costUSD !== undefined) usage.costUSD = (usage.costUSD ?? 0) + u.costUSD;
     };
     for (const line of fs.readFileSync(file, "utf8").split("\n")) {
       if (!line.trim()) continue;
-      let entry: { type?: string; message?: SessionMessage; usage?: RoleUsage };
+      let entry: { type?: string; message?: SessionMessage; usage?: SessionUsage };
       try {
         entry = JSON.parse(line);
       } catch {

@@ -339,7 +339,7 @@ switch (command) {
         console.log(
           `${s.file}  messages=${s.turns.length} in=${u.input} out=${u.output} ` +
             `cacheRead=${u.cacheRead} cacheHit=${(hit * 100).toFixed(0)}%` +
-            (u.costUSD ? ` cost=$${u.costUSD.toFixed(2)}` : ""),
+            (u.costUSD !== undefined ? ` cost=$${u.costUSD.toFixed(2)}` : ""),
         );
       }
     } else {

@@ -508,3 +508,49 @@ for (2): whether flushing-coin's comparisons pass after adopting the same
 discipline (steered 2026-08-09 07:31 with its own artifacts quoted). If
 they do, land the edit; if they keep failing, the cause is mathematical
 overclaiming rather than bundle authoring and this entry is wrong.
+
+## 2026-08-09: nothing reads closures together (the breadth-first blind spot)
+
+Evidence: flushing-coin, 45 gate verdicts (26 IDEA FAIL, 14 REPAIR, 5 PASS),
+50 closed routes, zero promotions in 12 hours. Reading eleven consecutive
+gate artifacts side by side shows they are ONE obstruction in costumes:
+g187 (flat affine atlas needs >= 2^(L-d(n)) charts), g165 (GF-join growth
+s -> s^c compounds over depth Theta(log m)), g177 ("does not resolve the
+recorded dimension-3 closure obstruction; it merely postpones it by one
+level") — i.e. no compiled representation of the allocation space stays
+small, the project's own standing K>=3 obstruction. The campaign kept
+drawing packets from the family that fact rules out.
+
+Why no part of the system noticed:
+- Gate critics are minimal-context BY DESIGN (that is what makes them
+  sharp); a critic structurally cannot see recurrence.
+- The retry-novelty check is PAIRWISE ("closest prior route is X, differs
+  because Y"). N routes sharing one root each differ from their nearest
+  neighbour, so the pairwise bar never fires on the shared root.
+- The coordinator meets verdicts one per wake, hours apart, across
+  compactions; FAILED.md is append-only prose past readability.
+- Every harness mechanism is depth-first (verify this claim, gate this
+  idea). Nothing is breadth-first (what do the last N rejections share).
+- Worst detail: the critics DID detect it in prose ("not materially
+  distinct from g176/F065"). The signal existed and nothing aggregated it.
+
+Landed now (harness, semantics-invisible): gateFailStreak() + a wake-digest
+line stating the streak and the refused mechanism names when >= 6 gates pass
+with no IDEA PASS. It states the fact and leaves the reading to the
+coordinator, matching the refusalsWithoutFollowup pattern.
+
+Candidate skill/launcher change (needs a second campaign's evidence before
+proposing): an OBSTRUCTION SYNTHESIS dispatch — when FAILED.md passes a
+threshold or the gate streak persists, dispatch one minimal-context worker
+whose entire deliverable is "read these N closures and state the smallest
+obstruction common to them, or state that there is none." That is delegable
+labor of exactly the launcher's deliverable shape (a precise failing
+implication), it is breadth-first where everything else is depth-first, and
+it is the one thing that would have caught this without an operator reading
+eleven artifacts by hand. Complements the Danus stalled-route dichotomy
+entry above: the dichotomy asks the coordinator to classify each route; this
+asks a fresh reader what the routes share.
+
+*Activation test:* a second campaign accumulating >= 20 closures whose gate
+artifacts cite each other (as g177/g180 did) without the frontier's working
+hypothesis changing.
