@@ -21,6 +21,7 @@ import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
+import { repoRoot } from "./campaign.js";
 import { fileCredentialStore } from "./credentials.js";
 import { CLAUDE_BRIDGE_ID, claudeBridgeProvider } from "./claude-bridge.js";
 import { envNumber, installReaperHooks, liveReapers, workspaceTools, type WriteScope } from "./supervise.js";
@@ -61,6 +62,7 @@ const PROVIDERS = [
   "claude-cli",
   "codex-cli",
   "chatgpt-cli",
+  "agy",
 ] as const;
 
 export interface ModelSpec {
@@ -138,8 +140,11 @@ export function roleModelSpec(role: RoleName): ModelSpec {
  *  different-family consult carried the plan). Model routing is harness
  *  mechanics (design rule 2); specs overridable via COVERIFY_FAMILY_<NAME>. */
 const FAMILY_SPECS: Record<string, { env: string; fallback: string }> = {
-  fable: { env: "COVERIFY_FAMILY_FABLE", fallback: "anthropic/claude-fable-5@high" },
-  gemini: { env: "COVERIFY_FAMILY_GEMINI", fallback: "google/gemini-2.5-pro@high" },
+  // Subscription-billed CLIs, not metered APIs (same policy as the role
+  // defaults): fable through the official Claude CLI (Max), gemini through
+  // agy (Google). Both are single-shot toolless consults like "pro".
+  fable: { env: "COVERIFY_FAMILY_FABLE", fallback: "claude-cli/fable" },
+  gemini: { env: "COVERIFY_FAMILY_GEMINI", fallback: "agy/gemini-3.1-pro-high" },
   // The Danus-style advisor lane: ChatGPT-subscription gpt-5.6-pro through
   // the chatgpt-cli oracle — a single-shot toolless consult (the packet must
   // inline everything). Served-model attestation is enforced at the oracle
@@ -163,7 +168,7 @@ function getModel(models: Models, spec: ModelSpec) {
   if (!model) {
     throw new Error(
       `unknown ${spec.provider} model id "${spec.modelId}"; check the COVERIFY_MODEL* spec ` +
-        `(auth: ${{ anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", google: "GEMINI_API_KEY", "openai-codex": "coverify login openai-codex", "claude-bridge": "claude binary (Claude Code login)", "claude-cli": "claude binary", "codex-cli": "codex binary", "chatgpt-cli": "chatgpt-cli binary (daemon must be running)" }[spec.provider]})`,
+        `(auth: ${{ anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", google: "GEMINI_API_KEY", "openai-codex": "coverify login openai-codex", "claude-bridge": "claude binary (Claude Code login)", "claude-cli": "claude binary", "codex-cli": "codex binary", "chatgpt-cli": "chatgpt-cli binary (daemon must be running)", agy: "agy binary (Antigravity login)" }[spec.provider]})`,
     );
   }
   return model;
@@ -275,7 +280,7 @@ interface CliBackend {
  *  for machine-readable output so per-call token usage reaches the journal
  *  (claude: result JSON on stdout; codex: JSONL events with turn usage);
  *  an env-overridden template without those flags degrades to text-only. */
-const CLI_BACKENDS: Record<"claude-cli" | "codex-cli" | "chatgpt-cli", CliBackend> = {
+const CLI_BACKENDS: Record<"claude-cli" | "codex-cli" | "chatgpt-cli" | "agy", CliBackend> = {
   "claude-cli": {
     env: "COVERIFY_CLAUDE_CMD",
     // --effort max (user decision 2026-08-08): the hostile audit is the one
@@ -298,6 +303,10 @@ const CLI_BACKENDS: Record<"claude-cli" | "codex-cli" | "chatgpt-cli", CliBacken
    *  The daemon picks the actual model; the spec's modelId is a provenance
    *  label. Emits {ok, text, error} JSON on stdout. */
   "chatgpt-cli": { env: "COVERIFY_CHATGPT_CMD", cmd: "chatgpt-cli oracle --quiet --timeout 6000", output: "oracle-json" },
+  /** Antigravity CLI (Google subscription): the gemini ideation family.
+   *  Prompt-as-argv and spaced display-name model ids are handled by the
+   *  bin/agy-oracle transport wrapper ({repo} resolves to the checkout). */
+  agy: { env: "COVERIFY_AGY_CMD", cmd: "{repo}/bin/agy-oracle {model}", output: "stdout" },
 };
 
 export function cliBackendCommand(provider: keyof typeof CLI_BACKENDS): string {
@@ -377,6 +386,7 @@ function runCliRole(
   const backend = CLI_BACKENDS[provider];
   const parts = cliBackendCommand(provider)
     .replaceAll("{model}", modelId)
+    .replaceAll("{repo}", repoRoot())
     .replaceAll("{out}", outFile)
     .split(/\s+/);
   return new Promise((resolve, reject) => {

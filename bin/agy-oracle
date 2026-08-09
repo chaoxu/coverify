@@ -1,0 +1,17 @@
+#!/bin/sh
+# Transport glue (fleet bun policy: shell only for unavoidable glue): agy
+# takes its prompt as an argument, not stdin, and its model ids are display
+# strings with spaces — both unrepresentable in coverify's whitespace-split
+# CLI templates. This wrapper reads the prompt from stdin, maps the slug to
+# agy's display name, and execs a sandboxed non-interactive session.
+set -eu
+slug="${1:-gemini-3.1-pro-high}"
+case "$slug" in
+  gemini-3.1-pro-high) model="Gemini 3.1 Pro (High)";;
+  gemini-3.1-pro-low) model="Gemini 3.1 Pro (Low)";;
+  gemini-3.6-flash-high) model="Gemini 3.6 Flash (High)";;
+  *) model="$slug";;
+esac
+prompt=$(cat)
+[ -n "$prompt" ] || { echo "agy-oracle: empty prompt on stdin" >&2; exit 1; }
+exec agy -p "$prompt" --model "$model" --sandbox --output-format text --print-timeout 90m
