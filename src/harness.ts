@@ -26,7 +26,7 @@ import {
   buildModels,
   createHarnessRoleSession,
   roleModelSpec,
-  specLabel,
+  specKey,
   type RoleSession,
   type RoleUsage,
 } from "./providers.js";
@@ -64,13 +64,12 @@ export interface Handle {
   /** Provider- or CLI-reported usage, read at completion (undefined when the
    *  backend reported none). */
   usage?: () => RoleUsage | undefined;
-  /** True when `usage` is a SUM of other records that are themselves on
-   *  file. A reader must exclude these from any total or double-count them
-   *  (80.4M tokens, 27%, in the 2026-08-09 study). */
-  usageRollup?: boolean;
-  /** The stage kinds actually appended by this cadence, in order — 1 to 4,
-   *  never assumed. Lets a reader compute rollup - sum(children) and see
-   *  spend that was incurred but never recorded as a stage. */
+  /** Present iff `usage` is a SUM of other records that are themselves on
+   *  file, and then it lists the stage kinds actually appended, in order — 1
+   *  to 4, never assumed. A reader must exclude such a sum from any total or
+   *  double-count it (80.4M tokens, 27%, in the 2026-08-09 study), and can
+   *  compute rollup - sum(children) to see spend that was incurred but never
+   *  recorded as a stage. Journalled as `usageRollup` + `usageRollupOf`. */
   usageRollupOf?: () => string[];
   /** Resolves (never rejects) when the handle finishes; set by registerHandle. */
   settled: Promise<void>;
@@ -136,12 +135,12 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
 
   // Run-config stamp: attributes this run to an exact (harness, contract,
   // policy, runtime) tuple — see observe.ts.
-  // One id per harness process. Coordinator usage is CUMULATIVE per session,
-  // and until now the only way to find an epoch boundary was to watch for the
-  // counter going backwards — an inference that over-split one campaign into
-  // 18 epochs against 15 real sessions and overstated its fresh input by
-  // 16.7M tokens. With this on every usage event, a reader groups instead of
-  // guessing. Short and human-typeable: it appears in operator queries.
+  // One id per harness process, stamped on every usage event. Coordinator
+  // usage is CUMULATIVE per session, and the only previous way to find an
+  // epoch boundary was to watch the counter go backwards — an inference that
+  // over-split one campaign into 18 epochs against 15 real sessions and
+  // overstated its fresh input by 16.7M tokens. Short and human-typeable: it
+  // appears in operator queries.
   const runId = randomUUID().slice(0, 8);
   recordRunConfig(store, {
     runId,
@@ -231,6 +230,15 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     // Failure is classified here too — a rejected call or empty final text is
     // an infrastructure failure — so `failed` is the single source of truth
     // and `failed` set ⟺ no report artifact exists.
+    // The usage block both completion records carry, identically: the roll-up
+    // marker must travel with the sum it qualifies (see Handle.usageRollupOf).
+    const usageFields = () => {
+      const rollupOf = handle.usageRollupOf?.();
+      return {
+        usage: handle.usage?.(),
+        ...(rollupOf ? { usageRollup: true, usageRollupOf: rollupOf } : {}),
+      };
+    };
     const persist = (report: string, failed?: string, partialText?: string) => {
       const live = handles.has(handle.id);
       if (failed !== undefined) {
@@ -255,10 +263,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           id: handle.id,
           failed,
           ...(partial !== undefined ? { partial } : {}),
-          usage: handle.usage?.(),
-          ...(handle.usageRollup
-            ? { usageRollup: true, usageRollupOf: handle.usageRollupOf?.() }
-            : {}),
+          ...usageFields(),
         });
         if (live) settledQueue.push({ h: handle, failed });
         return;
@@ -275,10 +280,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           id: handle.id,
           report: rel,
           reportSha256: sha256Text(report),
-          usage: handle.usage?.(),
-          ...(handle.usageRollup
-            ? { usageRollup: true, usageRollupOf: handle.usageRollupOf?.() }
-            : {}),
+          ...usageFields(),
         });
         settledQueue.push({ h: handle, failed: undefined });
       } else {
@@ -779,7 +781,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       runId,
       sessionId: `coordinator-${coordinatorEpoch}`,
       wake: wakeCount,
-      modelSpec: `${specLabel(roleModelSpec("coordinator"))}@${roleModelSpec("coordinator").thinking}`,
+      modelSpec: specKey(roleModelSpec("coordinator")),
       cumulative: coordinator.usage(),
       approxContextTokens: contextNow,
       ...(growth !== undefined ? { contextGrowthTokens: growth } : {}),

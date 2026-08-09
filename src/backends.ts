@@ -11,6 +11,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { repoRoot } from "./campaign.js";
 import { installReaperHooks, liveReapers } from "./sandbox.js";
+import { metered } from "./providers.js";
 import type { RoleRun, RoleSession, RoleUsage } from "./providers.js";
 
 /**
@@ -196,13 +197,7 @@ function codexJsonlUsage(stdout: string): RoleUsage | undefined {
       reasoning = (reasoning ?? 0) + event.usage.reasoning_output_tokens;
   }
   return found
-    ? {
-        input, output, cacheRead, cacheWrite, reasoning,
-        meter: "codex-cli-jsonl" as const,
-        // cache_write_input_tokens is 0 in 99/99 sampled rollout events — an
-        // upstream defect (codex #32479, pi #6469), not a measurement.
-        unreported: ["cacheWrite"] as const,
-      }
+    ? metered("codex-cli-jsonl", { input, output, cacheRead, cacheWrite, reasoning })
     : undefined;
 }
 
@@ -243,11 +238,10 @@ function runCliRole(
   usage?: RoleUsage;
   servedModel?: string;
   reportedModel?: string;
-  /** codex rollout id for this call (see codexThreadId) — the join key to
-   *  ~/.codex/sessions/, where the rate-limit trajectory lives. */
+  /** Rollout join keys; see codexThreadId. `backendCwd` is the per-call temp
+   *  cwd, a second route to the same rollout via its session_meta.cwd that
+   *  holds when stdout was lost or the event name changes upstream. */
   providerSessionId?: string;
-  /** The per-call temp cwd. Joins to the rollout's session_meta.cwd even when
-   *  stdout was lost, and survives a codex event-name change. */
   backendCwd?: string;
 }> {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "coverify-cli-"));
@@ -369,16 +363,14 @@ function runCliRole(
           return resolve({
             text: (payload.result ?? "").trim(),
             reportedModel: reported ? `${provider}/${reported}` : undefined,
-            usage: u && {
-              input: u.input_tokens ?? 0,
-              output: u.output_tokens ?? 0,
-              cacheRead: u.cache_read_input_tokens ?? 0,
-              cacheWrite: u.cache_creation_input_tokens ?? 0,
-              meter: "claude-cli-json" as const,
-              // The result JSON has no thinking-token field: absent on
-              // 204/204 audit records, a provider fact, not a zero.
-              unreported: ["reasoning"] as const,
-            },
+            usage:
+              u &&
+              metered("claude-cli-json", {
+                input: u.input_tokens ?? 0,
+                output: u.output_tokens ?? 0,
+                cacheRead: u.cache_read_input_tokens ?? 0,
+                cacheWrite: u.cache_creation_input_tokens ?? 0,
+              }),
           });
         } catch {
           // Env-overridden template without --output-format json: plain text.

@@ -26,7 +26,7 @@ import {
   retryPolicy,
   ROLE_NAMES,
   roleModelSpec,
-  specLabel,
+  specKey,
 } from "./providers.js";
 import { sandboxMode, toolText } from "./sandbox.js";
 
@@ -93,12 +93,7 @@ export function recordRunConfig(
       ["pi-agent-core", "pi-ai", "pi-coding-agent", "pi-tui"].map((p) => [p, piVersion(p)]),
     ),
     ...(patches && Object.keys(patches).length > 0 ? { patches } : {}),
-    roleSpecs: Object.fromEntries(
-      ROLE_NAMES.map((r) => {
-        const s = roleModelSpec(r);
-        return [r, `${specLabel(s)}@${s.thinking}`];
-      }),
-    ),
+    roleSpecs: Object.fromEntries(ROLE_NAMES.map((r) => [r, specKey(roleModelSpec(r))])),
     cliTemplates: {
       "claude-cli": cliBackendCommand("claude-cli"),
       "codex-cli": cliBackendCommand("codex-cli"),
