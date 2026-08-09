@@ -146,7 +146,9 @@ function codexJsonlUsage(stdout: string): RoleUsage | undefined {
   let output = 0;
   let cacheRead = 0;
   let cacheWrite = 0;
-  let reasoning = 0;
+  // Absent unless an event actually carried it — a measured 0 and "the field
+  // was never reported" are different records.
+  let reasoning: number | undefined;
   for (const line of stdout.split("\n")) {
     if (!line.includes('"turn.completed"')) continue;
     let event: {
@@ -170,7 +172,8 @@ function codexJsonlUsage(stdout: string): RoleUsage | undefined {
     output += event.usage.output_tokens ?? 0;
     cacheRead += event.usage.cached_input_tokens ?? 0;
     cacheWrite += event.usage.cache_write_input_tokens ?? 0;
-    reasoning += event.usage.reasoning_output_tokens ?? 0;
+    if (event.usage.reasoning_output_tokens !== undefined)
+      reasoning = (reasoning ?? 0) + event.usage.reasoning_output_tokens;
   }
   return found ? { input, output, cacheRead, cacheWrite, reasoning } : undefined;
 }

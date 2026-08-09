@@ -557,7 +557,9 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         // guarantees that ordering for thunks.
         promise: cadence,
         // Summed over the cadence's role calls; undefined when no backend
-        // reported usage.
+        // reported usage. A stage whose backend reports nothing contributes
+        // nothing rather than a fabricated `input: 0` — it stays on record as
+        // its own dispatch, so only the convenience sum is short.
         usage: () => (usages.length === 0 ? undefined : usages.reduce(addUsage)),
       });
       return toolText(

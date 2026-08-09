@@ -349,15 +349,19 @@ export interface RoleUsage {
   cacheRead: number;
   cacheWrite: number;
   reasoning?: number;
-  /** Dollar cost summed from pi's per-message pricing (absent for CLI backends). */
-  costUSD?: number;
+  /** No dollar field, deliberately. Every role runs on a subscription lane
+   *  (see ROLE_DEFAULTS), so every price a provider reports — pi's per-message
+   *  cost, the claude CLI's `total_cost_usd` — is notional list price, not
+   *  money spent. Tokens and the model identity (recorded per dispatch as
+   *  `modelFamily`) are the facts; a reader wanting dollars applies a rate
+   *  table at read time, where "these are list prices" is an explicit
+   *  assumption rather than a field name that quietly asserts otherwise. */
 }
 
-/** Field-wise RoleUsage sum (reduce-friendly). Optional fields stay absent
- *  unless some addend reported them: a cadence of CLI stages, none of which
- *  price their tokens, must not journal `costUSD: 0` over millions of tokens —
- *  "not reported" and "cost nothing" are different records, and only the
- *  first one is true. */
+/** Field-wise RoleUsage sum (reduce-friendly). `reasoning` stays absent unless
+ *  some addend reported it: a measured 0 and "no backend reported the field"
+ *  are different records, and coercing the second into the first is how this
+ *  journal used to claim things it did not know. */
 export function addUsage(a: RoleUsage, b: RoleUsage): RoleUsage {
   const reported = (x: number | undefined, y: number | undefined) =>
     x === undefined && y === undefined ? undefined : (x ?? 0) + (y ?? 0);
@@ -367,21 +371,20 @@ export function addUsage(a: RoleUsage, b: RoleUsage): RoleUsage {
     cacheRead: a.cacheRead + b.cacheRead,
     cacheWrite: a.cacheWrite + b.cacheWrite,
     reasoning: reported(a.reasoning, b.reasoning),
-    costUSD: reported(a.costUSD, b.costUSD),
   };
 }
 
 function sumMessagesUsage(messages: readonly unknown[]): RoleUsage {
   const total: RoleUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   for (const m of messages) {
-    const u = (m as { role?: string; usage?: RoleUsage & { cost?: { total?: number } } }).usage;
-    if ((m as { role?: string }).role !== "assistant" || !u) continue;
+    const msg = m as { role?: string; usage?: RoleUsage };
+    if (msg.role !== "assistant" || !msg.usage) continue;
+    const u = msg.usage;
     total.input += u.input ?? 0;
     total.output += u.output ?? 0;
     total.cacheRead += u.cacheRead ?? 0;
     total.cacheWrite += u.cacheWrite ?? 0;
     if (u.reasoning !== undefined) total.reasoning = (total.reasoning ?? 0) + u.reasoning;
-    if (u.cost?.total !== undefined) total.costUSD = (total.costUSD ?? 0) + u.cost.total;
   }
   return total;
 }

@@ -36,17 +36,16 @@ test("campaignTurns derives records and usage from a session tree", () => {
   expect(s.turns[2].gapMs).toBe(6000); // assistant-to-assistant gap
   // Usage: messages plus the compaction entry's own spend.
   expect(s.usage).toMatchObject({ input: 62, output: 26, cacheRead: 90 });
-  // None of those turns priced its tokens, so cost stays absent — reporting
-  // $0 over 62k input tokens would be a false record, not a cheap session.
-  expect(s.usage.costUSD).toBeUndefined();
+  // No backend reported reasoning tokens, so the field stays absent.
+  expect(s.usage.reasoning).toBeUndefined();
 
   expect(fs.readdirSync(dir, { recursive: true }).sort()).toEqual(before); // read-only
 });
 
-test("priced sessions sum cost from pi's nested cost.total", () => {
-  // pi writes the priced total under `usage.cost.total`; reading a flattened
-  // `costUSD` that the session log never contains reports every priced
-  // coordinator session as unpriced.
+test("pi's nested cost block never reaches a record", () => {
+  // Every lane is subscription-billed, so the CLI/pi price is notional list
+  // price. It is dropped at the boundary rather than journalled as spend —
+  // and it must not survive into the per-turn JSON either.
   const dir = fs.mkdtempSync("/private/tmp/coverify-turns-cost-");
   const sess = path.join(dir, ".coverify", "sessions", "s");
   fs.mkdirSync(sess, { recursive: true });
@@ -60,10 +59,10 @@ test("priced sessions sum cost from pi's nested cost.total", () => {
     ].join("\n") + "\n",
   );
   const s = campaignTurns(dir)[0];
-  expect(s.usage.costUSD).toBeCloseTo(0.315249, 6);
+  // Tokens are summed across messages and the compaction entry; reasoning too.
+  expect(s.usage).toMatchObject({ input: 699, output: 2010, cacheRead: 4608 });
   expect(s.usage.reasoning).toBe(1809);
-  // Per-turn records report cost the same way the session total does; the
-  // nested wire shape must not leak into `coverify turns --session`.
-  expect(s.turns[0].usage?.costUSD).toBeCloseTo(0.065249, 6);
-  expect(JSON.stringify(s.turns[0])).not.toContain('"cost"');
+  expect(JSON.stringify(s.usage)).not.toMatch(/cost/i);
+  expect(JSON.stringify(s.turns[0])).not.toMatch(/cost/i);
 });
+

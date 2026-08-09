@@ -125,7 +125,14 @@ Verified enablers (pi-coding-agent 0.83.0, in our lockfile today):
   readable; blind roles are toolless; keep sessions under `.coverify/`
   (coordinator write-denied) and note in the honesty ledger.
 - **cacheWrite is hardcoded 0 upstream (#6469)** — never use it in cost
-  math; costUSD comes from pi pricing which accounts for this.
+  math. (Amended 2026-08-09: the original note said pi's `costUSD` accounted
+  for this. It did not — measured over 4,117 pi-path messages, `cacheWrite`
+  is 0 in every one and pi attributed $0.00 to it, so the provider's price
+  inherited the same blind spot. `costUSD` has since been removed entirely:
+  every lane is subscription-billed, so a recorded dollar figure was notional
+  list price, not spend. Records carry tokens and model identity; dollars are
+  a read-time derivation, and cache-write spend remains unmeasurable until
+  #6469 is fixed.)
 
 ## Explicitly rejected alternatives
 

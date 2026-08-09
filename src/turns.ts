@@ -26,17 +26,15 @@ export interface TurnRecord {
   usage?: RoleUsage;
 }
 
-/** Usage as pi writes it to the session log: the priced total lives under
- *  `cost.total`, not the flattened `costUSD` RoleUsage carries in-process.
- *  Reading the wrong key fails silently: every priced coordinator session
- *  reports as unpriced. */
-type SessionUsage = RoleUsage & { cost?: { total?: number } };
+/** Usage as pi writes it to the session log: token fields plus a `cost` block
+ *  this harness deliberately does not record (see RoleUsage — every lane is
+ *  subscription-billed, so that figure is notional list price). */
+type SessionUsage = RoleUsage & { cost?: unknown };
 
-/** Normalize a session-log usage to the in-process shape, so per-turn records
- *  and session totals report cost the same way instead of one nesting it and
- *  the other flattening it. */
-function toRoleUsage({ cost, ...u }: SessionUsage): RoleUsage {
-  return cost?.total !== undefined ? { ...u, costUSD: cost.total } : u;
+/** Drop the wire-only `cost` block so no notional dollar figure reaches a
+ *  record; token fields pass through unchanged. */
+function toRoleUsage({ cost: _cost, ...u }: SessionUsage): RoleUsage {
+  return u;
 }
 
 interface SessionMessage {
@@ -113,8 +111,9 @@ export function campaignTurns(campaignDir: string): SessionTelemetry[] {
   const root = path.join(campaignDir, ".coverify", "sessions");
   return walkJsonl(root).map((file) => {
     const messages: SessionMessage[] = [];
-    // Optional fields seeded absent, not zero: a session of unpriced turns
-    // reports "no cost recorded", never "cost nothing" (same rule as addUsage).
+    // `reasoning` is seeded absent, not zero: a session whose turns never
+    // reported the field must not claim it measured zero (same rule as
+    // addUsage).
     const usage: RoleUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
     const add = (raw: SessionUsage | undefined) => {
       if (!raw) return;
@@ -124,7 +123,6 @@ export function campaignTurns(campaignDir: string): SessionTelemetry[] {
       usage.cacheRead += u.cacheRead ?? 0;
       usage.cacheWrite += u.cacheWrite ?? 0;
       if (u.reasoning !== undefined) usage.reasoning = (usage.reasoning ?? 0) + u.reasoning;
-      if (u.costUSD !== undefined) usage.costUSD = (usage.costUSD ?? 0) + u.costUSD;
     };
     for (const line of fs.readFileSync(file, "utf8").split("\n")) {
       if (!line.trim()) continue;

@@ -462,6 +462,31 @@ fresh instances are mandatory where they buy trust (critics, verifiers).
 
 ## Observability
 
+Usage records tokens and model identity, never dollars (2026-08-09). Every
+role runs on a subscription lane (`ROLE_DEFAULTS`), so a provider-reported
+price — pi's per-message cost, `claude -p`'s `total_cost_usd` — is notional
+list price rather than money spent, and a field named `costUSD` asserted
+otherwise on every record that carried it. The removed field had also been
+lying in three narrower ways: summed cadences of unpriced CLI stages emitted
+a concrete `costUSD: 0` over millions of tokens (115 such records in the
+2026-08-08 fleet, worst at 7,053,222 tokens), `campaignTurns` read a
+flattened `costUSD` the session log never contains — so every priced
+coordinator session read as unpriced — and the partial-sum marker added to
+paper over heterogeneous backends only widened the surface. Records now
+carry token counts plus `modelFamily` (with `servedModel` attestation where
+a backend gives one); a reader wanting dollars applies a rate table at read
+time, where "these are list prices" is an explicit assumption. Optional
+fields stay absent unless a backend reported them: a measured `reasoning: 0`
+and "no backend reported the field" are different records.
+
+Cache-write spend is unmeasurable, and the provider prices did not fix it:
+`cacheWrite` is hardcoded 0 upstream (pi #6469) and measures 0 across all
+4,117 pi-path messages in the fleet, with pi attributing $0.00 to it — so
+the provider-computed price inherited the same blind spot a read-time rate
+table would have. Note it as a known floor on any cost derivation rather
+than trusting a number that silently excludes it. `claude-cli` does report
+`cacheWrite` correctly (178/178 records); `codex-cli` never does (0/382).
+
 Reported-model identity (#21 P3, 2026-08-09): verdict records carry
 `reportedModel` when the backend states what actually answered —
 `claude-cli` reports it in its JSON (`modelUsage`/`canonicalModel`);
