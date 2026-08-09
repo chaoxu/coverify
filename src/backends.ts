@@ -11,7 +11,6 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { repoRoot } from "./campaign.js";
 import { installReaperHooks, liveReapers } from "./sandbox.js";
-import { metered } from "./providers.js";
 import type { RoleRun, RoleSession, RoleUsage } from "./providers.js";
 
 /**
@@ -155,6 +154,7 @@ function codexJsonlUsage(stdout: string): RoleUsage | undefined {
   let output = 0;
   let cacheRead = 0;
   let cacheWrite = 0;
+  let sawCacheWrite = false;
   // Absent unless an event actually carried it — a measured 0 and "the field
   // was never reported" are different records.
   let reasoning: number | undefined;
@@ -189,6 +189,7 @@ function codexJsonlUsage(stdout: string): RoleUsage | undefined {
     // reconstructor and comparator; see docs/measurement-protocol.md rule 1.
     const cr = event.usage.cached_input_tokens ?? 0;
     const cw = event.usage.cache_write_input_tokens ?? 0;
+    if (event.usage.cache_write_input_tokens !== undefined) sawCacheWrite = true;
     input += Math.max(0, (event.usage.input_tokens ?? 0) - cr - cw);
     output += event.usage.output_tokens ?? 0;
     cacheRead += cr;
@@ -197,7 +198,13 @@ function codexJsonlUsage(stdout: string): RoleUsage | undefined {
       reasoning = (reasoning ?? 0) + event.usage.reasoning_output_tokens;
   }
   return found
-    ? metered("codex-cli-jsonl", { input, output, cacheRead, cacheWrite, reasoning })
+    ? {
+        input, output, cacheRead, reasoning, meter: "codex-cli-jsonl" as const,
+        // Observed per record, never read off a lane table: the day codex
+        // #32479 lands and the field starts arriving, this records the real
+        // number instead of stamping a stale "unmeasured" over it.
+        ...(sawCacheWrite ? { cacheWrite } : {}),
+      }
     : undefined;
 }
 
@@ -363,14 +370,21 @@ function runCliRole(
           return resolve({
             text: (payload.result ?? "").trim(),
             reportedModel: reported ? `${provider}/${reported}` : undefined,
-            usage:
-              u &&
-              metered("claude-cli-json", {
-                input: u.input_tokens ?? 0,
-                output: u.output_tokens ?? 0,
-                cacheRead: u.cache_read_input_tokens ?? 0,
-                cacheWrite: u.cache_creation_input_tokens ?? 0,
-              }),
+            usage: u && {
+              input: u.input_tokens ?? 0,
+              output: u.output_tokens ?? 0,
+              cacheRead: u.cache_read_input_tokens ?? 0,
+              // This lane genuinely measures cache creation, unlike the codex
+              // and pi lanes; observed per record rather than assumed.
+              ...(u.cache_creation_input_tokens !== undefined
+                ? { cacheWrite: u.cache_creation_input_tokens }
+                : {}),
+              meter: "claude-cli-json" as const,
+              // `reasoning` stays absent: the result JSON has no thinking-token
+              // field at all (absent on 204/204 audit records). pi's contract
+              // already fixes undefined as "provider does not report it", so no
+              // parallel gap list is needed.
+            },
           });
         } catch {
           // Env-overridden template without --output-format json: plain text.

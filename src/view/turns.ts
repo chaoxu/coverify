@@ -5,7 +5,7 @@
 // every field is a pure function of the stored messages.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { metered, type RoleUsage } from "../providers.js";
+import type { RoleUsage } from "../providers.js";
 
 /** One message's telemetry: sizes + provider accounting, no content. For
  *  assistant messages `usage.input` is the uncached billed input of THAT
@@ -114,14 +114,16 @@ export function campaignTurns(campaignDir: string): SessionTelemetry[] {
     // `reasoning` is seeded absent, not zero: a session whose turns never
     // reported the field must not claim it measured zero (same rule as
     // addUsage).
-    const usage: RoleUsage = metered("pi-session", { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+    // Reconstructed from pi's OWN session JSONL, so the provenance is known
+    // exactly as well as at the stamped site in providers.ts.
+    const usage: RoleUsage = { input: 0, output: 0, cacheRead: 0, meter: "pi-session" };
     const add = (raw: SessionUsage | undefined) => {
       if (!raw) return;
       const u = toRoleUsage(raw);
       usage.input += u.input ?? 0;
       usage.output += u.output ?? 0;
       usage.cacheRead += u.cacheRead ?? 0;
-      usage.cacheWrite += u.cacheWrite ?? 0;
+      if (u.cacheWrite) usage.cacheWrite = (usage.cacheWrite ?? 0) + u.cacheWrite;
       if (u.reasoning !== undefined) usage.reasoning = (usage.reasoning ?? 0) + u.reasoning;
     };
     for (const line of fs.readFileSync(file, "utf8").split("\n")) {

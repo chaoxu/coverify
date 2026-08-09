@@ -14,7 +14,14 @@ import {
   type AgentTool,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import { createModels, isContextOverflow, retryAssistantCall, type AssistantMessage, type Transport } from "@earendil-works/pi-ai";
+import {
+  createModels,
+  isContextOverflow,
+  retryAssistantCall,
+  type AssistantMessage,
+  type Transport,
+  type Usage as PiUsage,
+} from "@earendil-works/pi-ai";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
@@ -358,59 +365,33 @@ function wireLogPayload(wirePath: string) {
 }
 
 
-/** Which parser produced a usage record. Two lanes have historically meant
- *  different things by the same field names, and a reader that guesses is a
- *  reader that gets it wrong — a 30% fresh-input overstatement in the
- *  2026-08-09 study came from summing across meters. Recorded so nobody has
- *  to infer it from the role and the commit date. */
+/** Which parser produced a usage record. NOT a convention discriminator —
+ *  all three normalize `input` to the uncached part (pi and codex-cli both
+ *  subtract cached and cache-write; Anthropic reports it exclusive natively).
+ *  It is provenance: which adapter to go fix when a number looks wrong. */
 export type Meter = "pi-session" | "codex-cli-jsonl" | "claude-cli-json";
 
-/** A field the meter does not report at all, as distinct from a measured zero. */
-type UsageGap = "cacheWrite" | "reasoning";
-
-/** Per-meter gaps, stated once so no parser site can disagree with another:
- *  pi folds cache-write into input and reports 0; codex's
- *  cache_write_input_tokens is 0 in 99/99 sampled rollout events, an upstream
- *  defect (codex #32479, pi #6469); the claude result JSON has no
- *  thinking-token field at all (absent on 204/204 audit records). */
-const METER_GAPS: Record<Meter, readonly UsageGap[]> = {
-  "pi-session": ["cacheWrite"],
-  "codex-cli-jsonl": ["cacheWrite"],
-  "claude-cli-json": ["reasoning"],
-};
-
-/** Stamp a parsed record with the parser that produced it and that parser's
- *  known gaps. Every construction site of a RoleUsage goes through here, so a
- *  record is self-describing and a reader never has to infer the convention. */
-export function metered(meter: Meter, u: RoleUsage): RoleUsage {
-  return { ...u, meter, unreported: METER_GAPS[meter] };
-}
-
-/** Provider-reported token usage (pi-ai Usage, summed; official CLIs parsed
- *  from their JSON output) — mechanics only; nothing reads this except the
- *  journal. */
-export interface RoleUsage {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  reasoning?: number;
-  /** The parser that produced this record (see `metered`). `input` is the
-   *  UNCACHED part on every current meter; the field exists so a future
-   *  divergence is visible rather than silent, and so cross-meter sums can be
-   *  refused. Absent on records written before 2026-08-09 and on usage
-   *  reconstructed from pi's own session JSONL (view/turns.ts), which carries
-   *  no envelope. */
+/** Coverify's usage record: pi's `Usage` contract minus what only pi can
+ *  compute, plus provenance. Derived from pi's type rather than paralleling
+ *  it — view/turns.ts parses pi's own session JSONL as a RoleUsage, so the
+ *  two were already structurally coupled across a package boundary, with a pi
+ *  upgrade as the silent failure trigger.
+ *
+ *  From pi's contract, and the reason two fields are optional:
+ *  - `reasoning` is a SUBSET of `output` (output already includes it), left
+ *    undefined by providers that expose no breakdown. Adding it to output
+ *    double-counts.
+ *  - `cacheWrite` is optional HERE though required in pi's type: absence means
+ *    the provider never reported it, which is different from a measured zero.
+ *    Both the pi and codex-cli lanes hit this — cache_write_input_tokens is
+ *    absent upstream (codex #32479, pi #6469), so a 0 there is a broken meter,
+ *    not a measurement. Absence carries that, so no parallel gap-list is
+ *    needed. */
+export type RoleUsage = Omit<PiUsage, "cost" | "totalTokens" | "cacheWrite"> & {
+  cacheWrite?: number;
+  /** Which adapter produced this record — provenance, not convention (see
+   *  Meter). Absent on records written before 2026-08-09. */
   meter?: Meter;
-  /** Set by addUsage when it summed records from different meters — an absent
-   *  `meter` cannot say this, since it also means "unknown". A reader seeing
-   *  this must not treat the totals as one currency. */
-  mixedMeters?: readonly Meter[];
-  /** Fields no contributing meter measured: absent from this record entirely. */
-  unreported?: readonly UsageGap[];
-  /** Fields SOME contributing meter measured and others did not, so the value
-   *  present is real but an undercount. Only ever set on cross-meter sums. */
-  partiallyUnreported?: readonly UsageGap[];
   /** No dollar field, deliberately. Every role runs on a subscription lane
    *  (see ROLE_DEFAULTS), so every price a provider reports — pi's per-message
    *  cost, the claude CLI's `total_cost_usd` — is notional list price, not
@@ -418,58 +399,43 @@ export interface RoleUsage {
    *  `modelFamily`) are the facts; a reader wanting dollars applies a rate
    *  table at read time, where "these are list prices" is an explicit
    *  assumption rather than a field name that quietly asserts otherwise. */
-}
+};
 
-/** Field-wise RoleUsage sum (reduce-friendly). `reasoning` stays absent unless
- *  some addend reported it: a measured 0 and "no backend reported the field"
+/** Field-wise RoleUsage sum (reduce-friendly). An optional field stays absent
+ *  unless some addend reported it: a measured 0 and "no backend reported this"
  *  are different records, and coercing the second into the first is how this
  *  journal used to claim things it did not know. */
 export function addUsage(a: RoleUsage, b: RoleUsage): RoleUsage {
-  const reported = (x: number | undefined, y: number | undefined) =>
+  const reported = (x?: number, y?: number) =>
     x === undefined && y === undefined ? undefined : (x ?? 0) + (y ?? 0);
   // Deliberately TOTAL: this runs inside persist()'s store.append argument on
   // the settle path, where a throw would skip the completion record, orphan a
   // report already on disk, and reject handle.settled — whose contract is
   // "resolves, never rejects" — taking the whole campaign down with every live
-  // agent's work unharvested. Observability may not end a campaign (design
-  // rule 2). A mixed sum is instead MARKED, so a reader sees it.
-  // Gaps split, because neither label alone is honest: a cadence sums audit
-  // (claude, no reasoning field) with three codex stages that DO report
-  // reasoning. Union emitted a record holding a measured positive `reasoning`
-  // while declaring reasoning unreported, so a reader doing the honest thing —
-  // refusing to total a field marked unmeasured — discarded real codex
-  // reasoning on every full cadence. Intersection alone is equally false: it
-  // implies full measurement of a field only one addend measured.
-  const meterful = [a, b].filter((u) => u.meter !== undefined);
-  const meters = [...new Set(meterful.map((u) => u.meter as Meter))].sort();
-  const gaps = meterful.map((u) => new Set(u.unreported ?? []));
-  const missedByAll = (g: UsageGap) => gaps.every((s) => s.has(g));
-  const anyGap = [...new Set(gaps.flatMap((s) => [...s]))].sort();
-  // Unmeasured by every addend: genuinely absent from the sum. Unmeasured by
-  // some: the sum holds a real but INCOMPLETE number.
-  const unreported = anyGap.filter(missedByAll);
-  const partiallyUnreported = anyGap.filter((g) => !missedByAll(g));
+  // agent's work unharvested. Observability may not end a campaign (rule 2).
   const sum: RoleUsage = {
     input: a.input + b.input,
     output: a.output + b.output,
     cacheRead: a.cacheRead + b.cacheRead,
-    cacheWrite: a.cacheWrite + b.cacheWrite,
+    cacheWrite: reported(a.cacheWrite, b.cacheWrite),
     reasoning: reported(a.reasoning, b.reasoning),
   };
-  // A meter is claimed only when EVERY addend agrees. Summing a stamped record
-  // with an unstamped one (a historical journal line, or usage rebuilt from
-  // pi's session JSONL) leaves the meter absent — "unknown" is the truth, and
-  // asserting the known one would be exactly the convention-guessing this
-  // field exists to stop.
-  if (meters.length === 1 && meterful.length === 2) sum.meter = meters[0];
-  else if (meters.length > 1) sum.mixedMeters = meters;
-  if (unreported.length > 0) sum.unreported = unreported;
-  if (partiallyUnreported.length > 0) sum.partiallyUnreported = partiallyUnreported;
+  // Provenance survives only when both addends agree. Summing a stamped record
+  // with an unstamped one (a pre-2026-08-09 line, or usage rebuilt from pi's
+  // session JSONL) leaves it absent: "unknown" is the truth, and asserting the
+  // known one would be the guessing this field exists to stop.
+  if (a.meter !== undefined && a.meter === b.meter) sum.meter = a.meter;
   return sum;
 }
 
 function sumMessagesUsage(messages: readonly unknown[]): RoleUsage {
-  const total = metered("pi-session", { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+  const total: RoleUsage = { input: 0, output: 0, cacheRead: 0, meter: "pi-session" };
+  // cacheWrite is deliberately NOT initialised: pi's type requires the field
+  // and always emits 0, but cache_write_input_tokens is absent upstream
+  // (pi #6469 / codex #32479), so that 0 is a broken meter rather than a
+  // measurement. Leaving it absent lets the record say "unknown". Delete this
+  // guard the day upstream reports it — this list is provider bugs, not
+  // schema.
   for (const m of messages) {
     const msg = m as { role?: string; usage?: RoleUsage };
     if (msg.role !== "assistant" || !msg.usage) continue;
@@ -477,7 +443,7 @@ function sumMessagesUsage(messages: readonly unknown[]): RoleUsage {
     total.input += u.input ?? 0;
     total.output += u.output ?? 0;
     total.cacheRead += u.cacheRead ?? 0;
-    total.cacheWrite += u.cacheWrite ?? 0;
+    if (u.cacheWrite) total.cacheWrite = (total.cacheWrite ?? 0) + u.cacheWrite;
     if (u.reasoning !== undefined) total.reasoning = (total.reasoning ?? 0) + u.reasoning;
   }
   return total;

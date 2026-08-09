@@ -941,7 +941,10 @@ WHERE d.kind='dispatch' AND c.kind='completion' ORDER BY min DESC LIMIT 20;
 Billable tokens by verdict stage:
 
 ```sql
-SELECT kind, sum(usage.input + usage.output + coalesce(usage.reasoning,0)) AS billable
+-- reasoning is a SUBSET of output (pi's Usage contract), so adding it
+-- double-counts. measurement-protocol.md rule 1; this query used to get it
+-- wrong on this very page while the protocol forbade it two files away.
+SELECT kind, sum(usage.input + usage.output) AS billable
 FROM ev WHERE kind IN ('audit','bundle-cert','reconstruction','comparison')
 GROUP BY kind;
 ```

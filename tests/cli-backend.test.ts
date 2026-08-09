@@ -165,9 +165,11 @@ test("each CLI lane stamps its own meter and its real gaps", async () => {
     "codex-meter.sh",
   );
   expect(codex?.meter).toBe("codex-cli-jsonl");
-  // cacheWrite reads 0 on this lane from a known-broken upstream meter
-  // (codex #32479, pi #6469) — a gap, not a measurement.
-  expect(codex?.unreported).toEqual(["cacheWrite"]);
+  // cache_write_input_tokens is absent upstream (codex #32479, pi #6469), so
+  // the field stays ABSENT rather than recording a 0 that would read as a
+  // measurement. Observed per record, not read off a lane table — the day the
+  // field starts arriving this records the real number with no code change.
+  expect(codex?.cacheWrite).toBeUndefined();
   expect(codex?.reasoning).toBe(31);
 
   const claude = await usageFrom(
@@ -178,9 +180,9 @@ test("each CLI lane stamps its own meter and its real gaps", async () => {
     "claude-meter.sh",
   );
   expect(claude?.meter).toBe("claude-cli-json");
-  // The claude result JSON carries no thinking-token field at all: absent on
-  // 204/204 audit records in the corpus, a provider fact rather than a zero.
-  expect(claude?.unreported).toEqual(["reasoning"]);
+  // No thinking-token field in the result JSON at all (absent on 204/204 audit
+  // records). pi's Usage contract already fixes undefined as "provider does
+  // not report it", so no parallel gap list is needed.
   expect(claude?.reasoning).toBeUndefined();
   // This lane really does report cacheWrite, unlike the codex lanes.
   expect(claude?.cacheWrite).toBe(14207);

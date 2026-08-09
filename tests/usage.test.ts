@@ -8,10 +8,12 @@ import type { RoleUsage } from "../src/providers.ts";
 
 const { addUsage } = await import("../src/providers.ts");
 
+// cacheWrite is NOT defaulted: it is optional on RoleUsage precisely so that
+// absence can mean "the provider never reported it", distinct from a measured
+// zero. A helper that injects 0 would hide exactly that distinction.
 const usage = (u: Partial<RoleUsage> & { input: number }): RoleUsage => ({
   output: 0,
   cacheRead: 0,
-  cacheWrite: 0,
   ...u,
 });
 
@@ -39,40 +41,31 @@ test("a genuine zero stays zero", () => {
 // (tests/turns.test.ts and tests/cli-backend.test.ts). Asserting it here over
 // RoleUsage literals would pass by construction and catch nothing.
 
-test("addUsage never throws on mixed meters — it marks them", () => {
+test("addUsage never throws on mixed lanes — it drops the provenance", () => {
   // This runs inside persist()'s store.append argument on the settle path. A
   // throw there skips the completion record, orphans a report already on disk,
   // and rejects handle.settled ("resolves, never rejects"), taking the campaign
   // down with every live agent's work. Observability may not end a campaign.
-  const pi = usage({ input: 10, meter: "pi-session", unreported: ["cacheWrite"] });
-  const claude = usage({ input: 5, meter: "claude-cli-json", unreported: ["reasoning"] });
+  const pi = usage({ input: 10, meter: "pi-session", reasoning: 4 });
+  const claude = usage({ input: 5, meter: "claude-cli-json", cacheWrite: 7 });
   const mixed = addUsage(pi, claude);
   expect(mixed.input).toBe(15);
+  // Provenance is not claimed for a sum of two different adapters.
   expect(mixed.meter).toBeUndefined();
-  expect(mixed.mixedMeters).toEqual(["claude-cli-json", "pi-session"]);
-  // Neither field is fully absent: pi measures reasoning, claude measures
-  // cacheWrite. The sum holds a real but INCOMPLETE number for each, which is
-  // neither "unreported" nor fully measured. Union here would declare measured
-  // codex reasoning unmeasured on every full verification cadence.
-  expect(mixed.unreported).toBeUndefined();
-  expect([...(mixed.partiallyUnreported ?? [])].sort()).toEqual(["cacheWrite", "reasoning"]);
+  // Gaps need no parallel list: each optional field is present iff some addend
+  // measured it. claude reports no reasoning, pi reports no cacheWrite, and the
+  // sum carries each real value exactly once.
+  expect(mixed.reasoning).toBe(4);
+  expect(mixed.cacheWrite).toBe(7);
 });
 
-test("a same-meter sum keeps its meter and stays unmarked", () => {
-  const a = usage({ input: 10, meter: "codex-cli-jsonl", unreported: ["cacheWrite"] });
-  const b = usage({ input: 7, meter: "codex-cli-jsonl", unreported: ["cacheWrite"] });
-  const s = addUsage(a, b);
-  expect(s.meter).toBe("codex-cli-jsonl");
-  expect(s.mixedMeters).toBeUndefined();
-  expect(s.unreported).toEqual(["cacheWrite"]);
-  expect(JSON.stringify(s)).not.toContain("mixedMeters");
-});
-
-test("meterless records still sum — historical journals predate the field", () => {
-  const s = addUsage(usage({ input: 3 }), usage({ input: 4 }));
-  expect(s.input).toBe(7);
-  expect(s.meter).toBeUndefined();
-  expect(s.mixedMeters).toBeUndefined();
+test("an optional field stays absent when no addend reported it", () => {
+  // A measured 0 and "no backend reported this" are different records; the
+  // journal is JSON, so absence must serialize away rather than as a zero.
+  const s = addUsage(usage({ input: 1 }), usage({ input: 2 }));
+  expect(s.cacheWrite).toBeUndefined();
+  expect(s.reasoning).toBeUndefined();
+  expect(JSON.stringify(s)).not.toContain("cacheWrite");
 });
 
 test("a known meter is never inherited by a sum with an unknown one", () => {
