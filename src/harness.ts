@@ -34,13 +34,11 @@ import { loadLauncherContract } from "./launcher.js";
 import {
   buildModels,
   CHARGES,
-  cliBackendCommand,
   runMemMb,
   runTimeoutMs,
   createCliRoleSession,
   createHarnessRoleSession,
-  familyModelSpec,
-  IDEATION_FAMILIES,
+  resolveFamily,
   isCliProvider,
   roleModelSpec,
   runRole,
@@ -428,37 +426,11 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     const family =
       role === "reasoner" ? (packet as ReasonerPacket & { family?: string }).family : undefined;
     if (family !== undefined) {
-      const fspec = familyModelSpec(family);
-      if (fspec === undefined) {
-        return refuse(
-          store,
-          "dispatch",
-          `unknown ideation family "${family}" (available: ${IDEATION_FAMILIES.join(", ")}); ` +
-            "omit the field for the default model",
-          { mechanism: packet.mechanism, role },
-        );
+      const resolved = await resolveFamily(models, family);
+      if ("reason" in resolved) {
+        return refuse(store, "dispatch", resolved.reason, { mechanism: packet.mechanism, role });
       }
-      let authed = false;
-      if (isCliProvider(fspec.provider)) {
-        const { spawnSync } = await import("node:child_process");
-        authed = spawnSync("which", [cliBackendCommand(fspec.provider).split(/\s+/)[0]]).status === 0;
-      } else {
-        try {
-          authed = (await models.getAuth(fspec.provider)) !== undefined;
-        } catch {
-          authed = false;
-        }
-      }
-      if (!authed) {
-        return refuse(
-          store,
-          "dispatch",
-          `ideation family "${family}" (${specLabel(fspec)}) has no usable auth on this host — ` +
-            "redispatch without the family field (the packet is otherwise fine)",
-          { mechanism: packet.mechanism, role },
-        );
-      }
-      spec = fspec;
+      spec = resolved.spec;
     }
     const isTechnician = role === "technician";
     if (isTechnician && isCliProvider(spec.provider)) {

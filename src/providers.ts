@@ -114,6 +114,26 @@ const ROLE_DEFAULTS: Record<RoleName, string> = {
   comparator: "codex-cli/gpt-5.6-sol",
 };
 
+/** One resolver for every env-overridable spec: role defaults and ideation
+ *  families are the same mechanism (user-recorded default, env override). */
+const envSpec = (env: string, fallback: string): ModelSpec =>
+  parseModelSpec(process.env[env] ?? fallback);
+
+/** Is this provider usable right now — CLI binary on PATH, or an API/OAuth
+ *  credential the models registry resolves? One answer for the prove()
+ *  preflight and dispatch-time family checks; they must never disagree. */
+export async function providerUsable(models: Models, provider: ModelSpec["provider"]): Promise<boolean> {
+  if (isCliProvider(provider)) {
+    const { spawnSync } = await import("node:child_process");
+    return spawnSync("which", [cliBackendCommand(provider).split(/\s+/)[0]]).status === 0;
+  }
+  try {
+    return (await models.getAuth(provider)) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 /** Spec format: `provider/model[@thinking]`; bare model id means anthropic. */
 function parseModelSpec(spec: string): ModelSpec {
   const [modelPart, thinking = "high"] = spec.split("@");
@@ -130,7 +150,7 @@ function parseModelSpec(spec: string): ModelSpec {
 
 /** Resolution: COVERIFY_MODEL_<ROLE> > role default (every role has one). */
 export function roleModelSpec(role: RoleName): ModelSpec {
-  return parseModelSpec(process.env[ROLE_ENV[role]] ?? ROLE_DEFAULTS[role]);
+  return envSpec(ROLE_ENV[role], ROLE_DEFAULTS[role]);
 }
 
 /** Ideation families (user decision, Chao 2026-08-09): a reasoner dispatch
@@ -156,7 +176,32 @@ const FAMILY_SPECS: Record<string, { env: string; fallback: string }> = {
 export const IDEATION_FAMILIES = Object.keys(FAMILY_SPECS);
 export function familyModelSpec(family: string): ModelSpec | undefined {
   const f = FAMILY_SPECS[family];
-  return f === undefined ? undefined : parseModelSpec(process.env[f.env] ?? f.fallback);
+  return f === undefined ? undefined : envSpec(f.env, f.fallback);
+}
+
+/** Resolve an ideation-family request to a usable spec, or a refusal reason
+ *  the coordinator can act on in the same turn. Owns the model policy so the
+ *  harness keeps only the refuse() wiring. */
+export async function resolveFamily(
+  models: Models,
+  family: string,
+): Promise<{ spec: ModelSpec } | { reason: string }> {
+  const spec = familyModelSpec(family);
+  if (spec === undefined) {
+    return {
+      reason:
+        `unknown ideation family "${family}" (available: ${IDEATION_FAMILIES.join(", ")}); ` +
+        "omit the field for the default model",
+    };
+  }
+  if (!(await providerUsable(models, spec.provider))) {
+    return {
+      reason:
+        `ideation family "${family}" (${specLabel(spec)}) has no usable auth on this host — ` +
+        "redispatch without the family field (the packet is otherwise fine)",
+    };
+  }
+  return { spec };
 }
 
 export function specLabel(spec: ModelSpec): string {

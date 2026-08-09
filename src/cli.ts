@@ -13,8 +13,7 @@ import { CLAUDE_BRIDGE_ID } from "./claude-bridge.js";
 import { GateStore, recordStatement } from "./gates.js";
 import {
   buildModels,
-  cliBackendCommand,
-  isCliProvider,
+  providerUsable,
   ROLE_NAMES,
   roleModelSpec,
   specLabel,
@@ -121,7 +120,6 @@ async function prove(resume: boolean): Promise<void> {
   // OAuth subscription credential (coverify login <provider>).
   const models = await buildModels();
   const missing = new Set<string>();
-  const { spawnSync } = await import("node:child_process");
   for (const role of ROLE_NAMES) {
     const provider = roleModelSpec(role).provider;
     // claude-bridge supports exactly one live session; concurrent sessions
@@ -132,17 +130,9 @@ async function prove(resume: boolean): Promise<void> {
       );
       process.exit(1);
     }
-    let ok = false;
-    if (isCliProvider(provider)) {
-      ok = spawnSync("which", [cliBackendCommand(provider).split(/\s+/)[0]]).status === 0;
-    } else {
-      try {
-        ok = (await models.getAuth(provider)) !== undefined;
-      } catch {
-        ok = false;
-      }
+    if (!(await providerUsable(models, provider))) {
+      missing.add(`${provider} (role ${role}: ${specLabel(roleModelSpec(role))})`);
     }
-    if (!ok) missing.add(`${provider} (role ${role}: ${specLabel(roleModelSpec(role))})`);
   }
   if (missing.size > 0) {
     console.error(
