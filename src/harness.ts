@@ -54,6 +54,9 @@ export interface CampaignOptions {
   userAgentLimit?: number;
   /** Stop waking the coordinator after this many wakes (user runtime limit). */
   maxWakes?: number;
+  /** User-set reasoning-only policy: refuse every technician dispatch, so no
+   *  code is written or run anywhere in the campaign (Chao, 2026-08-08). */
+  noComputation?: boolean;
 }
 
 interface Handle {
@@ -146,6 +149,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     launcherSha256: sha256Text(contract),
     userAgentLimit: opts.userAgentLimit,
     maxWakes: opts.maxWakes,
+    ...(opts.noComputation ? { noComputation: true } : {}),
     coordinatorContextTokens: COORDINATOR_CONTEXT_TOKENS,
   });
 
@@ -375,6 +379,16 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       return toolText(
         `DISPATCH REFUSED: the campaign is already declared ${declaration.state}; the contract says ` +
           "cease dispatch. Checkpoint the ledgers and finish this turn.",
+      );
+    }
+    if (role === "technician" && opts.noComputation) {
+      return refuse(
+        store,
+        "dispatch",
+        "this campaign is reasoning-only by user policy (--no-computation): no code is written " +
+          "or run; carry finite checks by hand inside reasoner proofs or record them as stated " +
+          "obligations",
+        { mechanism: packet.mechanism, role },
       );
     }
     const decision = checkDispatch(

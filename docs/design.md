@@ -23,7 +23,10 @@ Three implementation rules follow:
    including recorded standing user policy: `--agent-limit` defaults to 6
    workers per campaign (Chao, 2026-08-08; `--agent-limit 0` = unlimited),
    a user decision the CLI carries, same provenance rule as the model
-   defaults. No wall-clock timeouts on proof work, ever.
+   defaults. `--no-computation` (opt-in per campaign) is likewise a user-set
+   scope constraint, not a harness default: it refuses every technician
+   dispatch so the campaign is pure reasoning (Chao, 2026-08-08). No
+   wall-clock timeouts on proof work, ever.
 
 ## Campaign state — the skill's own format
 

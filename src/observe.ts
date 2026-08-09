@@ -47,6 +47,7 @@ export function recordRunConfig(
     launcherSha256: string;
     userAgentLimit?: number;
     maxWakes?: number;
+    noComputation?: boolean;
     // Owned by harness.ts (its enforced constant); passed in rather than
     // re-derived here so the stamp cannot drift from the enforced value.
     coordinatorContextTokens: number;

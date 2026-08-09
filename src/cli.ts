@@ -24,8 +24,8 @@ import { campaignTurns } from "./turns.js";
 
 function usage(): never {
   console.error(`usage:
-  coverify prove "<exact statement>" [--dir campaign] [--agent-limit N] [--max-wakes N]
-  coverify resume [--dir campaign] [--agent-limit N] [--max-wakes N]
+  coverify prove "<exact statement>" [--dir campaign] [--agent-limit N] [--max-wakes N] [--no-computation]
+  coverify resume [--dir campaign] [--agent-limit N] [--max-wakes N] [--no-computation]
                                     (--agent-limit defaults to 6 workers — user policy 2026-08-08; 0 = unlimited)
   coverify status [--dir campaign]
   coverify trace [--dir campaign] [--out file]
@@ -52,15 +52,23 @@ env: per-role COVERIFY_MODEL_{COORDINATOR,REASONER,TECHNICIAN,CRITIC,AUDITOR,CER
   process.exit(2);
 }
 
+/** Flags that take no value (presence = true). */
+const BOOLEAN_FLAGS = new Set(["no-computation"]);
+
 function parseFlags(args: string[]): { flags: Map<string, string>; positional: string[] } {
   const flags = new Map<string, string>();
   const positional: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a.startsWith("--")) {
+      const name = a.slice(2);
+      if (BOOLEAN_FLAGS.has(name)) {
+        flags.set(name, "true");
+        continue;
+      }
       const value = args[i + 1];
       if (value === undefined) usage();
-      flags.set(a.slice(2), value);
+      flags.set(name, value);
       i++;
     } else {
       positional.push(a);
@@ -156,6 +164,7 @@ async function prove(resume: boolean): Promise<void> {
     campaignDir: dir,
     userAgentLimit: agentLimit(),
     maxWakes: optionalInt("max-wakes"),
+    noComputation: flags.get("no-computation") === "true",
   });
   console.log(synthesis);
 }
