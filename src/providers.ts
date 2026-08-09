@@ -386,8 +386,11 @@ export type Meter = "pi-session" | "codex-cli-jsonl" | "claude-cli-json";
  *    Both the pi and codex-cli lanes hit this — cache_write_input_tokens is
  *    absent upstream (codex #32479, pi #6469), so a 0 there is a broken meter,
  *    not a measurement. Absence carries that, so no parallel gap-list is
- *    needed. */
-export type RoleUsage = Omit<PiUsage, "cost" | "totalTokens" | "cacheWrite"> & {
+ *    needed.
+ *  `cacheWrite1h` is omitted rather than inherited: no lane sets it and neither
+ *  combinator carries it, and a type that advertises a field addUsage silently
+ *  drops is how a sum starts losing tokens on the next pi upgrade. */
+export type RoleUsage = Omit<PiUsage, "cost" | "totalTokens" | "cacheWrite" | "cacheWrite1h"> & {
   cacheWrite?: number;
   /** Which adapter produced this record — provenance, not convention (see
    *  Meter). Absent on records written before 2026-08-09. */
@@ -603,7 +606,11 @@ export async function createHarnessRoleSession(
   // sees next call).
   let allMessages: AgentMessage[] = [];
   let contextMessages: AgentMessage[] = [];
-  let compactionUsage: RoleUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  // Empty total from the same builder the refresh uses: a literal here fabricated
+  // `cacheWrite: 0` (a measured zero this lane never measures) and carried no
+  // meter, which made addUsage drop the provenance of any usage() read before the
+  // first refresh.
+  let compactionUsage: RoleUsage = sumMessagesUsage([]);
   const refresh = async () => {
     // getEntries (not getBranch): usage/turn totals must keep counting
     // everything ever spent — including entries a compaction superseded.

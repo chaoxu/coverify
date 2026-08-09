@@ -231,8 +231,6 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     // Failure is classified here too — a rejected call or empty final text is
     // an infrastructure failure — so `failed` is the single source of truth
     // and `failed` set ⟺ no report artifact exists.
-    // The usage block both completion records carry, identically.
-    const usageFields = () => ({ usage: handle.usage?.() });
     const persist = (report: string, failed?: string, partialText?: string) => {
       const live = handles.has(handle.id);
       if (failed !== undefined) {
@@ -257,7 +255,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           id: handle.id,
           failed,
           ...(partial !== undefined ? { partial } : {}),
-          ...usageFields(),
+          usage: handle.usage?.(),
         });
         if (live) settledQueue.push({ h: handle, failed });
         return;
@@ -274,7 +272,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           id: handle.id,
           report: rel,
           reportSha256: sha256Text(report),
-          ...usageFields(),
+          usage: handle.usage?.(),
         });
         settledQueue.push({ h: handle, failed: undefined });
       } else {

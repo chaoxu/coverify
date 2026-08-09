@@ -24,7 +24,6 @@ import {
 import { CHARGES } from "./roles.js";
 import { isCliProvider } from "./backends.js";
 import {
-  addUsage,
   type Models,
   roleModelSpec,
   type RoleUsage,
@@ -55,7 +54,8 @@ export interface CadenceDeps {
     mechanism: string;
     stop?: () => void;
     promise: () => Promise<string>;
-    usage?: () => RoleUsage | undefined;
+    // No `usage` reporter: the loop's Handle offers one, but a cadence-level
+    // total would be a sum of stage records already on file (see the call site).
   }) => void;
 }
 
@@ -180,34 +180,15 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
       const slug = rel.replace(/[\/]/g, "_");
       const bundleHash = sha256Text(bundle);
       const provedHash = sha256Text(proved);
-      // Spend from a provider call that has returned but whose stage record
-      // has not been written yet. If the cadence is cancelled in that window,
-      // this is emitted as its own leaf record — so cadence spend is ALWAYS a
-      // leaf, never a residual recovered by subtracting children from a
-      // roll-up. That roll-up cost 80.4M tokens of double-counting and two
-      // ordering bugs in four commits before it was deleted.
-      let pending: RoleUsage | undefined;
-      const recordUsage = (u?: RoleUsage) => {
-        pending = u;
-      };
-      // The stage record carries the usage, so the pending spend is accounted
-      // for; clear it. Called immediately AFTER store.append returns.
-      const appendedChild = (_kind: string) => {
-        pending = undefined;
-      };
-      // Cancelled mid-stage: the provider was paid and no stage record exists.
-      // Emit the spend as its own leaf rather than losing it.
-      const flushOrphanSpend = () => {
-        if (!pending) return;
-        store.append({
-          kind: "role-call",
-          dispatchId: id,
-          revision: rel,
-          orphaned: "cadence cancelled after the provider returned, before the stage record",
-          usage: pending,
-        });
-        pending = undefined;
-      };
+      // Spend from a provider call that has returned but whose stage record has
+      // not been written yet: set immediately after each runRole, cleared
+      // immediately after the store.append that carries it. If the cadence is
+      // cancelled in that window, abortIfCancelled emits it as its own leaf — so
+      // cadence spend is ALWAYS a leaf, never a residual recovered by
+      // subtracting children from a roll-up. That roll-up cost 80.4M tokens of
+      // double-counting and two ordering bugs in four commits before it was
+      // deleted.
+      let unrecordedSpend: RoleUsage | undefined;
 
       // The cadence runs as an async handle, like a worker: during a long
       // blind reconstruction the coordinator keeps gating, dispatching, and
@@ -226,7 +207,16 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         // The provider may already have been paid for a stage whose record was
         // never written. Emit that spend as a leaf before unwinding, so it is
         // on file rather than recoverable only by subtraction.
-        flushOrphanSpend();
+        if (unrecordedSpend) {
+          store.append({
+            kind: "role-call",
+            dispatchId: id,
+            revision: rel,
+            orphaned: "cadence cancelled after the provider returned, before the stage record",
+            usage: unrecordedSpend,
+          });
+          unrecordedSpend = undefined;
+        }
         throw new Error(`verification cancelled; no verdict recorded for ${rel}`);
       };
       /**
@@ -271,7 +261,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           spec,
           models,
         });
-        recordUsage(usage);
+        unrecordedSpend = usage;
         abortIfCancelled();
         const evidence = newEvidencePath(dir, `audits/${slug}.${stage.kind}`);
         fs.writeFileSync(evidence, text);
@@ -313,7 +303,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           promptChars,
           durationMs,
         });
-        appendedChild(stage.kind);
+        unrecordedSpend = undefined;
         return { text, pass, unparseable: verdictLine === undefined, artifact };
       };
 
@@ -378,7 +368,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             "byte-unchanged, and the prior cadence stranded (dispatched, never completed — a " +
             "protocol or infrastructure failure, not a repair)",
         );
-        appendedChild(kind);
+        unrecordedSpend = undefined;
         return { text, pass: true, unparseable: false, artifact };
       };
 
@@ -494,7 +484,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             "carried forward (enforced): statement, bundle, and promoted premises byte-identical " +
               "to the prior reconstruction's inputs; the reconstructor never saw any candidate",
           );
-          appendedChild("reconstruction");
+          unrecordedSpend = undefined;
           reconText = carriedR.text;
           reconArtifact = carriedR.artifact;
         } else {
@@ -527,7 +517,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             spec: reconSpec,
             models,
           });
-          recordUsage(reconTextUsage);
+          unrecordedSpend = reconTextUsage;
           abortIfCancelled();
           reconText = text;
           const reconEvidence = newEvidencePath(dir, `audits/${slug}.reconstruction`);
@@ -563,7 +553,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
               : {}),
             ...(reconBackendCwd !== undefined ? { backendCwd: reconBackendCwd } : {}),
           });
-          appendedChild("reconstruction");
+          unrecordedSpend = undefined;
         }
 
         // Stage 2b — comparison: maps the reconstruction to the candidate's
