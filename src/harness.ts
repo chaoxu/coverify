@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
@@ -25,6 +26,7 @@ import {
   buildModels,
   createHarnessRoleSession,
   roleModelSpec,
+  specLabel,
   type RoleSession,
   type RoleUsage,
 } from "./providers.js";
@@ -62,6 +64,14 @@ export interface Handle {
   /** Provider- or CLI-reported usage, read at completion (undefined when the
    *  backend reported none). */
   usage?: () => RoleUsage | undefined;
+  /** True when `usage` is a SUM of other records that are themselves on
+   *  file. A reader must exclude these from any total or double-count them
+   *  (80.4M tokens, 27%, in the 2026-08-09 study). */
+  usageRollup?: boolean;
+  /** The stage kinds actually appended by this cadence, in order — 1 to 4,
+   *  never assumed. Lets a reader compute rollup - sum(children) and see
+   *  spend that was incurred but never recorded as a stage. */
+  usageRollupOf?: () => string[];
   /** Resolves (never rejects) when the handle finishes; set by registerHandle. */
   settled: Promise<void>;
 }
@@ -126,7 +136,15 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
 
   // Run-config stamp: attributes this run to an exact (harness, contract,
   // policy, runtime) tuple — see observe.ts.
+  // One id per harness process. Coordinator usage is CUMULATIVE per session,
+  // and until now the only way to find an epoch boundary was to watch for the
+  // counter going backwards — an inference that over-split one campaign into
+  // 18 epochs against 15 real sessions and overstated its fresh input by
+  // 16.7M tokens. With this on every usage event, a reader groups instead of
+  // guessing. Short and human-typeable: it appears in operator queries.
+  const runId = randomUUID().slice(0, 8);
   recordRunConfig(store, {
+    runId,
     harnessRev: gitInRepo("git rev-parse HEAD") ?? "unknown",
     launcherSha256: sha256Text(contract),
     userAgentLimit: opts.userAgentLimit,
@@ -238,6 +256,9 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           failed,
           ...(partial !== undefined ? { partial } : {}),
           usage: handle.usage?.(),
+          ...(handle.usageRollup
+            ? { usageRollup: true, usageRollupOf: handle.usageRollupOf?.() }
+            : {}),
         });
         if (live) settledQueue.push({ h: handle, failed });
         return;
@@ -255,6 +276,9 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           report: rel,
           reportSha256: sha256Text(report),
           usage: handle.usage?.(),
+          ...(handle.usageRollup
+            ? { usageRollup: true, usageRollupOf: handle.usageRollupOf?.() }
+            : {}),
         });
         settledQueue.push({ h: handle, failed: undefined });
       } else {
@@ -749,6 +773,13 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     store.event({
       kind: "usage",
       role: "coordinator",
+      // Identity of the series this cumulative belongs to. sessionId also
+      // distinguishes the epochs WITHIN a run, so no decreasing-counter
+      // heuristic is needed at read time.
+      runId,
+      sessionId: `coordinator-${coordinatorEpoch}`,
+      wake: wakeCount,
+      modelSpec: `${specLabel(roleModelSpec("coordinator"))}@${roleModelSpec("coordinator").thinking}`,
       cumulative: coordinator.usage(),
       approxContextTokens: contextNow,
       ...(growth !== undefined ? { contextGrowthTokens: growth } : {}),

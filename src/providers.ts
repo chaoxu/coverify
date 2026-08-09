@@ -273,6 +273,8 @@ export async function runRole(
     usage: session.usage(),
     servedModel: cli?.servedModel?.(),
     reportedModel: cli?.reportedModel?.(),
+    providerSessionId: cli?.providerSessionId?.(),
+    backendCwd: cli?.backendCwd?.(),
     // promptChars counts what actually went over the wire: the CLI path
     // inlines the contract+charge into one prompt string.
     promptChars: cli ? cli.promptChars() : run.prompt.length,
@@ -298,6 +300,13 @@ export interface RoleSession {
   servedModel?(): string | undefined;
   /** Self-reported model, when the backend states one (#21 P3). */
   reportedModel?(): string | undefined;
+  /** Join keys into the provider's own transcript, where telemetry this
+   *  harness cannot see otherwise lives — for the codex lane, the rollout
+   *  under ~/.codex/sessions/ carrying rate_limits.primary.used_percent.
+   *  Recorded so the account's window trajectory becomes joinable; the
+   *  series is account-wide, never coverify-attributable consumption. */
+  providerSessionId?(): string | undefined;
+  backendCwd?(): string | undefined;
   /** In-place lossy compaction (harness-backed sessions only): summarize
    *  older turns, keep a recent tail verbatim. The caller owns the policy
    *  and the contract's post-compaction reread rule. */
@@ -344,12 +353,32 @@ function wireLogPayload(wirePath: string) {
 /** Provider-reported token usage (pi-ai Usage, summed; official CLIs parsed
  *  from their JSON output) — mechanics only; nothing reads this except the
  *  journal. */
+/** Which parser produced a usage record. Two lanes have historically meant
+ *  different things by the same field names, and a reader that guesses is a
+ *  reader that gets it wrong — a 30% fresh-input overstatement in the
+ *  2026-08-09 study came from summing across meters. Recorded so nobody has
+ *  to infer it from the role and the commit date. */
+export type Meter = "pi-session" | "codex-cli-jsonl" | "claude-cli-json";
+
 export interface RoleUsage {
   input: number;
   output: number;
   cacheRead: number;
   cacheWrite: number;
   reasoning?: number;
+  /** The parser that produced this record. `input` is the UNCACHED part on
+   *  every current meter; the field exists so a future divergence is visible
+   *  rather than silent, and so cross-meter sums can be refused. Absent on
+   *  records written before 2026-08-09 and on usage reconstructed from pi's
+   *  own session JSONL (view/turns.ts), which carries no envelope. */
+  meter?: Meter;
+  /** Present only when addUsage summed records from different meters. A
+   *  reader seeing this must not treat the totals as one currency. */
+  mixedMeters?: readonly Meter[];
+  /** Fields this backend does not report at all, as distinct from reporting
+   *  zero. `claude-cli` reports no reasoning; the codex lanes report a real
+   *  zero for cacheWrite that is an upstream defect, not a measurement. */
+  unreported?: readonly ("cacheWrite" | "reasoning")[];
   /** No dollar field, deliberately. Every role runs on a subscription lane
    *  (see ROLE_DEFAULTS), so every price a provider reports — pi's per-message
    *  cost, the claude CLI's `total_cost_usd` — is notional list price, not
@@ -366,17 +395,35 @@ export interface RoleUsage {
 export function addUsage(a: RoleUsage, b: RoleUsage): RoleUsage {
   const reported = (x: number | undefined, y: number | undefined) =>
     x === undefined && y === undefined ? undefined : (x ?? 0) + (y ?? 0);
+  // Deliberately TOTAL: this runs inside persist()'s store.append argument on
+  // the settle path, where a throw would skip the completion record, orphan a
+  // report already on disk, and reject handle.settled — whose contract is
+  // "resolves, never rejects" — taking the whole campaign down with every live
+  // agent's work unharvested. Observability may not end a campaign (design
+  // rule 2). A mixed sum is instead MARKED, so a reader sees it.
+  const meters = new Set([a.meter, b.meter].filter(Boolean) as Meter[]);
+  const unreported = [...new Set([...(a.unreported ?? []), ...(b.unreported ?? [])])];
   return {
     input: a.input + b.input,
     output: a.output + b.output,
     cacheRead: a.cacheRead + b.cacheRead,
     cacheWrite: a.cacheWrite + b.cacheWrite,
     reasoning: reported(a.reasoning, b.reasoning),
+    // One meter survives as itself; a genuine mix is recorded as such rather
+    // than silently inheriting whichever addend came first.
+    ...(meters.size === 1 ? { meter: [...meters][0] } : {}),
+    ...(meters.size > 1 ? { mixedMeters: [...meters].sort() } : {}),
+    ...(unreported.length ? { unreported } : {}),
   };
 }
 
 function sumMessagesUsage(messages: readonly unknown[]): RoleUsage {
-  const total: RoleUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  // pi folds cache-write into input (its meter reports 0), so record that as a
+  // gap rather than letting a reader take the zero at face value.
+  const total: RoleUsage = {
+    input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
+    meter: "pi-session", unreported: ["cacheWrite"],
+  };
   for (const m of messages) {
     const msg = m as { role?: string; usage?: RoleUsage };
     if (msg.role !== "assistant" || !msg.usage) continue;
@@ -404,6 +451,9 @@ interface RoleResult {
   /** Self-reported model (claude-cli's own JSON). Journalled beside the
    *  requested spec; never enforced (#21 P3, rule 3). */
   reportedModel?: string;
+  /** Provider-side transcript join keys (codex lane); see RoleSession. */
+  providerSessionId?: string;
+  backendCwd?: string;
 }
 
 export type HarnessSessionOpts = {

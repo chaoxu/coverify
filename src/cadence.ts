@@ -56,6 +56,14 @@ export interface CadenceDeps {
     stop?: () => void;
     promise: () => Promise<string>;
     usage?: () => RoleUsage | undefined;
+    /** True when `usage` is a SUM of other records that are themselves on
+     *  file. A reader must exclude these from any total or double-count them
+     *  (80.4M tokens, 27%, in the 2026-08-09 study). */
+    usageRollup?: boolean;
+    /** The stage kinds actually appended by this cadence, in order — 1 to 4,
+     *  never assumed. Lets a reader compute rollup - sum(children) and see
+     *  spend that was incurred but never recorded as a stage. */
+    usageRollupOf?: () => string[];
   }) => void;
 }
 
@@ -181,8 +189,15 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
       const bundleHash = sha256Text(bundle);
       const provedHash = sha256Text(proved);
       const usages: RoleUsage[] = [];
-      const recordUsage = (u?: RoleUsage) => {
+      // Which stage records this cadence actually appended, in order. The set
+      // is variable — audit FAIL/UNPARSEABLE and cert FAIL exit early, and
+      // carried-forward stages append no usage — so a static four-element
+      // list would be a false claim on roughly a third of cadences (measured:
+      // 132 full, 39 audit+cert, 18 audit-only).
+      const rollupChildren: string[] = [];
+      const recordUsage = (u?: RoleUsage, stage?: string) => {
         if (u) usages.push(u);
+        if (stage) rollupChildren.push(stage);
       };
 
       // The cadence runs as an async handle, like a worker: during a long
@@ -239,7 +254,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           spec,
           models,
         });
-        recordUsage(usage);
+        recordUsage(usage, stage.kind);
         abortIfCancelled();
         const evidence = newEvidencePath(dir, `audits/${slug}.${stage.kind}`);
         fs.writeFileSync(evidence, text);
@@ -481,7 +496,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             spec: roleModelSpec("reconstructor"),
             models,
           });
-          recordUsage(reconTextUsage);
+          recordUsage(reconTextUsage, "reconstruction");
           abortIfCancelled();
           reconText = text;
           const reconEvidence = newEvidencePath(dir, `audits/${slug}.reconstruction`);
@@ -489,6 +504,11 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           reconArtifact = path.relative(dir, reconEvidence);
           store.append({
             kind: "reconstruction",
+            // Every other stage carries this (verdictStage sets it); without
+            // it all 139 reconstruction records on file are unjoinable to
+            // their cadence, which is why the roll-up double-count could only
+            // be found by hand-matching. Pure addition.
+            dispatchId: id,
             revision: rel,
             candidateHash,
             statementHash: stmtHash,
@@ -561,6 +581,21 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         // nothing rather than a fabricated `input: 0` — it stays on record as
         // its own dispatch, so only the convenience sum is short.
         usage: () => (usages.length === 0 ? undefined : usages.reduce(addUsage)),
+        // This usage is a SUM of the stage records below it, each of which
+        // also carries its own. Counting both inflated the 2026-08-09 study by
+        // 80.4M tokens (27%) and was findable only by hand-matching parents to
+        // children. The flag makes the error refusable by any reader.
+        //
+        // Not merely redundant, so it is marked rather than dropped:
+        // recordUsage() runs before abortIfCancelled(), so a cadence cancelled
+        // between a stage's provider call and its store.append has real spend
+        // here and NO stage record at all. `rollupOf` lists the children
+        // actually appended — 1 to 4, since audit FAIL and cert FAIL exit
+        // early and carried-forward stages contribute no usage — so a reader
+        // can compute rollup - sum(children) and see unrecorded spend as a
+        // residual instead of losing it.
+        usageRollup: true as const,
+        usageRollupOf: () => [...rollupChildren],
       });
       return toolText(
         `verification ${id} dispatched on ${rel} (${deps.liveCount()} live). The verdict arrives at a ` +

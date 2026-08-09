@@ -43,6 +43,10 @@ import { sandboxMode, toolText } from "./sandbox.js";
 export function recordRunConfig(
   store: GateStore,
   extra: {
+    /** Identifies this harness process; every usage event carries it, so a
+     *  reader groups cumulative series instead of inferring epoch boundaries
+     *  from a counter going backwards. */
+    runId: string;
     harnessRev: string;
     launcherSha256: string;
     userAgentLimit?: number;

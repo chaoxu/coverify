@@ -150,3 +150,51 @@ test("a CLI oracle answers exactly once", async () => {
   await session.ask("first");
   expect(session.ask("second")).rejects.toThrow(/exactly once/);
 });
+
+test("each CLI lane stamps its own meter and its real gaps", async () => {
+  // A reader must never have to infer the convention from the role and the
+  // commit date — that inference is what overstated fresh input 30% in the
+  // 2026-08-09 study. Each parser declares itself at the construction site.
+  const codex = await usageFrom(
+    "codex-cli",
+    "COVERIFY_CODEX_CMD",
+    `#!/bin/sh\necho '{"type":"thread.started","thread_id":"019fe743-d96b-7a93-8cb3-80b0c4aaa890"}'\n` +
+      `echo '{"type":"turn.completed","usage":{"input_tokens":1000,"cached_input_tokens":900,` +
+      `"output_tokens":40,"reasoning_output_tokens":31}}'\n` +
+      `printf 'VERDICT: PASS' > "$1"\n`,
+    "codex-meter.sh",
+  );
+  expect(codex?.meter).toBe("codex-cli-jsonl");
+  // cacheWrite reads 0 on this lane from a known-broken upstream meter
+  // (codex #32479, pi #6469) — a gap, not a measurement.
+  expect(codex?.unreported).toEqual(["cacheWrite"]);
+  expect(codex?.reasoning).toBe(31);
+
+  const claude = await usageFrom(
+    "claude-cli",
+    "COVERIFY_CLAUDE_CMD",
+    `#!/bin/sh\ncat <<'EOF2'\n{"result":"VERDICT: PASS","usage":{"input_tokens":8,"output_tokens":23,` +
+      `"cache_read_input_tokens":17893,"cache_creation_input_tokens":14207}}\nEOF2\n`,
+    "claude-meter.sh",
+  );
+  expect(claude?.meter).toBe("claude-cli-json");
+  // The claude result JSON carries no thinking-token field at all: absent on
+  // 204/204 audit records in the corpus, a provider fact rather than a zero.
+  expect(claude?.unreported).toEqual(["reasoning"]);
+  expect(claude?.reasoning).toBeUndefined();
+  // This lane really does report cacheWrite, unlike the codex lanes.
+  expect(claude?.cacheWrite).toBe(14207);
+});
+
+test("codexThreadId finds the rollout join key, and tolerates its absence", async () => {
+  const { codexThreadId } = await import("../src/backends.ts");
+  const stdout =
+    `{"type":"thread.started","thread_id":"019fe743-d96b-7a93-8cb3-80b0c4aaa890"}\n` +
+    `{"type":"turn.started"}\n{"type":"turn.completed","usage":{"input_tokens":5}}\n`;
+  // Verbatim the session_id of the rollout under ~/.codex/sessions/, which
+  // carries rate_limits.primary.used_percent — the meter that ends campaigns
+  // and that nothing in this journal could previously join to.
+  expect(codexThreadId(stdout)).toBe("019fe743-d96b-7a93-8cb3-80b0c4aaa890");
+  expect(codexThreadId(`{"type":"turn.completed"}\n`)).toBeUndefined();
+  expect(codexThreadId("not json at all\n")).toBeUndefined();
+});

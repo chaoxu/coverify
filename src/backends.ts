@@ -33,6 +33,8 @@ export function createCliRoleSession(
   let usage: RoleUsage | undefined;
   let servedModel: string | undefined;
   let reportedModel: string | undefined;
+  let providerSessionId: string | undefined;
+  let backendCwd: string | undefined;
   let sentChars = 0;
   let asked = false;
   return {
@@ -46,6 +48,8 @@ export function createCliRoleSession(
       usage = r.usage;
       servedModel = r.servedModel;
       reportedModel = r.reportedModel;
+      providerSessionId = r.providerSessionId;
+      backendCwd = r.backendCwd;
       return r.text;
     },
     approxTokens: () => 0,
@@ -58,6 +62,10 @@ export function createCliRoleSession(
      *  requested spec, never enforced (#21 P3). codex-cli emits no model
      *  echo in its JSONL (verified 2026-08-09), so it stays undefined. */
     reportedModel: () => reportedModel,
+    /** Join keys into the provider's own rollout (codex lane), where the
+     *  rate-limit trajectory lives. Recorded, never interpreted here. */
+    providerSessionId: () => providerSessionId,
+    backendCwd: () => backendCwd,
     steer: () => Promise.resolve(false),
     abort: () => stop.abort(),
     promptChars: () => sentChars,
@@ -187,7 +195,33 @@ function codexJsonlUsage(stdout: string): RoleUsage | undefined {
     if (event.usage.reasoning_output_tokens !== undefined)
       reasoning = (reasoning ?? 0) + event.usage.reasoning_output_tokens;
   }
-  return found ? { input, output, cacheRead, cacheWrite, reasoning } : undefined;
+  return found
+    ? {
+        input, output, cacheRead, cacheWrite, reasoning,
+        meter: "codex-cli-jsonl" as const,
+        // cache_write_input_tokens is 0 in 99/99 sampled rollout events — an
+        // upstream defect (codex #32479, pi #6469), not a measurement.
+        unreported: ["cacheWrite"] as const,
+      }
+    : undefined;
+}
+
+/** The rollout id codex writes for this call. `codex exec --json` emits
+ *  {"type":"thread.started","thread_id":...} as its first line, and that id is
+ *  verbatim the `session_id` of the rollout under ~/.codex/sessions/ — which
+ *  carries `rate_limits.primary.used_percent`, the meter that actually ends
+ *  campaigns and that nothing in this journal could previously join to. */
+export function codexThreadId(stdout: string): string | undefined {
+  for (const line of stdout.split("\n")) {
+    if (!line.includes('"thread.started"')) continue;
+    try {
+      const e = JSON.parse(line) as { type?: string; thread_id?: string };
+      if (e.type === "thread.started" && typeof e.thread_id === "string") return e.thread_id;
+    } catch {
+      /* not the line we want */
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -204,7 +238,18 @@ function runCliRole(
   modelId: string,
   fullPrompt: string,
   signal?: AbortSignal,
-): Promise<{ text: string; usage?: RoleUsage; servedModel?: string; reportedModel?: string }> {
+): Promise<{
+  text: string;
+  usage?: RoleUsage;
+  servedModel?: string;
+  reportedModel?: string;
+  /** codex rollout id for this call (see codexThreadId) — the join key to
+   *  ~/.codex/sessions/, where the rate-limit trajectory lives. */
+  providerSessionId?: string;
+  /** The per-call temp cwd. Joins to the rollout's session_meta.cwd even when
+   *  stdout was lost, and survives a codex event-name change. */
+  backendCwd?: string;
+}> {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "coverify-cli-"));
   const outFile = path.join(cwd, "last-message.txt");
   const backend = CLI_BACKENDS[provider];
@@ -329,6 +374,10 @@ function runCliRole(
               output: u.output_tokens ?? 0,
               cacheRead: u.cache_read_input_tokens ?? 0,
               cacheWrite: u.cache_creation_input_tokens ?? 0,
+              meter: "claude-cli-json" as const,
+              // The result JSON has no thinking-token field: absent on
+              // 204/204 audit records, a provider fact, not a zero.
+              unreported: ["reasoning"] as const,
             },
           });
         } catch {
@@ -337,7 +386,12 @@ function runCliRole(
         }
       }
       if (backend.output === "outfile" && outText !== undefined) {
-        return resolve({ text: outText.trim(), usage: backend.usage?.(out) });
+        return resolve({
+          text: outText.trim(),
+          usage: backend.usage?.(out),
+          providerSessionId: codexThreadId(out),
+          backendCwd: cwd,
+        });
       }
       resolve({ text: out.trim() });
     });
