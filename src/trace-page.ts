@@ -26,18 +26,6 @@ export const STYLES = String.raw`
       --shadow: 0 1px 2px rgba(0,0,0,.5), 0 10px 30px -20px rgba(0,0,0,.9);
     }
   }
-  :root[data-theme="light"] {
-    --surface: #fbfbfa; --panel: #ffffff; --rule: #e3e4e2; --rule-strong: #cfd1ce;
-    --ink: #16181d; --ink-2: #4a4f58; --ink-3: #7b8189;
-    --reasoner: #3b6fe0; --verification: #0e9b94; --worker: #8b5cf6; --technician: #d97706;
-    --pass: #157f3b; --fail: #c2321f; --lost: #7b8189;
-  }
-  :root[data-theme="dark"] {
-    --surface: #14161a; --panel: #1a1d22; --rule: #2a2e35; --rule-strong: #3b4048;
-    --ink: #eceef1; --ink-2: #b3b9c2; --ink-3: #848b95;
-    --reasoner: #4a7fe8; --verification: #0e9c90; --worker: #8a6fe0; --technician: #c97a08;
-    --pass: #35a15c; --fail: #e0604c; --lost: #848b95;
-  }
 
   body { margin: 0; background: var(--surface); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
   .wrap { max-width: 1240px; margin: 0 auto; padding: 40px 24px 72px; display: flex; flex-direction: column; gap: 26px; }
@@ -109,7 +97,6 @@ export const STYLES = String.raw`
   .inspect .absent { color: var(--ink-3); font-style: italic; }
   .inspect .pill { display: inline-block; font-family: var(--mono); font-size: 10.5px; padding: 2px 7px; border-radius: 10px; border: 1px solid var(--rule-strong); color: var(--ink-2); }
   .empty-inspect { padding: 16px 18px; color: var(--ink-3); font-size: 13px; border-top: 1px solid var(--rule); }
-  .status { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
 
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
   caption { text-align: left; padding: 11px 14px; color: var(--ink-3); font-size: 12.5px; }
@@ -273,68 +260,29 @@ export const VIEW = String.raw`
         "<div class='t-mono'>click to inspect</div>",
     });
   });
-  verifies.forEach((v, i) => {
-    const cls = v.verdict === "PASS" ? "stage-pass" : v.verdict === "FAIL" ? "stage-fail" : "stage-none";
-    items.push({
-      id: "v" + i,
-      group: "verify",
-      start: ms(v.t),
-      type: "point",
-      className: "stage " + cls,
-      content: "",
-      kind: "verify",
-      ev: v,
-      title:
-        "<strong>" + STAGE[v.stage] + "</strong>" +
-        "<div class='t-mono'>" + esc(v.revision) + " &middot; " + clock(v.t) + "</div>" +
-        (v.verdict ? "<div class='t-task'>verdict " + v.verdict + "</div>" : "") +
-        (v.model ? "<div class='t-mono'>" + esc(v.model) + "</div>" : ""),
-    });
-  });
-  gates.forEach((g, i) => {
-    items.push({
-      id: "g" + i,
-      group: "gates",
-      start: ms(g.t),
-      type: "point",
-      className: "stage " + (g.verdict === "IDEA PASS" ? "stage-pass" : g.verdict === "IDEA FAIL" ? "stage-fail" : "stage-none"),
-      content: "",
-      kind: "gate",
-      ev: g,
-      title: "<strong>" + esc(g.verdict) + "</strong><div class='t-mono'>" + clock(g.t) + "</div><div class='t-task'>" + esc(g.mechanism) + "&hellip;</div>",
-    });
-  });
-  proms.forEach((p, i) => {
-    items.push({
-      id: "p" + i,
-      group: "gates",
-      start: ms(p.t),
-      type: "point",
-      className: "stage stage-pass",
-      content: "promoted " + esc(p.revision),
-      kind: "promotion",
-      ev: p,
-      title: "<strong>promotion</strong><div class='t-mono'>" + esc(p.revision) + " &middot; " + clock(p.t) + "</div>",
-    });
-  });
-  ev.filter((e) => e.type === "rebuttal").forEach((r, i) => {
-    items.push({
-      id: "rb" + i,
-      group: "verify",
-      start: ms(r.t),
-      type: "point",
-      className: "stage stage-none",
-      content: "rebuttal " + esc(r.revision),
-      kind: "rebuttal",
-      ev: r,
-      title:
-        "<strong>rebuttal recorded</strong><div class='t-mono'>" +
-        esc(r.revision) +
-        " &middot; " +
-        clock(r.t) +
-        "</div>",
-    });
-  });
+  // One point-item shape for every mark on the timeline; only the group,
+  // class, label and tooltip differ. kind/ev are what the inspector
+  // dispatches on when a mark is clicked.
+  const point = (id, group, cls, content, kind, e, title) =>
+    items.push({ id, group, start: ms(e.t), type: "point", className: "stage " + cls, content, kind, ev: e, title });
+  const stageCls = (v, pass, fail) => (v === pass ? "stage-pass" : v === fail ? "stage-fail" : "stage-none");
+  verifies.forEach((v, i) =>
+    point("v" + i, "verify", stageCls(v.verdict, "PASS", "FAIL"), "", "verify", v,
+      "<strong>" + STAGE[v.stage] + "</strong>" +
+      "<div class='t-mono'>" + esc(v.revision) + " &middot; " + clock(v.t) + "</div>" +
+      (v.verdict ? "<div class='t-task'>verdict " + v.verdict + "</div>" : "") +
+      (v.model ? "<div class='t-mono'>" + esc(v.model) + "</div>" : "")));
+  gates.forEach((g, i) =>
+    point("g" + i, "gates", stageCls(g.verdict, "IDEA PASS", "IDEA FAIL"), "", "gate", g,
+      "<strong>" + esc(g.verdict) + "</strong><div class='t-mono'>" + clock(g.t) +
+      "</div><div class='t-task'>" + esc(g.mechanism) + "&hellip;</div>"));
+  proms.forEach((p, i) =>
+    point("p" + i, "gates", "stage-pass", "promoted " + esc(p.revision), "promotion", p,
+      "<strong>promotion</strong><div class='t-mono'>" + esc(p.revision) + " &middot; " + clock(p.t) + "</div>"));
+  ev.filter((e) => e.type === "rebuttal").forEach((r, i) =>
+    point("rb" + i, "verify", "stage-none", "rebuttal " + esc(r.revision), "rebuttal", r,
+      "<strong>rebuttal recorded</strong><div class='t-mono'>" + esc(r.revision) +
+      " &middot; " + clock(r.t) + "</div>"));
   wakes.forEach((w, i) => {
     items.push({
       id: "w" + i,

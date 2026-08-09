@@ -151,8 +151,7 @@ export function traceData(dir: string): TraceData {
       if (a) {
         a.end = Math.max(t, a.start); // never render a negative lifetime
         a.cancelled = Boolean(g.cancelled);
-        if (typeof g.failed === "string") a.failed = g.failed;
-        a.report = g.report;
+          a.report = g.report;
         if (g.failed !== undefined) a.failed = String(g.failed);
       }
     } else if (

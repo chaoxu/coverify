@@ -151,7 +151,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   }
 
   const handles = new Map<string, Handle>();
-  const settledQueue: { h: Handle; report: string; failed?: string; reportPath?: string }[] = [];
+  const settledQueue: { h: Handle; failed?: string }[] = [];
   let nextId = store.maxHandleId() + 1;
   let activityThisWake = 0;
   let declaration: { state: "pause" | "complete"; reason: string } | undefined;
@@ -239,7 +239,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           ...(partial !== undefined ? { partial } : {}),
           usage: handle.usage?.(),
         });
-        if (live) settledQueue.push({ h: handle, report: "", failed });
+        if (live) settledQueue.push({ h: handle, failed });
         return;
       }
       const reportPath = newEvidencePath(dir, `${handle.id}/report`);
@@ -256,7 +256,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           reportSha256: sha256Text(report),
           usage: handle.usage?.(),
         });
-        settledQueue.push({ h: handle, report, failed: undefined, reportPath: rel });
+        settledQueue.push({ h: handle, failed: undefined });
       } else {
         // Cancelled while running: its completion is already recorded, so this
         // is journaled as a late artifact rather than a second completion —
@@ -295,21 +295,13 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
    * it is harvested, so every path that empties the queue must come through
    * here — dropping it instead destroys finished work.
    */
-  const harvestSettled = (): { sections: string[]; total: number; failed: number } => {
+  const harvestSettled = (): { total: number; failed: number } => {
     const settled = settledQueue.splice(0, settledQueue.length);
     for (const s of settled) handles.delete(s.h.id);
-    // Delivery only: the artifact and its completion record were written when
-    // the work settled, so nothing here can be lost by an exit path that skips
-    // this call.
-    const sections = settled.map((s) =>
-      s.failed !== undefined
-        ? `## ${s.h.id} [${s.h.mechanism}] FAILED (infrastructure): ${s.failed}\n\n` +
-          `No report artifact exists. Per the contract this is never PASS and carries no ` +
-          `mathematical content; re-dispatching the assignment is legitimate.`
-        : `## ${s.h.id} [${s.h.mechanism}] (saved: ${s.reportPath})\n\n${s.report}`,
-    );
+    // Counts only. The wake's report text is rendered from the durable record
+    // by undeliveredCompletions() — this used to render a second copy that no
+    // caller read, an invitation for the two to drift.
     return {
-      sections,
       total: settled.length,
       failed: settled.filter((s) => s.failed !== undefined).length,
     };

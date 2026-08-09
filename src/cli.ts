@@ -116,6 +116,13 @@ function agentLimit(): number | undefined {
   return optionalInt("agent-limit");
 }
 
+/** Every read-only verb needs a campaign; one message, one exit code. */
+function requireCampaign(): void {
+  if (campaignExists(dir)) return;
+  console.error(`no campaign at ${dir}`);
+  process.exit(1);
+}
+
 async function prove(resume: boolean): Promise<void> {
   // Auth preflight: a provider is usable via an env API key or a stored
   // OAuth subscription credential (coverify login <provider>).
@@ -222,10 +229,7 @@ switch (command) {
     await prove(true);
     break;
   case "amend": {
-    if (!campaignExists(dir)) {
-      console.error(`no campaign at ${dir}`);
-      process.exit(1);
-    }
+    requireCampaign();
     recordStatement(new GateStore(dir), dir, "explicit user amendment");
     console.error(
       "[coverify] amendment accepted: new statement revision recorded; earlier completion evidence " +
@@ -234,10 +238,7 @@ switch (command) {
     break;
   }
   case "say": {
-    if (!campaignExists(dir)) {
-      console.error(`no campaign at ${dir}`);
-      process.exit(1);
-    }
+    requireCampaign();
     const message = positional[0];
     if (!message) usage();
     queueUserMessage(dir, message);
@@ -273,10 +274,7 @@ switch (command) {
     break;
   }
   case "status": {
-    if (!campaignExists(dir)) {
-      console.error(`no campaign at ${dir}`);
-      process.exit(1);
-    }
+    requireCampaign();
     const pending = peekUserMessages(dir);
     if (pending.length > 0) {
       console.log(`## Pending user messages (${pending.length}, next wake)\n`);
@@ -310,20 +308,14 @@ switch (command) {
     break;
   }
   case "trace": {
-    if (!campaignExists(dir)) {
-      console.error(`no campaign at ${dir}`);
-      process.exit(1);
-    }
+    requireCampaign();
     const out = writeTrace(dir, flags.get("out"));
     console.error(`[coverify] trace written: ${out}`);
     console.log(out);
     break;
   }
   case "turns": {
-    if (!campaignExists(dir)) {
-      console.error(`no campaign at ${dir}`);
-      process.exit(1);
-    }
+    requireCampaign();
     const filter = flags.get("session");
     const sessions = campaignTurns(dir).filter(
       (s) => filter === undefined || s.file.includes(filter) || s.id.includes(filter),
