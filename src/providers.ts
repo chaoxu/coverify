@@ -357,16 +357,26 @@ function runCliRole(
     .replaceAll("{out}", outFile)
     .split(/\s+/);
   return new Promise((resolve, reject) => {
-    const child = spawn(parts[0], parts.slice(1), { cwd, stdio: ["pipe", "pipe", "pipe"] });
+    // detached: the CLI gets its own process group so kill() can take the
+    // whole tree. The codex CLI is a node wrapper whose vendored binary runs
+    // as a grandchild — SIGKILLing only the wrapper orphans the binary, which
+    // keeps thinking (and billing) headless. That is exactly the issue-#19
+    // survivor observed on the 2026-08-08 lin3cut restart.
+    const child = spawn(parts[0], parts.slice(1), { cwd, stdio: ["pipe", "pipe", "pipe"], detached: true });
     // A spawned verdict role is work like any other: it must die when the
     // harness dies, and stop when the campaign stops. Without this an
     // in-flight `claude -p` audit outlives a pause, bills a full Opus run,
     // and its verdict lands nowhere because no live process is waiting.
     const kill = () => {
       try {
-        child.kill("SIGKILL");
+        if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+        else child.kill("SIGKILL");
       } catch {
-        /* already gone */
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
       }
     };
     installReaperHooks();

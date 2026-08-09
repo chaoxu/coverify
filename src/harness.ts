@@ -257,7 +257,22 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     handle.settled = handle.promise.then(
       (report) =>
         persist(report, report.trim() === "" ? "empty report (no final text returned)" : undefined),
-      (err: unknown) => persist("", String(err)),
+      (err: unknown) => {
+        let failure = String(err);
+        // Name the real cause of a mid-run window overflow: the SESSION grew
+        // past the model context (accumulated tool results + reasoning), not
+        // the packet. Without this the coordinator's natural response is
+        // packet-splitting, which measurably does not help (issue #22:
+        // r181/r185 — the minimal split retry died the same way).
+        if (/context window|context length|maximum context/i.test(failure)) {
+          failure +=
+            " [harness diagnosis: the worker's session outgrew the model window mid-run — " +
+            "accumulated reads and reasoning, not packet size. Packet-splitting will not help. " +
+            "Redispatch with a tighter exploration scope: name the exact files to read and " +
+            "require an early commitment to one route.]";
+        }
+        persist("", failure);
+      },
     );
     activityThisWake++;
   };

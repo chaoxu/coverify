@@ -634,8 +634,97 @@ function literatureSearchTool(cwd: string, scope: WriteScope): AgentTool {
 }
 
 /**
+ * Read scope: a role may read only campaign content — the campaign tree plus
+ * the prior-route paths its STATEMENT.md declares (both are model-written
+ * campaign material; the statement is user-frozen). Nothing else: on
+ * 2026-08-09 workers literature-hunted with grep over all of $HOME and other
+ * agents' caches, blowing their sessions past the model context window
+ * (issue #22) and leaking unrelated files into provider-bound prompts.
+ * External questions belong to literature_search.
+ */
+export function readRoots(cwd: string): string[] {
+  // The campaign root is the nearest ancestor holding STATEMENT.md — cwd is
+  // a worker's evidence dir or the campaign dir itself.
+  let root = realResolve(cwd);
+  for (let d = root; ; d = path.dirname(d)) {
+    if (fs.existsSync(path.join(d, "STATEMENT.md"))) {
+      root = d;
+      break;
+    }
+    if (d === path.dirname(d)) break;
+  }
+  const roots = [root];
+  try {
+    const stmt = fs.readFileSync(path.join(root, "STATEMENT.md"), "utf-8");
+    // Path-like tokens: ~/x, /x, or ../x (relative to the campaign root, the
+    // lin3cut convention for sibling campaigns). Only existing paths count.
+    for (const tok of stmt.match(/(?:~\/|\.\.\/|\/)[\w.@+-][\w.@/+-]*/g) ?? []) {
+      const abs = tok.startsWith("~/") ? path.join(os.homedir(), tok.slice(2)) : path.resolve(root, tok);
+      if (fs.existsSync(abs)) roots.push(realResolve(abs));
+    }
+  } catch {
+    /* foreign campaign without a statement: campaign tree only */
+  }
+  return roots;
+}
+
+/** Cap a read-tool result's text to OUTPUT_LIMIT chars — the same bound
+ *  run_script output gets. 130k-char grep results were a direct cause of the
+ *  issue-#22 worker context overflows; the full file is always re-readable
+ *  with a narrower query. */
+function capResultText(result: Awaited<ReturnType<AgentTool["execute"]>>): typeof result {
+  let budget = OUTPUT_LIMIT;
+  const content = result.content.map((block) => {
+    if (block.type !== "text") return block;
+    if (block.text.length <= budget) {
+      budget -= block.text.length;
+      return block;
+    }
+    const kept = budget;
+    budget = 0;
+    return {
+      ...block,
+      text: block.text.slice(0, kept) + "\n[truncated: result exceeded the 50k read budget; narrow the query]",
+    };
+  });
+  return { ...result, content };
+}
+
+function confineReads(tool: AgentTool, roots: string[], cwd: string): AgentTool {
+  const execute: AgentTool["execute"] = async (toolCallId, params, signal, onUpdate) => {
+    const rec = (params ?? {}) as Record<string, unknown>;
+    for (const key of ["path", "file", "dir", "directory"]) {
+      const v = rec[key];
+      if (typeof v !== "string" || v.trim() === "") continue;
+      const real = realResolve(path.isAbsolute(v) ? v : path.resolve(cwd, v));
+      if (!roots.some((r) => real === r || real.startsWith(r + path.sep))) {
+        return toolText(
+          `READ SCOPE REFUSED: ${v} is outside this campaign's read scope — the campaign ` +
+            "directory and the prior-route paths STATEMENT.md declares. For literature or any " +
+            "other external material, use literature_search (if granted) or state the need in " +
+            "your report.",
+        );
+      }
+      // Harness state is never reasoning material: journals, session
+      // transcripts, and gate mirrors live under .coverify/, and reading a
+      // transcript would also breach verification blindness (another agent's
+      // reasoning must stay unseen).
+      if (/(^|\/)\.coverify(\/|$)/.test(real)) {
+        return toolText(
+          `READ SCOPE REFUSED: ${v} is harness state (.coverify/ journals and transcripts), ` +
+            "not campaign reasoning material. Read the ledgers and EVIDENCE/ instead.",
+        );
+      }
+    }
+    return capResultText(await tool.execute(toolCallId, params, signal, onUpdate));
+  };
+  return { ...tool, execute };
+}
+
+/**
  * The role tool surface for a workspace: pi's read-only file tools
- * (read, ls, grep) and pi's write tool wrapped with the role's write scope.
+ * (read, ls, grep) — confined to readRoots(cwd) — and pi's write tool wrapped
+ * with the role's write scope.
  * No general shell. Code is gated: only a role whose dispatch packet carried
  * a computation declaration (launcher: "preregistered finite domain and
  * stopping rule") gets run_script and the right to write non-prose files.
@@ -684,7 +773,13 @@ export function workspaceTools(
       },
     },
   });
-  const tools = [createReadTool(cwd), createLsTool(cwd), createGrepTool(cwd), scopedWrite] as AgentTool[];
+  const roots = readRoots(cwd);
+  const tools = [
+    ...[createReadTool(cwd), createLsTool(cwd), createGrepTool(cwd)].map((t) =>
+      confineReads(t as AgentTool, roots, cwd),
+    ),
+    scopedWrite,
+  ] as AgentTool[];
   if (code) tools.push(runScriptTool(cwd, scope, { exclusiveDir: true }));
   if (opts?.literature === true) tools.push(literatureSearchTool(cwd, scope));
   return tools;

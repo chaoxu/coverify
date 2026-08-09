@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   campaignExists,
@@ -27,6 +28,7 @@ function usage(): never {
   coverify prove "<exact statement>" [--dir campaign] [--agent-limit N] [--max-wakes N] [--no-computation]
   coverify resume [--dir campaign] [--agent-limit N] [--max-wakes N] [--no-computation]
                                     (--agent-limit defaults to 6 workers — user policy 2026-08-08; 0 = unlimited)
+  coverify stop [--dir campaign]    SIGTERM the lock-holding harness (reaper kills its CLI tree)
   coverify status [--dir campaign]
   coverify trace [--dir campaign] [--out file]
                                     render the journal as a self-contained HTML timeline
@@ -239,6 +241,31 @@ switch (command) {
       `[coverify] message queued (${peekUserMessages(dir).length} pending); ` +
         "steered into the coordinator's running turn within ~1s, else delivered at its next wake",
     );
+    break;
+  }
+  case "stop": {
+    // Signal the lock-holding harness (issue #19: killing by hand-hunted PID
+    // is error-prone — first attempt hit the zsh wrapper). SIGTERM only; the
+    // reaper takes the CLI process groups down with it.
+    const lockPath = path.join(dir, ".coverify", "lock.json");
+    let held: { pid?: number; startedAt?: string } = {};
+    try {
+      held = JSON.parse(fs.readFileSync(lockPath, "utf-8"));
+    } catch {
+      console.error(`no running campaign at ${dir} (no readable lock)`);
+      process.exit(1);
+    }
+    if (typeof held.pid !== "number") {
+      console.error(`torn lock at ${lockPath}; inspect and remove it by hand`);
+      process.exit(1);
+    }
+    try {
+      process.kill(held.pid, "SIGTERM");
+    } catch {
+      console.error(`lock-holder pid ${held.pid} is not running (stale lock; next run reclaims it)`);
+      process.exit(1);
+    }
+    console.error(`[coverify] SIGTERM sent to campaign harness pid ${held.pid} (started ${held.startedAt})`);
     break;
   }
   case "status": {
