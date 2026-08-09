@@ -10,6 +10,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { citedEvidencePaths, gateOf, readJournal, readLedger, repoRoot } from "./campaign.js";
 import { BODY, STYLES, VIEW } from "./trace-page.js";
+import { sameModelId } from "./observe.js";
 
 export interface TraceAgent {
   id: string;
@@ -167,9 +168,17 @@ export function traceData(dir: string): TraceData {
         revision: g.revision,
         verdict: g.verdict,
         model: g.modelFamily ?? "",
-        // Requested-vs-answered (#21 P3): carried so the inspector can flag a
-        // verdict whose backend self-reported a different model.
-        reportedModel: g.reportedModel ?? "",
+        // Requested-vs-answered (#21 P3): carried ONLY when it is a genuine
+        // substitution. The alias rule lives in one place (sameModelId) —
+        // raw inequality here would flag every audit on the default config,
+        // where claude-cli answers a request for `opus` as `claude-opus-5`,
+        // and an alarm that always fires is trained away.
+        reportedModel:
+          typeof g.reportedModel === "string" &&
+          typeof g.modelFamily === "string" &&
+          !sameModelId(g.reportedModel, g.modelFamily)
+            ? g.reportedModel
+            : "",
       });
     } else if (g?.kind === "gate-verdict") {
       events.push({ type: "gate", t, verdict: g.verdict, mechanism: String(g.mechanism ?? "").slice(0, 70) });

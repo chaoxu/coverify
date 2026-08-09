@@ -186,3 +186,40 @@ describe("campaign metrics (issue #15)", () => {
     expect(m.idle).toEqual({ windowSec: 840, idleSec: 300, largestGapsSec: [300] });
   });
 });
+
+describe("model substitution flag (#21 P3)", () => {
+  // The alias rule must be single-source: claude-cli answers a request for
+  // `opus` with its canonical `claude-opus-5`, which is the SAME model. A raw
+  // inequality here would flag every audit on the shipped default config and
+  // contradict modelSubstitutions(), the authoritative query.
+  const aliased = traceData(
+    campaign([
+      { ts: T(0), kind: "wake", wake: 1, live: 0, newReports: 0 },
+      gate(T(1), {
+        kind: "audit",
+        revision: "cand.r1.md",
+        verdict: "PASS",
+        modelFamily: "claude-cli/opus",
+        reportedModel: "claude-cli/claude-opus-5",
+      }),
+    ]),
+  );
+  const swapped = traceData(
+    campaign([
+      { ts: T(0), kind: "wake", wake: 1, live: 0, newReports: 0 },
+      gate(T(1), {
+        kind: "audit",
+        revision: "cand.r1.md",
+        verdict: "PASS",
+        modelFamily: "chatgpt-cli/gpt-5-6-pro",
+        reportedModel: "chatgpt-cli/gpt-5-5-mini",
+      }),
+    ]),
+  );
+  test("a canonical alias is not flagged", () => {
+    expect(aliased.events.find((e) => e.type === "verify")!.reportedModel).toBe("");
+  });
+  test("a genuine substitution is flagged", () => {
+    expect(swapped.events.find((e) => e.type === "verify")!.reportedModel).toBe("chatgpt-cli/gpt-5-5-mini");
+  });
+});

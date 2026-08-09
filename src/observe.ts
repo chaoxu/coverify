@@ -264,7 +264,7 @@ export function modelSubstitutions(
  *  a router serving `gpt-5-5-mini` for `gpt-5-6-pro` is not. Comparing by
  *  prefix containment after stripping the provider and vendor prefix keeps
  *  aliases quiet and every real swap loud. */
-function sameModelId(a: string, b: string): boolean {
+export function sameModelId(a: string, b: string): boolean {
   const canon = (label: string) =>
     label
       .slice(label.indexOf("/") + 1)
