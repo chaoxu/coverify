@@ -31,7 +31,7 @@ Three implementation rules follow:
    silently re-allow technicians. Ideation families (Chao, 2026-08-09,
    Danus-study grounding in docs/skill-feedback.md) are the same provenance
    pattern: dispatch_reasoner's optional family field routes one reasoner to
-   fable (claude-cli/fable, Max subscription), gemini (agy/gemini-3.1-pro-high,
+   fable (Anthropic lane: claude-cli/opus since 2026-08-09 — Fable quota exhausted; originally claude-cli/fable; Max subscription), gemini (agy/gemini-3.1-pro-high,
    Google subscription via bin/agy-oracle), or pro (chatgpt-cli/gpt-5-6-pro)
    as toolless single-shot consults — subscription CLIs, never metered APIs;
    specs env-overridable via COVERIFY_FAMILY_<NAME>. For pro, the oracle's

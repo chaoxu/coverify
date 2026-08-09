@@ -8,7 +8,7 @@ describe("ideation families", () => {
   test("known families resolve to non-default providers; unknown is undefined", () => {
     expect(IDEATION_FAMILIES.sort()).toEqual(["fable", "gemini", "pro"]);
     expect(familyModelSpec("fable")?.provider).toBe("claude-cli");
-    expect(familyModelSpec("fable")?.modelId).toBe("fable");
+    expect(familyModelSpec("fable")?.modelId).toBe("opus");
     expect(familyModelSpec("gemini")?.provider).toBe("agy");
     expect(familyModelSpec("gemini")?.modelId).toBe("gemini-3.1-pro-high");
     expect(familyModelSpec("pro")?.provider).toBe("chatgpt-cli");

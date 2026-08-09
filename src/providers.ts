@@ -173,7 +173,11 @@ export function roleModelSpec(role: RoleName): ModelSpec {
 // "no useful response" (user policy, Chao 2026-08-09), so weak-model advice
 // cannot enter the campaign wearing a Pro label.
 const FAMILY_SPECS: Record<string, string> = {
-  fable: "claude-cli/fable",
+  // Repointed to Opus 2026-08-09 (user decision: Fable quota exhausted;
+  // "let's switch to opus for ideas"). The family name stays "fable" as the
+  // Anthropic-lane label coordinators already know; dispatch records stamp
+  // the resolved model, so provenance is exact either way.
+  fable: "claude-cli/opus",
   gemini: "agy/gemini-3.1-pro-high",
   pro: "chatgpt-cli/gpt-5-6-pro",
 };
