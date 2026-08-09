@@ -422,3 +422,21 @@ rules (two entries a reader would merge on sight).
   remains a user convention.
 - A mandatory ideation stage per wave — generators are an option the
   coordinator may dispatch, never a pipeline stage.
+
+## 2026-08-09: single-bridge serialization leaves worker slots idle
+
+Observed (lin3cut wake 195; BET same night, milder): once a route compresses
+to one named bridge, the coordinator tends to serialize — one live gate, zero
+live workers, five slots idle while the gate thinks. Mathematically the
+compression is progress; operationally it converts gate latency into idle
+capacity, and when the bridge FAILs the alternative mechanisms it then
+launches could have been running in parallel all along. User policy issued
+live via `coverify say` (Chao, 2026-08-09): prefer a diversified live
+portfolio — independent mechanisms plus the opposite disjunct — over serial
+focus, up to the agent limit; mechanism choice stays with the coordinator.
+Candidate skill improvement: the launcher's allocation guidance could state
+that a pending gate/verification on the selected route is not a reason to
+leave worker capacity idle; hedging routes (including the other disjunct)
+should run concurrently unless the user restricted capacity. Watch whether
+the steered campaigns' subsequent wakes actually rebalance before proposing
+the canonical edit.
