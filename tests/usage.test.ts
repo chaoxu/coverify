@@ -6,7 +6,7 @@
 import { expect, test } from "bun:test";
 import type { RoleUsage } from "../src/providers.ts";
 
-const { addUsage } = await import("../src/providers.ts");
+const { addUsage, subUsage } = await import("../src/providers.ts");
 
 // cacheWrite is NOT defaulted: it is optional on RoleUsage precisely so that
 // absence can mean "the provider never reported it", distinct from a measured
@@ -77,4 +77,40 @@ test("a known meter is never inherited by a sum with an unknown one", () => {
   expect(s.input).toBe(7);
   expect(s.meter).toBeUndefined();
   expect(s.mixedMeters).toBeUndefined();
+});
+
+test("subUsage turns a cumulative snapshot into the leaf a wake spent", () => {
+  // The coordinator's session total is the only derived aggregate the journal
+  // used to store, and it is why reading it needed reset-detection — a
+  // heuristic that split one campaign into 18 epochs against 15 real sessions.
+  // Deltas sum like every other role's records; snapshots must be un-inferred.
+  const afterWake1 = usage({ input: 100, output: 40, cacheRead: 900, reasoning: 25 });
+  const afterWake2 = usage({ input: 260, output: 90, cacheRead: 2400, reasoning: 60 });
+  const wake2 = subUsage(afterWake2, afterWake1);
+  expect(wake2.input).toBe(160);
+  expect(wake2.output).toBe(50);
+  expect(wake2.cacheRead).toBe(1500);
+  expect(wake2.reasoning).toBe(35);
+});
+
+test("subUsage with no baseline is the first wake of a session", () => {
+  const first = usage({ input: 100, meter: "pi-session" });
+  expect(subUsage(first, undefined)).toEqual(first);
+});
+
+test("subUsage never yields a negative token count", () => {
+  // A session total is monotone, so a smaller total than the baseline means
+  // the baseline belonged to a different session. Recording a negative would
+  // poison every sum downstream; clamping keeps the record merely wrong-by-
+  // omission rather than actively corrupting.
+  const d = subUsage(usage({ input: 5, output: 1 }), usage({ input: 50, output: 20 }));
+  expect(d.input).toBe(0);
+  expect(d.output).toBe(0);
+});
+
+test("subUsage keeps absent-vs-zero on optional fields", () => {
+  const d = subUsage(usage({ input: 10 }), usage({ input: 4 }));
+  expect(d.cacheWrite).toBeUndefined();
+  expect(d.reasoning).toBeUndefined();
+  expect(JSON.stringify(d)).not.toContain("reasoning");
 });

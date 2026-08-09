@@ -41,6 +41,14 @@ Three separate conventions collided in one study:
 
 ## 2. Cumulative records need reset detection
 
+> **Retired for coverify's own journal (2026-08-09).** The coordinator now
+> emits a LEAF record per wake — what that wake spent — instead of a running
+> session total, so its usage sums like every other role's and neither reset
+> detection nor epoch grouping is needed. The rule stays because external
+> corpora (codex rollouts, any provider that reports cumulatively) still
+> require it, and because records written before that change carry the old
+> `cumulative` shape.
+
 Coordinator usage is cumulative per session, not per call. A resident session
 that rebuilds starts a new cumulative series. Sum the **peak of each monotonic
 run**, treating a decrease as an epoch boundary. Taking the last record loses

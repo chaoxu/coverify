@@ -27,6 +27,7 @@ import {
   createHarnessRoleSession,
   roleModelSpec,
   specKey,
+  subUsage,
   type RoleSession,
   type RoleUsage,
 } from "./providers.js";
@@ -142,6 +143,10 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   // overstated its fresh input by 16.7M tokens. Short and human-typeable: it
   // appears in operator queries.
   const runId = randomUUID().slice(0, 8);
+  // Every record this process writes carries it, so leaf spend attributes to a
+  // run without timestamp archaeology, and the coordinator's cumulative series
+  // group instead of being inferred from a counter going backwards.
+  store.setRunId(runId);
   // One resolution per run; every record naming the coordinator model spells
   // it from this, so the run-config stamp and the usage events join.
   const coordinatorSpec = roleModelSpec("coordinator");
@@ -492,6 +497,10 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   let turnFailures = 0;
   let coordinator: RoleSession | undefined;
   let coordinatorEpoch = 0;
+  // Baseline for the per-wake delta. A rebuilt session starts a new cumulative
+  // series, so this resets with it — the one place the epoch boundary is now
+  // used, and it is known here rather than inferred at read time.
+  let prevCoordUsage: RoleUsage | undefined;
   // Per-wake context growth, surfaced when large (issue #17): the measured
   // campaign grew 29–55k tokens per wake, ~90% of it the coordinator's own
   // reads and output, invisible to the coordinator itself. Telemetry plus a
@@ -611,6 +620,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     if (coordinator === undefined) {
       fresh = true;
       coordinatorEpoch++;
+      prevCoordUsage = undefined;
       coordinator = await createHarnessRoleSession(
         {
           contract,
@@ -775,17 +785,22 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           )}k cap). If much of that was wholesale file reads, prefer grep or read with ` +
           "offset/limit — re-reads are cheap, residency is not."
         : "";
+    // A LEAF record, like every other role's: what this wake cost, not a
+    // running total. The session total was the only derived aggregate in the
+    // coordinator lane, and it is why reading this journal used to need
+    // reset-detection — a heuristic that split one campaign into 18 epochs
+    // against 15 real sessions and overstated its fresh input by 16.7M tokens.
+    // Deltas sum; snapshots have to be un-inferred first.
+    const sessionTotal = coordinator.usage();
+    const spent = sessionTotal && subUsage(sessionTotal, prevCoordUsage);
+    prevCoordUsage = sessionTotal;
     store.event({
       kind: "usage",
       role: "coordinator",
-      // Identity of the series this cumulative belongs to. sessionId also
-      // distinguishes the epochs WITHIN a run, so no decreasing-counter
-      // heuristic is needed at read time.
-      runId,
       sessionId: `coordinator-${coordinatorEpoch}`,
       wake: wakeCount,
-      modelSpec: specKey(roleModelSpec("coordinator")),
-      cumulative: coordinator.usage(),
+      modelSpec: specKey(coordinatorSpec),
+      ...(spent !== undefined ? { usage: spent } : {}),
       approxContextTokens: contextNow,
       ...(growth !== undefined ? { contextGrowthTokens: growth } : {}),
     });

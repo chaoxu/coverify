@@ -428,6 +428,28 @@ export function addUsage(a: RoleUsage, b: RoleUsage): RoleUsage {
   return sum;
 }
 
+/** `a - b`, field-wise, for turning a cumulative session total into the leaf
+ *  each wake actually spent. Optional fields follow the same absent-vs-zero
+ *  rule as addUsage: a field neither side reported stays absent. Clamped at
+ *  zero — a session total is monotone (usage() sums every message ever plus
+ *  compaction), so a negative would mean the baseline came from another
+ *  session, and recording a negative token count would poison every sum
+ *  downstream. */
+export function subUsage(a: RoleUsage, b?: RoleUsage): RoleUsage {
+  if (b === undefined) return a;
+  const less = (x?: number, y?: number) =>
+    x === undefined && y === undefined ? undefined : Math.max(0, (x ?? 0) - (y ?? 0));
+  const d: RoleUsage = {
+    input: Math.max(0, a.input - b.input),
+    output: Math.max(0, a.output - b.output),
+    cacheRead: Math.max(0, a.cacheRead - b.cacheRead),
+    cacheWrite: less(a.cacheWrite, b.cacheWrite),
+    reasoning: less(a.reasoning, b.reasoning),
+  };
+  if (a.meter !== undefined) d.meter = a.meter;
+  return d;
+}
+
 function sumMessagesUsage(messages: readonly unknown[]): RoleUsage {
   const total: RoleUsage = { input: 0, output: 0, cacheRead: 0, meter: "pi-session" };
   // cacheWrite is deliberately NOT initialised: pi's type requires the field

@@ -147,6 +147,13 @@ export class GateStore {
   private records: GateRecord[];
   private file: string;
   readonly campaignDir: string;
+  /** Stamped on every record this process writes. Records that predate it are
+   *  marked by its ABSENCE, which is a cleaner boundary than any date rule —
+   *  and the run-config `runStart` note carries harnessRev, launcherSha256,
+   *  piVersions, patches and roleSpecs, so "which convention did this record
+   *  use" becomes "look up its run" rather than "know the commit history".
+   *  A `v: 3` integer would say only THAT the shape changed, never what. */
+  private runId: string | undefined;
 
   constructor(campaignDir: string) {
     const resolved = path.resolve(campaignDir);
@@ -247,8 +254,13 @@ export class GateStore {
     }
   }
 
+  /** Called once per process, before any record is written. */
+  setRunId(runId: string): void {
+    this.runId = runId;
+  }
+
   append(record: { kind: GateRecord["kind"] } & Record<string, unknown>): GateRecord {
-    const full: GateRecord = { ts: new Date().toISOString(), ...record };
+    const full: GateRecord = { ts: new Date().toISOString(), ...this.runStamp(), ...record };
     this.records.push(full);
     fs.appendFileSync(this.file, JSON.stringify(full) + "\n");
     // Derived mirror in the campaign journal: observability only, never read
@@ -268,11 +280,15 @@ export class GateStore {
    * behavioral may ever be read from there.
    */
   event(record: { kind: "wake" | "usage" | "note" } & Record<string, unknown>): GateRecord {
-    const full = { ts: new Date().toISOString(), ...record };
+    const full = { ts: new Date().toISOString(), ...this.runStamp(), ...record };
     this.records.push(full);
     fs.appendFileSync(this.file, JSON.stringify(full) + "\n");
     appendJournal(this.campaignDir, full);
     return full;
+  }
+
+  private runStamp(): { runId?: string } {
+    return this.runId === undefined ? {} : { runId: this.runId };
   }
 
   all(): readonly GateRecord[] {

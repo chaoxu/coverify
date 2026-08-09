@@ -910,10 +910,12 @@ errors to be refused rather than merely documented:
 SELECT sum(usage.input + usage.output) FROM ev
 WHERE kind = 'completion' AND usageRollup IS NULL;
 
--- Coordinator spend per epoch, with no decreasing-counter heuristic: usage is
--- cumulative per session, so take each series' max and group.
-SELECT runId, sessionId, max(cumulative.input + cumulative.output) AS billed
-FROM ev WHERE kind = 'usage' GROUP BY runId, sessionId;
+-- Coordinator spend. Since 2026-08-09 these are LEAF records — what each wake
+-- spent — so they sum like every other role's and need no epoch grouping and
+-- no reset detection. Records before that carry a `cumulative` snapshot
+-- instead; take max() per (runId, sessionId) for those.
+SELECT runId, sessionId, sum(usage.input + usage.output) AS billed
+FROM ev WHERE kind = 'usage' AND usage IS NOT NULL GROUP BY runId, sessionId;
 
 -- Never sum `input` across meters: it is the uncached part everywhere, but pi
 -- folds cache-write into it while the codex and claude lanes keep it separate.
