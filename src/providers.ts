@@ -23,7 +23,8 @@ import { cliBackendCommand, createCliRoleSession, isCliProvider, systemText } fr
 import { repoRoot } from "./campaign.js";
 import { fileCredentialStore } from "./credentials.js";
 import { CLAUDE_BRIDGE_ID, claudeBridgeProvider } from "./claude-bridge.js";
-import { envNumber, workspaceTools, type WriteScope } from "./supervise.js";
+import { envNumber, type WriteScope } from "./sandbox.js";
+import { workspaceTools } from "./workspace.js";
 
 export type Models = ReturnType<typeof createModels>;
 

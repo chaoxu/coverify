@@ -10,7 +10,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { repoRoot } from "./campaign.js";
-import { installReaperHooks, liveReapers } from "./supervise.js";
+import { installReaperHooks, liveReapers } from "./sandbox.js";
 import type { RoleRun, RoleSession, RoleUsage } from "./providers.js";
 
 /**

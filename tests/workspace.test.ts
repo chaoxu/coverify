@@ -7,7 +7,7 @@ import * as path from "node:path";
 
 process.env.COVERIFY_RUN_MEM_MB = "200";
 process.env.COVERIFY_LITERATURE_CMD = "/bin/echo";
-const { workspaceTools, runScriptTool } = await import("../src/supervise.ts");
+const { workspaceTools, runScriptTool } = await import("../src/workspace.ts");
 const { checkDispatch } = await import("../src/gates.ts");
 
 const store = { all: () => [] } as any;

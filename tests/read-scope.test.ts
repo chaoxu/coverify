@@ -5,7 +5,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const { workspaceTools, readRoots } = await import("../src/supervise.ts");
+const { workspaceTools, readRoots } = await import("../src/workspace.ts");
 
 function text(result: { content: { type: string; text?: string }[] }): string {
   return result.content.map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("");

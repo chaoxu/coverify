@@ -1,7 +1,8 @@
 // Role semantics: the charges — the only text of coverify's own that any
 // role is ever told (everything else they see is the launcher contract
 // verbatim plus coordinator-authored packet content). Mechanics live in
-// supervise.ts (confinement) and providers.ts (model invocation); import
+// sandbox.ts / workspace.ts (confinement) and providers.ts (model
+// invocation); import
 // them from their defining modules — the old `export *` barrel made
 // transport symbols read as role semantics and misled reviewers.
 

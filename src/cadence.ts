@@ -31,7 +31,7 @@ import {
   runRole,
   specLabel,
 } from "./providers.js";
-import { toolText } from "./supervise.js";
+import { toolText } from "./sandbox.js";
 
 /** What the cadence needs from the campaign loop. Narrow by design: the
  *  cadence never touches the settle queue, wake counters, or compaction —

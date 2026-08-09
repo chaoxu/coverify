@@ -129,7 +129,7 @@ Reads are CONFINED (2026-08-09, issue #22 — measured harm: workers grepping
 $HOME literature-hunted their sessions past the model context window and
 leaked unrelated files into provider prompts): read/ls/grep accept only the
 campaign tree plus prior-route paths declared in the user-frozen
-STATEMENT.md (readRoots, supervise.ts; path normalization mirrors pi's own,
+STATEMENT.md (readRoots, workspace.ts; path normalization mirrors pi's own,
 bypass-pinned in tests/read-scope.test.ts); `.coverify/` is refused
 param-side and filtered result-side (harness state, and transcript reads
 would breach verification blindness); every read result is capped at the
@@ -222,7 +222,8 @@ cli.ts           prove / resume / stop / status / trace / turns / say / amend / 
 campaign.ts      state layer: init, revisions, append-only evidence, resume bundle
 launcher.ts      load + extract the fenced launcher contract (no fallback)
 roles.ts         role charges + LIBRARIAN_CHARGE (all coverify-authored role text; no re-exports)
-supervise.ts     OS supervision + read scope: reaper, sandboxing, run_script, librarian, readRoots/confineReads
+sandbox.ts       OS supervision + confinement mechanics: reaper, sandboxing, supervise() batch runner
+workspace.ts     the role tool surface: run_script, librarian, write rules, readRoots/confineReads
 backends.ts      subscription CLI transports (claude/codex/chatgpt/agy) + served-model attestation
 providers.ts     model providers, per-role specs + ideation families, runRole, harness sessions
 coordinator-tools.ts clause-mapped coordinator tool surface (coordinatorTools(deps) factory)
@@ -388,15 +389,15 @@ stateDiagram-v2
 | Mechanical enforcement (code) | Launcher clause |
 | --- | --- |
 | `STATEMENT.md` written once; new revision only via explicit user amendment; completion evidence invalidated | "Fix its revision before search; only an explicit user amendment may replace it…" |
-| Campaign file set; harness-written evidence is revision-suffixed (`newEvidencePath`), and `FAILED.md` prefix-append plus `literature-*.md` immutability are enforced (supervise.ts: `APPEND_ONLY_LEDGERS`, write wrapper). Other in-place edits under `EVIDENCE/` are contract-instructed, not blocked — a role can still overwrite its own scratch artifact | "Durable campaign state" bullets |
-| Read scope (supervise.ts: `readRoots`/`confineReads`): roles read only the campaign tree plus STATEMENT.md-declared prior-route paths; `.coverify/` refused param-side and filtered result-side; 50k per-result cap. Confinement, not emulation of platform isolation — recorded honestly in the ledger below (prose roles enforced; scripts instructed-only) | "Use stronger platform enforcement if available; do not emulate it with a second proof-state system." / blindness recording clause |
+| Campaign file set; harness-written evidence is revision-suffixed (`newEvidencePath`), and `FAILED.md` prefix-append plus `literature-*.md` immutability are enforced (workspace.ts: `APPEND_ONLY_LEDGERS`, write wrapper). Other in-place edits under `EVIDENCE/` are contract-instructed, not blocked — a role can still overwrite its own scratch artifact | "Durable campaign state" bullets |
+| Read scope (workspace.ts: `readRoots`/`confineReads`): roles read only the campaign tree plus STATEMENT.md-declared prior-route paths; `.coverify/` refused param-side and filtered result-side; 50k per-result cap. Confinement, not emulation of platform isolation — recorded honestly in the ledger below (prose roles enforced; scripts instructed-only) | "Use stronger platform enforcement if available; do not emulate it with a second proof-state system." / blindness recording clause |
 | Dispatched agents get no ledger-write capability; only assigned evidence paths | "The coordinator is the sole ledger writer; workers… write only assigned evidence artifacts" |
 | Resume bundle = STATEMENT + FRONTIER + full REGISTRY.md + full PROCESS_LESSONS.md, launcher embedded verbatim in the system prompt (never FAILED.md, PROVED.md, or EVIDENCE/ wholesale) — supplied on every coordinator (re)build **and re-supplied on the wake after every in-place compaction**, so both halves of the clause are enforced, not instructed | "After restart or context compaction, reread…" |
 | Claim-label vocabulary quoted verbatim into the ledger templates at init; label discipline and weakest-premise inheritance are contract-instructed model judgment | "Claim labels — literal, never inflated" |
 | Dispatch schema requires the FAILED.md check field (`no close prior route` / `closest is X; differs because…`) | "Before every route, materially changed retry, or variant, check `FAILED.md`…" |
 | Worker packet schema requires a finite mathematical deliverable; the deliverable-or-precise-gap report form is charged in the role prompt, not parsed | "Every exploration agent must return a proved lemma, explicit construction, counterexample/certificate, or a precise failing implication" |
 | No harness timeouts on proof/audit/reconstruction work (the per-run_script batch cap is surfaced in the tool description and env-tunable; the 50k read-result cap is context-capacity supervision, not a work timeout; consult/search CLIs — agy-oracle, the chatgpt oracle, the librarian — run with 7-DAY supervision bounds: hang protection, never work limits (user decision: no timeouts on model thinking, Chao 2026-08-09); only the run_script batch cap remains a real wall, as compute host-protection) | "Do not impose a coordinator-created elapsed-time limit…" |
-| Code tools (`run_script` + non-prose writes; supervise.ts: `PROSE_EXTS`) exist only on a technician dispatched with a computation declaration with concrete bounds; dispatch gate refuses thin declarations; coordinator is prose-only; the dispatch returns the REGISTRY.md launch record (workload, limits, output paths, cancellation) | "Use computation only for a preregistered finite domain and stopping rule yielding a small witness, certificate, or table." / "Never run unsupervised detached compute." |
+| Code tools (`run_script` + non-prose writes; workspace.ts: `PROSE_EXTS`) exist only on a technician dispatched with a computation declaration with concrete bounds; dispatch gate refuses thin declarations; coordinator is prose-only; the dispatch returns the REGISTRY.md launch record (workload, limits, output paths, cancellation) | "Use computation only for a preregistered finite domain and stopping rule yielding a small witness, certificate, or table." / "Never run unsupervised detached compute." |
 | Mechanism identity for gate keys is normalized (trimmed, whitespace-collapsed, case-folded), so retyping a mechanism neither evades the wave gate nor discards an IDEA PASS already earned | "Do not allow recursive subagent fan-out or a large route wave before the parent mechanism receives `IDEA PASS`…" |
 | Wave gate: a second **concurrent** worker on a mechanism requires `IDEA PASS` on file; sequential retries get an advisory reminder, not a refusal (that judgment is the coordinator's); single first-wave scouts exempt | "Do not allow recursive subagent fan-out or a large route wave before the parent mechanism receives `IDEA PASS`…" |
 | Verification = stage 1 (fresh hostile audit) then stage 2: bundle certification (fresh agent sees candidate + bundle; leaky bundle refused, same-bundle retry hash-blocked) → blind reconstruction (no verdict) → fresh comparison carrying stage 2's verdict with the contract's match semantics; all outputs saved as citable EVIDENCE artifacts, hash-bound; a reusable reconstruction is bound to the candidate hash as well as its own artifact hash, so a repaired candidate always gets a fresh one | "Verification cadence" 1–2 (2026-07-31 revision): bundle certification, "a fresh comparison agent…", explicit PASS/mismatch semantics |
@@ -714,7 +715,7 @@ mirror (standing-guidance replay previously read the in-tree journal — the
 wrong trust domain on degraded platforms), mirror-based `COVERIFY_ADOPT`
 recovery, the carry-forward unification behind
 `priorReusableRecord`/`carriedRecord` with the explicit `requireStranded`
-policy flag, the mechanics/semantics file splits (supervise.ts,
+policy flag, the mechanics/semantics file splits (sandbox.ts/workspace.ts,
 providers.ts, cadence.ts), the PROVED.md checked view
 (`promotionsMissingFromProved`), and CLI backends as capability-flagged
 degenerate RoleSessions (one dispatch path; answer once, stoppable, not

@@ -32,7 +32,7 @@ import {
   runRole,
   specLabel,
 } from "./providers.js";
-import { runMemMb, runTimeoutMs, toolText } from "./supervise.js";
+import { runMemMb, runTimeoutMs, toolText } from "./sandbox.js";
 import type { CampaignOptions, Handle } from "./harness.js";
 
 /** What the coordinator's tools need from the campaign loop. Mirrors

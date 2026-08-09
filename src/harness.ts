@@ -28,7 +28,7 @@ import {
   type RoleSession,
   type RoleUsage,
 } from "./providers.js";
-import { type WriteScope } from "./supervise.js";
+import { type WriteScope } from "./sandbox.js";
 
 export interface CampaignOptions {
   campaignDir: string;

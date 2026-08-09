@@ -28,7 +28,7 @@ import {
   roleModelSpec,
   specLabel,
 } from "./providers.js";
-import { sandboxMode, toolText } from "./supervise.js";
+import { sandboxMode, toolText } from "./sandbox.js";
 
 /**
  * Run-config stamp (issue #21 P2): the resolved, non-secret policy that
