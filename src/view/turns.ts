@@ -5,6 +5,7 @@
 // every field is a pure function of the stored messages.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { metered } from "../providers.js";
 import type { RoleUsage } from "../providers.js";
 
 /** One message's telemetry: sizes + provider accounting, no content. For
@@ -114,7 +115,7 @@ export function campaignTurns(campaignDir: string): SessionTelemetry[] {
     // `reasoning` is seeded absent, not zero: a session whose turns never
     // reported the field must not claim it measured zero (same rule as
     // addUsage).
-    const usage: RoleUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+    const usage: RoleUsage = metered("pi-session", { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
     const add = (raw: SessionUsage | undefined) => {
       if (!raw) return;
       const u = toRoleUsage(raw);

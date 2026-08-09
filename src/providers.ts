@@ -406,8 +406,11 @@ export interface RoleUsage {
    *  `meter` cannot say this, since it also means "unknown". A reader seeing
    *  this must not treat the totals as one currency. */
   mixedMeters?: readonly Meter[];
-  /** Union of the addends' METER_GAPS: fields missing from this record. */
+  /** Fields no contributing meter measured: absent from this record entirely. */
   unreported?: readonly UsageGap[];
+  /** Fields SOME contributing meter measured and others did not, so the value
+   *  present is real but an undercount. Only ever set on cross-meter sums. */
+  partiallyUnreported?: readonly UsageGap[];
   /** No dollar field, deliberately. Every role runs on a subscription lane
    *  (see ROLE_DEFAULTS), so every price a provider reports — pi's per-message
    *  cost, the claude CLI's `total_cost_usd` — is notional list price, not
@@ -430,8 +433,25 @@ export function addUsage(a: RoleUsage, b: RoleUsage): RoleUsage {
   // "resolves, never rejects" — taking the whole campaign down with every live
   // agent's work unharvested. Observability may not end a campaign (design
   // rule 2). A mixed sum is instead MARKED, so a reader sees it.
-  const meters = [...new Set([a.meter, b.meter].filter((m): m is Meter => m !== undefined))].sort();
-  const unreported = [...new Set([...(a.unreported ?? []), ...(b.unreported ?? [])])];
+  // A gap survives only if EVERY meter-bearing addend has it. Union was
+  // wrong: a cadence sums audit (claude, no reasoning field) with three codex
+  // stages (which DO report reasoning), so the union emitted a record holding
+  // a measured positive `reasoning` while simultaneously declaring reasoning
+  // unreported. A reader doing the honest thing — refusing to total a field
+  // marked unmeasured — would discard real codex reasoning on every full
+  // cadence.
+  const meterful = [a, b].filter((u) => u.meter !== undefined);
+  const meters = [...new Set(meterful.map((u) => u.meter as Meter))].sort();
+  const gaps = meterful.map((u) => new Set(u.unreported ?? []));
+  const anyGap = [...new Set(meterful.flatMap((u) => u.unreported ?? []))].sort();
+  // Unmeasured by EVERY addend: the field is genuinely absent from the sum.
+  const unreported = anyGap.filter((g) => gaps.every((s) => s.has(g)));
+  // Unmeasured by SOME addend: the sum holds a real but INCOMPLETE number.
+  // Neither label alone is honest here — a cadence sums audit (claude, no
+  // reasoning field) with codex stages that do report it, so the total is a
+  // measured undercount. Marking it as fully unreported discards real data;
+  // marking it as fully measured overstates coverage.
+  const partial = anyGap.filter((g) => !gaps.every((s) => s.has(g)));
   const sum: RoleUsage = {
     input: a.input + b.input,
     output: a.output + b.output,
@@ -439,11 +459,15 @@ export function addUsage(a: RoleUsage, b: RoleUsage): RoleUsage {
     cacheWrite: a.cacheWrite + b.cacheWrite,
     reasoning: reported(a.reasoning, b.reasoning),
   };
-  // One meter survives as itself; a genuine mix is recorded as such rather
-  // than silently inheriting whichever addend came first.
-  if (meters.length === 1) sum.meter = meters[0];
+  // A meter is claimed only when EVERY addend agrees. Summing a stamped record
+  // with an unstamped one (a historical journal line, or usage rebuilt from
+  // pi's session JSONL) leaves the meter absent — "unknown" is the truth, and
+  // asserting the known one would be exactly the convention-guessing this
+  // field exists to stop.
+  if (meters.length === 1 && meterful.length === [a, b].length) sum.meter = meters[0];
   else if (meters.length > 1) sum.mixedMeters = meters;
   if (unreported.length > 0) sum.unreported = unreported;
+  if (partial.length > 0) sum.partiallyUnreported = partial;
   return sum;
 }
 

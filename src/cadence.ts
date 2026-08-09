@@ -183,16 +183,23 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
       const bundleHash = sha256Text(bundle);
       const provedHash = sha256Text(proved);
       const usages: RoleUsage[] = [];
-      // Which stage records this cadence actually appended, in order. The set
-      // is variable — audit FAIL/UNPARSEABLE and cert FAIL exit early, and
-      // carried-forward stages append no usage — so a static four-element
-      // list would be a false claim on roughly a third of cadences (measured:
-      // 132 full, 39 audit+cert, 18 audit-only).
+      // Stage records this cadence APPENDED, in order — including carried-
+      // forward ones, which append a record while contributing no usage. The
+      // set is variable (audit FAIL/UNPARSEABLE and cert FAIL exit early), so
+      // a static four-element list would be false on roughly a third of
+      // cadences: measured 132 full, 39 audit+cert, 18 audit-only. Because
+      // entries are pushed only after store.append returns, `rollup minus the
+      // sum of these children` is unrecorded spend, never a missing record.
       const rollupChildren: string[] = [];
-      const recordUsage = (u?: RoleUsage, stage?: string) => {
+      const recordUsage = (u?: RoleUsage) => {
         if (u) usages.push(u);
-        if (stage) rollupChildren.push(stage);
       };
+      // Called immediately AFTER a stage record reaches the store, never
+      // before. Recording the attempt instead would list children that were
+      // never appended when a cadence is cancelled between the provider call
+      // and store.append — turning unrecorded spend into an apparently
+      // missing record, and breaking any "every listed child exists" check.
+      const appendedChild = (kind: string) => rollupChildren.push(kind);
 
       // The cadence runs as an async handle, like a worker: during a long
       // blind reconstruction the coordinator keeps gating, dispatching, and
@@ -241,14 +248,17 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         extra?: Record<string, unknown>;
       }): Promise<{ text: string; pass: boolean; unparseable: boolean; artifact: string }> => {
         const spec = roleModelSpec(stage.role);
-        const { text, usage, promptChars, durationMs, servedModel, reportedModel } = await runRole({
+        const {
+          text, usage, promptChars, durationMs, servedModel, reportedModel,
+          providerSessionId, backendCwd,
+        } = await runRole({
           contract,
           charge: CHARGES[stage.role],
           prompt: stage.ctx.prompt,
           spec,
           models,
         });
-        recordUsage(usage, stage.kind);
+        recordUsage(usage);
         abortIfCancelled();
         const evidence = newEvidencePath(dir, `audits/${slug}.${stage.kind}`);
         fs.writeFileSync(evidence, text);
@@ -267,6 +277,10 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           verdict,
           candidateHash,
           statementHash: stmtHash,
+          // Join keys into the provider's own rollout, where the rate-limit
+          // trajectory lives (see RoleSession.providerSessionId).
+          ...(providerSessionId !== undefined ? { providerSessionId } : {}),
+          ...(backendCwd !== undefined ? { backendCwd } : {}),
           ...stage.extra,
           dispatchId: id,
           artifact,
@@ -286,6 +300,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           promptChars,
           durationMs,
         });
+        appendedChild(stage.kind);
         return { text, pass, unparseable: verdictLine === undefined, artifact };
       };
 
@@ -350,6 +365,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             "byte-unchanged, and the prior cadence stranded (dispatched, never completed — a " +
             "protocol or infrastructure failure, not a repair)",
         );
+        appendedChild(kind);
         return { text, pass: true, unparseable: false, artifact };
       };
 
@@ -459,10 +475,13 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           const carriedR = carriedRecord(
             "reconstruction",
             priorRecon,
-            { bundleHash, provedHash },
+            // carriedStage stamps this; without it a carried reconstruction
+            // stays unjoinable to its cadence — systematically the cheap ones.
+            { bundleHash, provedHash, dispatchId: id },
             "carried forward (enforced): statement, bundle, and promoted premises byte-identical " +
               "to the prior reconstruction's inputs; the reconstructor never saw any candidate",
           );
+          appendedChild("reconstruction");
           reconText = carriedR.text;
           reconArtifact = carriedR.artifact;
         } else {
@@ -490,7 +509,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             spec: roleModelSpec("reconstructor"),
             models,
           });
-          recordUsage(reconTextUsage, "reconstruction");
+          recordUsage(reconTextUsage);
           abortIfCancelled();
           reconText = text;
           const reconEvidence = newEvidencePath(dir, `audits/${slug}.reconstruction`);
@@ -520,6 +539,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             promptChars: reconPromptChars,
             durationMs: reconDurationMs,
           });
+          appendedChild("reconstruction");
         }
 
         // Stage 2b — comparison: maps the reconstruction to the candidate's

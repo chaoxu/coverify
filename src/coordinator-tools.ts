@@ -30,6 +30,7 @@ import {
   roleModelSpec,
   type RoleSession,
   runRole,
+  specKey,
   specLabel,
 } from "./providers.js";
 import { runMemMb, runTimeoutMs, toolText } from "./sandbox.js";
@@ -419,11 +420,23 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
           `\n\n# Proposed mechanism\n\n${p.mechanism}\n\n# Claimed first nontrivial implication\n\n${p.firstImplication}`,
         spec: roleModelSpec("gateCritic"),
         models,
-      }, gateStop.signal).then(({ text, usage: criticUsage, promptChars, durationMs }) => {
+      }, gateStop.signal).then(({
+        text, usage: criticUsage, promptChars, durationMs,
+        servedModel, reportedModel, providerSessionId, backendCwd,
+      }) => {
         // A cancelled gate must not record a verdict (mirrors verification):
         // an unseen verdict could later unlock concurrent workers nobody reviewed.
         if (!handles.has(id)) return `[gate ${id} cancelled; verdict not recorded]`;
-        const verdict = recordGateVerdict(store, p.mechanism, text, criticUsage, { promptChars, durationMs });
+        const gateSpec = roleModelSpec("gateCritic");
+        const verdict = recordGateVerdict(store, p.mechanism, text, criticUsage, {
+          promptChars,
+          durationMs,
+          dispatchId: id,
+          modelFamily: servedModel ?? specKey(gateSpec),
+          ...(reportedModel !== undefined ? { reportedModel } : {}),
+          ...(providerSessionId !== undefined ? { providerSessionId } : {}),
+          ...(backendCwd !== undefined ? { backendCwd } : {}),
+        });
         if (verdict === "UNPARSEABLE") {
           return (
             `UNPARSEABLE verdict (recorded as such; does not unlock concurrent workers). The critic's first ` +

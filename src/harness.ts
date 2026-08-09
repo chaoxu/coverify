@@ -142,6 +142,9 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   // overstated its fresh input by 16.7M tokens. Short and human-typeable: it
   // appears in operator queries.
   const runId = randomUUID().slice(0, 8);
+  // One resolution per run; every record naming the coordinator model spells
+  // it from this, so the run-config stamp and the usage events join.
+  const coordinatorSpec = roleModelSpec("coordinator");
   recordRunConfig(store, {
     runId,
     harnessRev: gitInRepo("git rev-parse HEAD") ?? "unknown",
@@ -623,7 +626,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
             steerWorker,
             declareState,
           ],
-          spec: roleModelSpec("coordinator"),
+          spec: coordinatorSpec,
           models,
         },
         {

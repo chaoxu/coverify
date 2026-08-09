@@ -50,8 +50,12 @@ test("addUsage never throws on mixed meters — it marks them", () => {
   expect(mixed.input).toBe(15);
   expect(mixed.meter).toBeUndefined();
   expect(mixed.mixedMeters).toEqual(["claude-cli-json", "pi-session"]);
-  // Gaps union: the sum is missing both fields, not just one.
-  expect([...(mixed.unreported ?? [])].sort()).toEqual(["cacheWrite", "reasoning"]);
+  // Neither field is fully absent: pi measures reasoning, claude measures
+  // cacheWrite. The sum holds a real but INCOMPLETE number for each, which is
+  // neither "unreported" nor fully measured. Union here would declare measured
+  // codex reasoning unmeasured on every full verification cadence.
+  expect(mixed.unreported).toBeUndefined();
+  expect([...(mixed.partiallyUnreported ?? [])].sort()).toEqual(["cacheWrite", "reasoning"]);
 });
 
 test("a same-meter sum keeps its meter and stays unmarked", () => {
@@ -66,6 +70,17 @@ test("a same-meter sum keeps its meter and stays unmarked", () => {
 
 test("meterless records still sum — historical journals predate the field", () => {
   const s = addUsage(usage({ input: 3 }), usage({ input: 4 }));
+  expect(s.input).toBe(7);
+  expect(s.meter).toBeUndefined();
+  expect(s.mixedMeters).toBeUndefined();
+});
+
+test("a known meter is never inherited by a sum with an unknown one", () => {
+  // Summing a stamped record with an unstamped one (a pre-2026-08-09 journal
+  // line, or usage rebuilt from pi's session JSONL) must leave the meter
+  // ABSENT. Claiming the known one would be the convention-guessing this
+  // field exists to stop, made by the function meant to stop it.
+  const s = addUsage(usage({ input: 3, meter: "pi-session" }), usage({ input: 4 }));
   expect(s.input).toBe(7);
   expect(s.meter).toBeUndefined();
   expect(s.mixedMeters).toBeUndefined();

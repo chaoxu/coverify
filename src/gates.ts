@@ -613,7 +613,21 @@ export function recordGateVerdict(
   mechanism: string,
   verdictText: string,
   usage?: unknown,
-  request?: { promptChars?: number; durationMs?: number },
+  /** Identity and provenance for the gate lane. Before this, all 544
+   *  gate-verdict records on file carried usage and NO id, no model and no
+   *  dispatch link — the only record of that lane's spend, and unattributable.
+   *  `dispatchId` (never `id`: an `id` on a non-dispatch kind joins wrong in
+   *  the analytics queries) plus the served/requested model and the codex
+   *  rollout join key. */
+  request?: {
+    promptChars?: number;
+    durationMs?: number;
+    dispatchId?: string;
+    modelFamily?: string;
+    reportedModel?: string;
+    providerSessionId?: string;
+    backendCwd?: string;
+  },
 ): string {
   const verdict =
     parseFirstLineVerdict(verdictText, ["IDEA PASS", "IDEA FAIL", "IDEA REPAIR"]) ?? "UNPARSEABLE";
