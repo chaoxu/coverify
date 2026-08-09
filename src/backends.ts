@@ -168,10 +168,22 @@ function codexJsonlUsage(stdout: string): RoleUsage | undefined {
     }
     if (event.type !== "turn.completed" || !event.usage) continue;
     found = true;
-    input += event.usage.input_tokens ?? 0;
+    // `input` is the UNCACHED part, disjoint from cacheRead/cacheWrite — the
+    // convention the pi lane already records and that view/turns.ts documents.
+    // Codex nests them: input_tokens includes cached_input_tokens and
+    // cache_write_input_tokens (verified over 50,152 records — none has cached
+    // > input, and total_tokens == input + output throughout). Copying
+    // input_tokens through unsubtracted made this lane's records mean something
+    // different from every other lane's, and overstated fresh input by 30% in
+    // the 2026-08-09 cost study before anyone noticed. Journals written before
+    // this fix carry the nested convention for gate-critic, certifier,
+    // reconstructor and comparator; see docs/measurement-protocol.md rule 1.
+    const cr = event.usage.cached_input_tokens ?? 0;
+    const cw = event.usage.cache_write_input_tokens ?? 0;
+    input += Math.max(0, (event.usage.input_tokens ?? 0) - cr - cw);
     output += event.usage.output_tokens ?? 0;
-    cacheRead += event.usage.cached_input_tokens ?? 0;
-    cacheWrite += event.usage.cache_write_input_tokens ?? 0;
+    cacheRead += cr;
+    cacheWrite += cw;
     if (event.usage.reasoning_output_tokens !== undefined)
       reasoning = (reasoning ?? 0) + event.usage.reasoning_output_tokens;
   }

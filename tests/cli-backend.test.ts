@@ -97,6 +97,45 @@ test("codex usage records only real reasoning tokens", async () => {
   expect(without?.reasoning).toBeUndefined();
 });
 
+test("codex-cli records input DISJOINT from cacheRead/cacheWrite", async () => {
+  // Codex nests: input_tokens includes cached_input_tokens and
+  // cache_write_input_tokens. Every other lane records `input` as the uncached
+  // part (view/turns.ts: "usage.input is the uncached part"), so copying
+  // input_tokens through unsubtracted made this lane's records mean something
+  // different from the rest of the journal. That divergence overstated fresh
+  // input by 30% across gate-critic/certifier/reconstructor/comparator in the
+  // 2026-08-09 cost study. The invariant this pins: cacheRead may exceed input.
+  const u = await usageFrom(
+    "codex-cli",
+    "COVERIFY_CODEX_CMD",
+    `#!/bin/sh\necho '{"type":"turn.completed","usage":{"input_tokens":1000,` +
+      `"cached_input_tokens":900,"cache_write_input_tokens":50,"output_tokens":40}}'\n` +
+      `printf 'VERDICT: PASS' > "$1"\n`,
+    "codex-cached.sh",
+  );
+  expect(u?.input).toBe(50); // 1000 − 900 cached − 50 written
+  expect(u?.cacheRead).toBe(900);
+  expect(u?.cacheWrite).toBe(50);
+  expect(u?.output).toBe(40);
+  // Presented input reconstructs by addition, never by reading input alone.
+  expect((u?.input ?? 0) + (u?.cacheRead ?? 0) + (u?.cacheWrite ?? 0)).toBe(1000);
+});
+
+test("codex-cli never reports negative input when cached exceeds input", async () => {
+  // Defensive: a backend that reports cached > input (or omits input) must not
+  // produce a negative token count that then poisons every downstream sum.
+  const u = await usageFrom(
+    "codex-cli",
+    "COVERIFY_CODEX_CMD",
+    `#!/bin/sh\necho '{"type":"turn.completed","usage":{"input_tokens":10,` +
+      `"cached_input_tokens":900,"output_tokens":5}}'\n` +
+      `printf 'VERDICT: PASS' > "$1"\n`,
+    "codex-negative.sh",
+  );
+  expect(u?.input).toBe(0);
+  expect(u?.cacheRead).toBe(900);
+});
+
 test("a CLI oracle answers exactly once", async () => {
   const stub = path.join(stubDir, "codex-once.sh");
   fs.writeFileSync(stub, `#!/bin/sh\nprintf 'VERDICT: PASS' > "$1"\n`, { mode: 0o755 });
