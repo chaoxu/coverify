@@ -495,6 +495,9 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           // checked fact for whole-file interpolation, not testimony. Partial
           // paraphrase remains the bundle certifier's judgment.
           assertCandidateWithheld(reconCtx.prompt, candidate);
+          // Resolved once: the spec the call requested is the spec the record
+          // names and attributes tool visibility to.
+          const reconSpec = roleModelSpec("reconstructor");
           const {
             text,
             usage: reconTextUsage,
@@ -502,11 +505,13 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             durationMs: reconDurationMs,
             servedModel: reconServedModel,
             reportedModel: reconReportedModel,
+            providerSessionId: reconProviderSessionId,
+            backendCwd: reconBackendCwd,
           } = await runRole({
             contract,
             charge: CHARGES.reconstructor,
             prompt: reconCtx.prompt,
-            spec: roleModelSpec("reconstructor"),
+            spec: reconSpec,
             models,
           });
           recordUsage(reconTextUsage);
@@ -532,12 +537,18 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             suppliedInputs: reconCtx.suppliedInputs,
             blindness:
               "fresh instance (enforced); candidate file withheld by harness (enforced — rendered prompt checked); keyIdeas coordinator-authored (instructed only — paraphrase risk not machine-checked)",
-            toolVisibility: toolVisibilityOf(roleModelSpec("reconstructor").provider),
-            modelFamily: reconServedModel ?? specLabel(roleModelSpec("reconstructor")),
+            toolVisibility: toolVisibilityOf(reconSpec.provider),
+            modelFamily: reconServedModel ?? specLabel(reconSpec),
             ...(reconReportedModel !== undefined ? { reportedModel: reconReportedModel } : {}),
             usage: reconTextUsage,
             promptChars: reconPromptChars,
             durationMs: reconDurationMs,
+            // The most expensive stage in the cadence, and until now the only
+            // one still unjoinable to the provider's rate-limit trajectory.
+            ...(reconProviderSessionId !== undefined
+              ? { providerSessionId: reconProviderSessionId }
+              : {}),
+            ...(reconBackendCwd !== undefined ? { backendCwd: reconBackendCwd } : {}),
           });
           appendedChild("reconstruction");
         }

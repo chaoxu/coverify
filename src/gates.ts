@@ -624,6 +624,7 @@ export function recordGateVerdict(
     durationMs?: number;
     dispatchId?: string;
     modelFamily?: string;
+    modelSpec?: string;
     reportedModel?: string;
     providerSessionId?: string;
     backendCwd?: string;

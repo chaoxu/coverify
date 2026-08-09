@@ -409,6 +409,9 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
         importedPremises: p.importedPremises,
       });
       const gateStop = new AbortController();
+      // One resolution per gate: the spec the call requested is the spec the
+      // record names, even if the env changes mid-campaign.
+      const gateSpec = roleModelSpec("gateCritic");
       const promise = runRole({
         contract,
         charge: CHARGES.gateCritic,
@@ -418,7 +421,7 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
             ? `\n\n# Imported premises (coordinator-supplied verbatim, with revision identities)\n\n${p.importedPremises}`
             : "") +
           `\n\n# Proposed mechanism\n\n${p.mechanism}\n\n# Claimed first nontrivial implication\n\n${p.firstImplication}`,
-        spec: roleModelSpec("gateCritic"),
+        spec: gateSpec,
         models,
       }, gateStop.signal).then(({
         text, usage: criticUsage, promptChars, durationMs,
@@ -427,12 +430,16 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
         // A cancelled gate must not record a verdict (mirrors verification):
         // an unseen verdict could later unlock concurrent workers nobody reviewed.
         if (!handles.has(id)) return `[gate ${id} cancelled; verdict not recorded]`;
-        const gateSpec = roleModelSpec("gateCritic");
         const verdict = recordGateVerdict(store, p.mechanism, text, criticUsage, {
           promptChars,
           durationMs,
           dispatchId: id,
-          modelFamily: servedModel ?? specKey(gateSpec),
+          // specLabel like every other modelFamily writer (cadence.ts:295,539;
+          // coordinator-tools.ts:200) — trace.ts compares this against
+          // reportedModel, so the spelling must match across record kinds.
+          // Thinking level rides in its own field rather than being fused in.
+          modelFamily: servedModel ?? specLabel(gateSpec),
+          modelSpec: specKey(gateSpec),
           ...(reportedModel !== undefined ? { reportedModel } : {}),
           ...(providerSessionId !== undefined ? { providerSessionId } : {}),
           ...(backendCwd !== undefined ? { backendCwd } : {}),

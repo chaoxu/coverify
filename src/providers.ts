@@ -433,25 +433,22 @@ export function addUsage(a: RoleUsage, b: RoleUsage): RoleUsage {
   // "resolves, never rejects" — taking the whole campaign down with every live
   // agent's work unharvested. Observability may not end a campaign (design
   // rule 2). A mixed sum is instead MARKED, so a reader sees it.
-  // A gap survives only if EVERY meter-bearing addend has it. Union was
-  // wrong: a cadence sums audit (claude, no reasoning field) with three codex
-  // stages (which DO report reasoning), so the union emitted a record holding
-  // a measured positive `reasoning` while simultaneously declaring reasoning
-  // unreported. A reader doing the honest thing — refusing to total a field
-  // marked unmeasured — would discard real codex reasoning on every full
-  // cadence.
+  // Gaps split, because neither label alone is honest: a cadence sums audit
+  // (claude, no reasoning field) with three codex stages that DO report
+  // reasoning. Union emitted a record holding a measured positive `reasoning`
+  // while declaring reasoning unreported, so a reader doing the honest thing —
+  // refusing to total a field marked unmeasured — discarded real codex
+  // reasoning on every full cadence. Intersection alone is equally false: it
+  // implies full measurement of a field only one addend measured.
   const meterful = [a, b].filter((u) => u.meter !== undefined);
   const meters = [...new Set(meterful.map((u) => u.meter as Meter))].sort();
   const gaps = meterful.map((u) => new Set(u.unreported ?? []));
-  const anyGap = [...new Set(meterful.flatMap((u) => u.unreported ?? []))].sort();
-  // Unmeasured by EVERY addend: the field is genuinely absent from the sum.
-  const unreported = anyGap.filter((g) => gaps.every((s) => s.has(g)));
-  // Unmeasured by SOME addend: the sum holds a real but INCOMPLETE number.
-  // Neither label alone is honest here — a cadence sums audit (claude, no
-  // reasoning field) with codex stages that do report it, so the total is a
-  // measured undercount. Marking it as fully unreported discards real data;
-  // marking it as fully measured overstates coverage.
-  const partial = anyGap.filter((g) => !gaps.every((s) => s.has(g)));
+  const missedByAll = (g: UsageGap) => gaps.every((s) => s.has(g));
+  const anyGap = [...new Set(gaps.flatMap((s) => [...s]))].sort();
+  // Unmeasured by every addend: genuinely absent from the sum. Unmeasured by
+  // some: the sum holds a real but INCOMPLETE number.
+  const unreported = anyGap.filter(missedByAll);
+  const partiallyUnreported = anyGap.filter((g) => !missedByAll(g));
   const sum: RoleUsage = {
     input: a.input + b.input,
     output: a.output + b.output,
@@ -464,10 +461,10 @@ export function addUsage(a: RoleUsage, b: RoleUsage): RoleUsage {
   // pi's session JSONL) leaves the meter absent — "unknown" is the truth, and
   // asserting the known one would be exactly the convention-guessing this
   // field exists to stop.
-  if (meters.length === 1 && meterful.length === [a, b].length) sum.meter = meters[0];
+  if (meters.length === 1 && meterful.length === 2) sum.meter = meters[0];
   else if (meters.length > 1) sum.mixedMeters = meters;
   if (unreported.length > 0) sum.unreported = unreported;
-  if (partial.length > 0) sum.partiallyUnreported = partial;
+  if (partiallyUnreported.length > 0) sum.partiallyUnreported = partiallyUnreported;
   return sum;
 }
 
