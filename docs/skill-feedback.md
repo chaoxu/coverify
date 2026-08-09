@@ -473,3 +473,38 @@ comparison verdicts but not kind:rebuttal records makes the contract's
 legitimate FAIL->rebuttal->fresh-attempt lane look like verdict shopping.
 Any status/trace/monitor surface that prints verdicts should print the
 permission records (rebuttals, reconciliations) beside them.
+
+## 2026-08-09: reconstruction bundles must pin object identity and quantifier range
+
+Two independent campaign-level instances in one night, same root cause,
+both fixed by bundle authoring rather than mathematics:
+
+1. **lin3cut** — four comparison FAILs (r297, r294, r289, r284) because
+   finite objects DISPLAYED IN THE CANDIDATE'S OWN THEOREM STATEMENT (a
+   5x5 matrix) were omitted from the key-ideas bundle, so the reconstructor
+   could not finish. Fixed by a preflight rule (its PROCESS_LESSONS P53);
+   subsequent comparisons went 3/3 first-pass PASS with zero rebuttals.
+2. **flushing-coin** — 12 comparison FAILs, 0 promotions, every FAIL the
+   same shape in the comparators' own words: "proves a different
+   counterexample family" (r007), "covers only odd M>=3, not every M>=2 …
+   instances are not balanced" (r010), "a different dyadic unit-guard
+   gadget" (r108), "a different local capped-atom primitive but never maps
+   it to the candidate's QBIFR_3n macros" (r133). The bundles did not pin
+   the object's exact identity or the theorem's full quantifier range, so
+   blind reconstructions legitimately built cousins.
+
+The launcher's cadence clause says the bundle carries "the statement,
+high-level key ideas, allowed sources, and promoted premises" and forbids
+stepwise paraphrase — it does not say the bundle must pin WHICH object the
+theorem is about. Candidate launcher touch (verification cadence, bundle
+paragraph): "The bundle must fix the identity of every object the theorem
+quantifies over — its defining properties or displayed finite data — and
+the exact quantifier range claimed. Statement data is not a paraphrase of
+the argument: omitting it produces a reconstruction of a cousin object,
+which the comparison correctly fails."
+
+*Activation test:* met for (1) — measured before/after on lin3cut. Pending
+for (2): whether flushing-coin's comparisons pass after adopting the same
+discipline (steered 2026-08-09 07:31 with its own artifacts quoted). If
+they do, land the edit; if they keep failing, the cause is mathematical
+overclaiming rather than bundle authoring and this entry is wrong.
