@@ -232,7 +232,7 @@ function runCliRole(
     child.stdout.on("data", (d: Buffer) => (out += d));
     child.stderr.on("data", (d: Buffer) => (err += d));
     child.on("error", reject);
-    child.on("close", (code: number | null) => {
+    child.on("close", (code: number | null, signalName: NodeJS.Signals | null) => {
       // Read {out} BEFORE reaping the temp dir. Cleanup used to run as its
       // own earlier 'close' handler, deleting the out file before this
       // resolver's existsSync — every codex-cli verdict silently fell back
@@ -274,7 +274,17 @@ function runCliRole(
           return reject(new Error(`${provider} returned non-JSON output (exit ${code}): ${err.slice(0, 300)}`));
         }
       }
-      if (code !== 0) return reject(new Error(`${provider} exited ${code}: ${err.slice(0, 500)}`));
+      if (code !== 0) {
+        // Empty stderr on a nonzero exit is uninformative and happened three
+        // times on 2026-08-09 (claude-cli exit 1, no message) while identical
+        // probes succeeded — so surface whatever the process DID leave:
+        // stdout head and the signal, and say plainly that the CLI reported
+        // nothing. Without this the next occurrence is equally unreadable.
+        const detail = err.trim()
+          ? err.slice(0, 500)
+          : `no stderr; signal=${String(signalName)}; stdout head: ${out.slice(0, 300).trim() || "(empty)"}`;
+        return reject(new Error(`${provider} exited ${code}: ${detail}`));
+      }
       if (backend.output === "claude-json") {
         try {
           const payload = JSON.parse(out) as ClaudeJsonResult;
