@@ -6,9 +6,11 @@ const { familyModelSpec, IDEATION_FAMILIES } = await import("../src/providers.ts
 
 describe("ideation families", () => {
   test("known families resolve to non-default providers; unknown is undefined", () => {
-    expect(IDEATION_FAMILIES.sort()).toEqual(["fable", "gemini"]);
+    expect(IDEATION_FAMILIES.sort()).toEqual(["fable", "gemini", "pro"]);
     expect(familyModelSpec("fable")?.provider).toBe("anthropic");
     expect(familyModelSpec("gemini")?.provider).toBe("google");
+    expect(familyModelSpec("pro")?.provider).toBe("chatgpt-cli");
+    expect(familyModelSpec("pro")?.modelId).toBe("gpt-5-6-pro");
     expect(familyModelSpec("sol")).toBeUndefined();
   });
 

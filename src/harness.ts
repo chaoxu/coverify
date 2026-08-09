@@ -34,6 +34,7 @@ import { loadLauncherContract } from "./launcher.js";
 import {
   buildModels,
   CHARGES,
+  cliBackendCommand,
   runMemMb,
   runTimeoutMs,
   createCliRoleSession,
@@ -438,10 +439,15 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
         );
       }
       let authed = false;
-      try {
-        authed = (await models.getAuth(fspec.provider)) !== undefined;
-      } catch {
-        authed = false;
+      if (isCliProvider(fspec.provider)) {
+        const { spawnSync } = await import("node:child_process");
+        authed = spawnSync("which", [cliBackendCommand(fspec.provider).split(/\s+/)[0]]).status === 0;
+      } else {
+        try {
+          authed = (await models.getAuth(fspec.provider)) !== undefined;
+        } catch {
+          authed = false;
+        }
       }
       if (!authed) {
         return refuse(
@@ -598,10 +604,13 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       family: Type.Optional(
         Type.String({
           description:
-            'Optional ideation family: "fable" (Anthropic) or "gemini" (Google). Routes this one ' +
-            "reasoner to a different model family for decorrelated proposals — same charge, same " +
-            "gate discipline. Omit for the default model. Refused with guidance if the family has " +
-            "no usable auth on this host.",
+            'Optional ideation family: "fable" (Anthropic), "gemini" (Google), or "pro" ' +
+            "(ChatGPT gpt-5.6-pro consult — single-shot and TOOLLESS: the packet must inline " +
+            "everything the worker needs; a router-downgraded reply is discarded as no useful " +
+            "response, so a failed consult costs nothing but time). Routes this one reasoner to " +
+            "a different model family for decorrelated proposals — same charge, same gate " +
+            "discipline. Omit for the default model. Refused with guidance if the family has no " +
+            "usable auth on this host.",
         }),
       ),
       literature: Type.Optional(

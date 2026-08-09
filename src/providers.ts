@@ -140,6 +140,13 @@ export function roleModelSpec(role: RoleName): ModelSpec {
 const FAMILY_SPECS: Record<string, { env: string; fallback: string }> = {
   fable: { env: "COVERIFY_FAMILY_FABLE", fallback: "anthropic/claude-fable-5@high" },
   gemini: { env: "COVERIFY_FAMILY_GEMINI", fallback: "google/gemini-2.5-pro@high" },
+  // The Danus-style advisor lane: ChatGPT-subscription gpt-5.6-pro through
+  // the chatgpt-cli oracle — a single-shot toolless consult (the packet must
+  // inline everything). Served-model attestation is enforced at the oracle
+  // parse: a router-downgraded reply is discarded as "no useful response"
+  // (user policy, Chao 2026-08-09), so weak-model advice cannot enter the
+  // campaign wearing a Pro label.
+  pro: { env: "COVERIFY_FAMILY_PRO", fallback: "chatgpt-cli/gpt-5-6-pro" },
 };
 export const IDEATION_FAMILIES = Object.keys(FAMILY_SPECS);
 export function familyModelSpec(family: string): ModelSpec | undefined {
@@ -426,11 +433,32 @@ function runCliRole(
       cleanup();
       if (backend.output === "oracle-json") {
         try {
-          const payload = JSON.parse(out) as { ok?: boolean; text?: string; error?: string };
+          const payload = JSON.parse(out) as {
+            ok?: boolean;
+            text?: string;
+            error?: string;
+            served_model?: string | null;
+          };
           if (code !== 0 || !payload.ok || !payload.text?.trim()) {
             return reject(new Error(`${provider} failed: ${payload.error ?? `exit ${code}`}`));
           }
-          return resolve({ text: payload.text.trim() });
+          // Served-model enforcement (user policy, Chao 2026-08-09; issue
+          // #20): ChatGPT's router silently downgrades, and a weak model's
+          // advice must never enter the campaign wearing a Pro label. The
+          // oracle reports the server-attested resolved slug; anything but
+          // an exact match to the requested model is "no useful response".
+          const served = payload.served_model ?? undefined;
+          if (served !== modelId) {
+            return reject(
+              new Error(
+                `${provider}: no useful response — served model ${served ?? "unattested"} != ` +
+                  `requested ${modelId}; reply discarded (router downgrade, not an answer)`,
+              ),
+            );
+          }
+          return resolve({
+            text: `${payload.text.trim()}\n\n[served model: ${served} (server-attested)]`,
+          });
         } catch {
           return reject(new Error(`${provider} returned non-JSON output (exit ${code}): ${err.slice(0, 300)}`));
         }
