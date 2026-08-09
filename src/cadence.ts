@@ -56,8 +56,6 @@ export interface CadenceDeps {
     stop?: () => void;
     promise: () => Promise<string>;
     usage?: () => RoleUsage | undefined;
-    /** Present iff `usage` is a roll-up; see Handle.usageRollupOf. */
-    usageRollupOf?: () => string[];
   }) => void;
 }
 
@@ -182,24 +180,34 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
       const slug = rel.replace(/[\/]/g, "_");
       const bundleHash = sha256Text(bundle);
       const provedHash = sha256Text(proved);
-      const usages: RoleUsage[] = [];
-      // Stage records this cadence APPENDED, in order — including carried-
-      // forward ones, which append a record while contributing no usage. The
-      // set is variable (audit FAIL/UNPARSEABLE and cert FAIL exit early), so
-      // a static four-element list would be false on roughly a third of
-      // cadences: measured 132 full, 39 audit+cert, 18 audit-only. Because
-      // entries are pushed only after store.append returns, `rollup minus the
-      // sum of these children` is unrecorded spend, never a missing record.
-      const rollupChildren: string[] = [];
+      // Spend from a provider call that has returned but whose stage record
+      // has not been written yet. If the cadence is cancelled in that window,
+      // this is emitted as its own leaf record — so cadence spend is ALWAYS a
+      // leaf, never a residual recovered by subtracting children from a
+      // roll-up. That roll-up cost 80.4M tokens of double-counting and two
+      // ordering bugs in four commits before it was deleted.
+      let pending: RoleUsage | undefined;
       const recordUsage = (u?: RoleUsage) => {
-        if (u) usages.push(u);
+        pending = u;
       };
-      // Called immediately AFTER a stage record reaches the store, never
-      // before. Recording the attempt instead would list children that were
-      // never appended when a cadence is cancelled between the provider call
-      // and store.append — turning unrecorded spend into an apparently
-      // missing record, and breaking any "every listed child exists" check.
-      const appendedChild = (kind: string) => rollupChildren.push(kind);
+      // The stage record carries the usage, so the pending spend is accounted
+      // for; clear it. Called immediately AFTER store.append returns.
+      const appendedChild = (_kind: string) => {
+        pending = undefined;
+      };
+      // Cancelled mid-stage: the provider was paid and no stage record exists.
+      // Emit the spend as its own leaf rather than losing it.
+      const flushOrphanSpend = () => {
+        if (!pending) return;
+        store.append({
+          kind: "role-call",
+          dispatchId: id,
+          revision: rel,
+          orphaned: "cadence cancelled after the provider returned, before the stage record",
+          usage: pending,
+        });
+        pending = undefined;
+      };
 
       // The cadence runs as an async handle, like a worker: during a long
       // blind reconstruction the coordinator keeps gating, dispatching, and
@@ -214,7 +222,12 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
       const cadenceStop = new AbortController();
       let cancelled: () => boolean = () => cadenceStop.signal.aborted;
       const abortIfCancelled = () => {
-        if (cancelled()) throw new Error(`verification cancelled; no verdict recorded for ${rel}`);
+        if (!cancelled()) return;
+        // The provider may already have been paid for a stage whose record was
+        // never written. Emit that spend as a leaf before unwinding, so it is
+        // on file rather than recoverable only by subtraction.
+        flushOrphanSpend();
+        throw new Error(`verification cancelled; no verdict recorded for ${rel}`);
       };
       /**
        * One verdict stage of the cadence: a fresh role call, a first-line
@@ -601,20 +614,12 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         // start before registerHandle sets the handle — registerHandle
         // guarantees that ordering for thunks.
         promise: cadence,
-        // Summed over the cadence's role calls; undefined when no backend
-        // reported usage. A stage whose backend reports nothing contributes
-        // nothing rather than a fabricated `input: 0` — it stays on record as
-        // its own dispatch, so only the convenience sum is short.
-        usage: () => (usages.length === 0 ? undefined : usages.reduce(addUsage)),
-        // That sum duplicates the stage records below it, each of which also
-        // carries its own: counting both inflated the 2026-08-09 study by
-        // 80.4M tokens (27%), findable only by hand-matching parents to
-        // children. Marked rather than dropped, because it is not merely
-        // redundant — recordUsage() runs before abortIfCancelled(), so a
-        // cadence cancelled between a stage's provider call and its
-        // store.append has real spend here and no stage record at all, and
-        // rollup - sum(children) surfaces it as a residual.
-        usageRollupOf: () => [...rollupChildren],
+        // No `usage` here, deliberately. Every stage of this cadence already
+        // records its own, and a summary alongside them was a derived
+        // aggregate inside an append-only log: it cost 80.4M tokens of
+        // double-counting (27% of the 2026-08-09 study), took two ordering
+        // fixes in four commits, and nothing ever read it. Cadence cost is
+        // now GROUP BY dispatchId over leaves — which workers already require.
       });
       return toolText(
         `verification ${id} dispatched on ${rel} (${deps.liveCount()} live). The verdict arrives at a ` +

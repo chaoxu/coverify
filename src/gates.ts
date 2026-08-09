@@ -24,6 +24,10 @@ export interface GateRecord {
     | "rebuttal"
     | "promotion"
     | "delivery"
+    /** Provider spend with no stage record: a cadence cancelled after the
+     *  call returned. A leaf, so cost never has to be recovered by
+     *  subtracting children from a summary. */
+    | "role-call"
     // Campaign events (wakes, usage, notes, replayed user guidance). One
     // event log: these live in the same out-of-tree store as gate records —
     // anything read back for behavior (standing guidance, delivery) must

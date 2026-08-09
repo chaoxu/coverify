@@ -896,7 +896,7 @@ CREATE VIEW ev AS SELECT * FROM read_json_auto(
 
 `sample_size=-1` is load-bearing, not a flourish. Schema detection samples the
 first 20,480 rows per file; every campaign on disk predates `usage.meter`,
-`usage.unreported`, `usageRollup` and `runId`, so a file whose first 20k events
+`usage.meter` and `runId`, so a file whose first 20k events
 lack them infers a struct without them and the field then fails to resolve for
 that file. Scan everything.
 
@@ -904,11 +904,11 @@ Two queries every cost total needs, because the record shapes now allow both
 errors to be refused rather than merely documented:
 
 ```sql
--- Leaf spend only. A verification completion carries a SUM of its own stage
--- records, which are also on file; counting both inflated the 2026-08-09
--- study by 80.4M tokens (27%).
-SELECT sum(usage.input + usage.output) FROM ev
-WHERE kind = 'completion' AND usageRollup IS NULL;
+-- All spend, leaves only. Since 2026-08-09 no record summarises others, so
+-- this needs no exclusion clause; a verification completion used to carry a
+-- roll-up of its own stage records and counting both inflated the study by
+-- 80.4M tokens (27%). Older records still carry `usageRollup`; exclude those.
+SELECT sum(usage.input + usage.output) FROM ev WHERE usage IS NOT NULL;
 
 -- Coordinator spend. Since 2026-08-09 these are LEAF records — what each wake
 -- spent — so they sum like every other role's and need no epoch grouping and

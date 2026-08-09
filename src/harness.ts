@@ -65,13 +65,6 @@ export interface Handle {
   /** Provider- or CLI-reported usage, read at completion (undefined when the
    *  backend reported none). */
   usage?: () => RoleUsage | undefined;
-  /** Present iff `usage` is a SUM of other records that are themselves on
-   *  file, and then it lists the stage kinds actually appended, in order — 1
-   *  to 4, never assumed. A reader must exclude such a sum from any total or
-   *  double-count it (80.4M tokens, 27%, in the 2026-08-09 study), and can
-   *  compute rollup - sum(children) to see spend that was incurred but never
-   *  recorded as a stage. Journalled as `usageRollup` + `usageRollupOf`. */
-  usageRollupOf?: () => string[];
   /** Resolves (never rejects) when the handle finishes; set by registerHandle. */
   settled: Promise<void>;
 }
@@ -238,15 +231,8 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     // Failure is classified here too — a rejected call or empty final text is
     // an infrastructure failure — so `failed` is the single source of truth
     // and `failed` set ⟺ no report artifact exists.
-    // The usage block both completion records carry, identically: the roll-up
-    // marker must travel with the sum it qualifies (see Handle.usageRollupOf).
-    const usageFields = () => {
-      const rollupOf = handle.usageRollupOf?.();
-      return {
-        usage: handle.usage?.(),
-        ...(rollupOf ? { usageRollup: true, usageRollupOf: rollupOf } : {}),
-      };
-    };
+    // The usage block both completion records carry, identically.
+    const usageFields = () => ({ usage: handle.usage?.() });
     const persist = (report: string, failed?: string, partialText?: string) => {
       const live = handles.has(handle.id);
       if (failed !== undefined) {
