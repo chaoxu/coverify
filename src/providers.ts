@@ -131,6 +131,22 @@ export function roleModelSpec(role: RoleName): ModelSpec {
   return parseModelSpec(process.env[ROLE_ENV[role]] ?? ROLE_DEFAULTS[role]);
 }
 
+/** Ideation families (user decision, Chao 2026-08-09): a reasoner dispatch
+ *  may carry family:"fable"|"gemini" to run that one worker on a different
+ *  model family — decorrelated proposal streams through the same charge and
+ *  the same gates (Danus study: same-family swarms added no new ideas; the
+ *  different-family consult carried the plan). Model routing is harness
+ *  mechanics (design rule 2); specs overridable via COVERIFY_FAMILY_<NAME>. */
+const FAMILY_SPECS: Record<string, { env: string; fallback: string }> = {
+  fable: { env: "COVERIFY_FAMILY_FABLE", fallback: "anthropic/claude-fable-5@high" },
+  gemini: { env: "COVERIFY_FAMILY_GEMINI", fallback: "google/gemini-2.5-pro@high" },
+};
+export const IDEATION_FAMILIES = Object.keys(FAMILY_SPECS);
+export function familyModelSpec(family: string): ModelSpec | undefined {
+  const f = FAMILY_SPECS[family];
+  return f === undefined ? undefined : parseModelSpec(process.env[f.env] ?? f.fallback);
+}
+
 export function specLabel(spec: ModelSpec): string {
   return `${spec.provider}/${spec.modelId}`;
 }

@@ -38,6 +38,8 @@ import {
   runTimeoutMs,
   createCliRoleSession,
   createHarnessRoleSession,
+  familyModelSpec,
+  IDEATION_FAMILIES,
   isCliProvider,
   roleModelSpec,
   runRole,
@@ -384,7 +386,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   };
 
   /** Shared dispatch path for the two agent roles the coordinator authors. */
-  const dispatchAgent = (
+  const dispatchAgent = async (
     role: "reasoner" | "technician",
     packet: ReasonerPacket | TechnicianPacket,
   ) => {
@@ -417,7 +419,41 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     if (!decision.allowed) {
       return refuse(store, "dispatch", decision.reason ?? "", { mechanism: packet.mechanism, role });
     }
-    const spec = roleModelSpec(role);
+    let spec = roleModelSpec(role);
+    // Ideation families: a reasoner may be routed to a different model
+    // family for decorrelated proposals — same charge, same gates. Refused
+    // with guidance (not errored) when the family has no usable auth, so a
+    // coordinator can fall back to a default dispatch in the same turn.
+    const family =
+      role === "reasoner" ? (packet as ReasonerPacket & { family?: string }).family : undefined;
+    if (family !== undefined) {
+      const fspec = familyModelSpec(family);
+      if (fspec === undefined) {
+        return refuse(
+          store,
+          "dispatch",
+          `unknown ideation family "${family}" (available: ${IDEATION_FAMILIES.join(", ")}); ` +
+            "omit the field for the default model",
+          { mechanism: packet.mechanism, role },
+        );
+      }
+      let authed = false;
+      try {
+        authed = (await models.getAuth(fspec.provider)) !== undefined;
+      } catch {
+        authed = false;
+      }
+      if (!authed) {
+        return refuse(
+          store,
+          "dispatch",
+          `ideation family "${family}" (${specLabel(fspec)}) has no usable auth on this host — ` +
+            "redispatch without the family field (the packet is otherwise fine)",
+          { mechanism: packet.mechanism, role },
+        );
+      }
+      spec = fspec;
+    }
     const isTechnician = role === "technician";
     if (isTechnician && isCliProvider(spec.provider)) {
       const reason =
@@ -441,6 +477,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       deliverable: packet.deliverable,
       context: packet.context,
       failedCheck: packet.failedCheck,
+      ...(family !== undefined ? { family, model: specLabel(spec) } : {}),
       computation: isTechnician ? (packet as TechnicianPacket).computation : undefined,
       literature: literature ? (packet as ReasonerPacket).literature : undefined,
       evidenceDir: path.relative(dir, evidenceDir),
@@ -558,6 +595,15 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       "FAILED.md check record.",
     parameters: Type.Object({
       ...PACKET_PARAMS,
+      family: Type.Optional(
+        Type.String({
+          description:
+            'Optional ideation family: "fable" (Anthropic) or "gemini" (Google). Routes this one ' +
+            "reasoner to a different model family for decorrelated proposals — same charge, same " +
+            "gate discipline. Omit for the default model. Refused with guidance if the family has " +
+            "no usable auth on this host.",
+        }),
+      ),
       literature: Type.Optional(
         Type.String({
           description:
