@@ -525,7 +525,7 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
     name: "cancel_agent",
     label: "Cancel agent",
     description:
-      "Interrupt a live agent (reasoner, technician, or verification). Per the contract, only on observable struggle evidence, a user " +
+      "Interrupt a live agent (reasoner, technician, gate critic, or verification). Per the contract, only on observable struggle evidence, a user " +
       "pause/stop, a safety issue, or an explicit user-specified deadline — never merely because " +
       "it is slow or quiet.",
     parameters: Type.Object({

@@ -73,7 +73,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
       "dependencies. Runs async like a worker: returns a handle immediately, verdict at a later " +
       "wake. A re-run on the identical candidate (after a protocol or infrastructure failure) reuses " +
       "the blind reconstruction; any change to the candidate regenerates it, because the contract " +
-      "forbids reusing a verifier response that influenced the repair. Code records all verdicts bound to content " +
+      "forbids reusing a verifier response that influenced the repair. All verdicts are recorded bound to content " +
       "hashes; promotion (record_promotion) is only legal after both stages PASS on the exact revision.",
     parameters: Type.Object({
       revision: Type.String({ description: "EVIDENCE-relative candidate filename (revision identity)" }),
