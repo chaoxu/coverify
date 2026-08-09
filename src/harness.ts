@@ -111,6 +111,12 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   const contract = loadLauncherContract();
   const models = await buildModels();
   const store = new GateStore(dir);
+  // Set before ANY record is written — the guidance import below and the
+  // statement freeze both append, and the reading rule this enables ("no runId
+  // means the record predates 2026-08-09") is corrupted by present-day writers
+  // that also write unstamped.
+  const runId = randomUUID().slice(0, 8);
+  store.setRunId(runId);
 
   // One-time import: standing user guidance recorded before the event-log
   // unification (2026-08-07) lives only in the in-tree journal. Adopt it into
@@ -135,11 +141,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   // over-split one campaign into 18 epochs against 15 real sessions and
   // overstated its fresh input by 16.7M tokens. Short and human-typeable: it
   // appears in operator queries.
-  const runId = randomUUID().slice(0, 8);
-  // Every record this process writes carries it, so leaf spend attributes to a
-  // run without timestamp archaeology, and the coordinator's cumulative series
-  // group instead of being inferred from a counter going backwards.
-  store.setRunId(runId);
+
   // One resolution per run; every record naming the coordinator model spells
   // it from this, so the run-config stamp and the usage events join.
   const coordinatorSpec = roleModelSpec("coordinator");
@@ -738,7 +740,24 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
         note: `coordinator turn failed (${String(e).slice(0, 200)}); rebuilding via restart rule`,
         consecutiveFailures: turnFailures,
       });
+      // A failed turn still spent tokens — the call itself plus every
+      // retryAssistantCall attempt. Journal them before the session is
+      // discarded, or "coordinator records sum like every other role's" holds
+      // only for wakes that happened to succeed.
+      const failedTotal = coordinator?.usage();
+      if (failedTotal) {
+        store.event({
+          kind: "usage",
+          role: "coordinator",
+          sessionId: `coordinator-${coordinatorEpoch}`,
+          wake: wakeCount,
+          turnFailed: true,
+          modelSpec: specKey(coordinatorSpec),
+          usage: subUsage(failedTotal, prevCoordUsage),
+        });
+      }
       coordinator = undefined;
+      prevCoordUsage = undefined; // the next turn rebuilds; a new series starts
       wakeCount--; // a failed turn is not a wake the user asked to spend
       if (turnFailures >= TURN_FAILURE_LIMIT) {
         store.event({

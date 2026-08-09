@@ -438,18 +438,31 @@ export function addUsage(a: RoleUsage, b: RoleUsage): RoleUsage {
  *  compaction), so a negative would mean the baseline came from another
  *  session, and recording a negative token count would poison every sum
  *  downstream. */
-export function subUsage(a: RoleUsage, b?: RoleUsage): RoleUsage {
-  if (b === undefined) return a;
-  const less = (x?: number, y?: number) =>
-    x === undefined && y === undefined ? undefined : Math.max(0, (x ?? 0) - (y ?? 0));
-  const d: RoleUsage = {
-    input: Math.max(0, a.input - b.input),
-    output: Math.max(0, a.output - b.output),
-    cacheRead: Math.max(0, a.cacheRead - b.cacheRead),
+export function subUsage(a: RoleUsage, b?: RoleUsage): RoleUsage & { nonMonotone?: true } {
+  // Copy, never alias: the caller keeps `a` as the next baseline while this
+  // result is journalled, and a shared object would couple the two.
+  if (b === undefined) return { ...a };
+  let clamped = false;
+  const clamp = (x: number) => {
+    if (x >= 0) return x;
+    clamped = true;
+    return 0;
+  };
+  // An absent minuend stays absent: subtracting from "the provider never
+  // reported this" must not manufacture a measured zero.
+  const less = (x?: number, y?: number) => (x === undefined ? undefined : clamp(x - (y ?? 0)));
+  const d: RoleUsage & { nonMonotone?: true } = {
+    input: clamp(a.input - b.input),
+    output: clamp(a.output - b.output),
+    cacheRead: clamp(a.cacheRead - b.cacheRead),
     cacheWrite: less(a.cacheWrite, b.cacheWrite),
     reasoning: less(a.reasoning, b.reasoning),
   };
   if (a.meter !== undefined) d.meter = a.meter;
+  // The clamp is the last line of defence, not a silent correction: a session
+  // total is monotone today, and if that ever stops being true real spend
+  // vanishes into a Math.max. Absence must be observable — mark it.
+  if (clamped) d.nonMonotone = true;
   return d;
 }
 

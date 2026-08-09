@@ -76,7 +76,6 @@ test("a known meter is never inherited by a sum with an unknown one", () => {
   const s = addUsage(usage({ input: 3, meter: "pi-session" }), usage({ input: 4 }));
   expect(s.input).toBe(7);
   expect(s.meter).toBeUndefined();
-  expect(s.mixedMeters).toBeUndefined();
 });
 
 test("subUsage turns a cumulative snapshot into the leaf a wake spent", () => {
@@ -113,4 +112,30 @@ test("subUsage keeps absent-vs-zero on optional fields", () => {
   expect(d.cacheWrite).toBeUndefined();
   expect(d.reasoning).toBeUndefined();
   expect(JSON.stringify(d)).not.toContain("reasoning");
+});
+
+test("subUsage marks a non-monotone delta instead of swallowing it", () => {
+  // A session total is monotone today, so the clamp should never fire. If pi
+  // ever changes and it does, real spend would vanish into a Math.max — which
+  // is the failure class this whole branch exists to prevent. Absence must be
+  // observable, so the record says so.
+  const d = subUsage(usage({ input: 5, output: 1 }), usage({ input: 50, output: 20 }));
+  expect(d.input).toBe(0);
+  expect(d.nonMonotone).toBe(true);
+});
+
+test("subUsage does not manufacture a measured zero from an absent field", () => {
+  // Subtracting from "the provider never reported this" must leave it absent.
+  const d = subUsage(usage({ input: 10 }), usage({ input: 4, cacheWrite: 3 }));
+  expect(d.input).toBe(6);
+  expect(d.cacheWrite).toBeUndefined();
+  expect(JSON.stringify(d)).not.toContain("cacheWrite");
+});
+
+test("subUsage returns a copy, never an alias of its baseline argument", () => {
+  // The caller keeps `a` as the next baseline while this result is journalled.
+  const a = usage({ input: 10, meter: "pi-session" });
+  const d = subUsage(a, undefined);
+  expect(d).toEqual(a);
+  expect(d).not.toBe(a);
 });

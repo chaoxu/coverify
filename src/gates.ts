@@ -264,7 +264,10 @@ export class GateStore {
   }
 
   append(record: { kind: GateRecord["kind"] } & Record<string, unknown>): GateRecord {
-    const full: GateRecord = { ts: new Date().toISOString(), ...this.runStamp(), ...record };
+    // Stamp LAST: a caller-supplied runId must not silently win over the
+    // process identity that the whole "absence means pre-2026-08-09" reading
+    // rule depends on.
+    const full: GateRecord = { ts: new Date().toISOString(), ...record, ...this.runStamp() };
     this.records.push(full);
     fs.appendFileSync(this.file, JSON.stringify(full) + "\n");
     // Derived mirror in the campaign journal: observability only, never read
@@ -284,7 +287,7 @@ export class GateStore {
    * behavioral may ever be read from there.
    */
   event(record: { kind: "wake" | "usage" | "note" } & Record<string, unknown>): GateRecord {
-    const full = { ts: new Date().toISOString(), ...this.runStamp(), ...record };
+    const full = { ts: new Date().toISOString(), ...record, ...this.runStamp() };
     this.records.push(full);
     fs.appendFileSync(this.file, JSON.stringify(full) + "\n");
     appendJournal(this.campaignDir, full);

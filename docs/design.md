@@ -895,20 +895,24 @@ CREATE VIEW ev AS SELECT * FROM read_json_auto(
 ```
 
 `sample_size=-1` is load-bearing, not a flourish. Schema detection samples the
-first 20,480 rows per file; every campaign on disk predates `usage.meter`,
-`usage.meter` and `runId`, so a file whose first 20k events
-lack them infers a struct without them and the field then fails to resolve for
-that file. Scan everything.
+first 20,480 rows per file; every campaign on disk predates `usage.meter` and
+`runId`, so a file whose first 20k events lack them infers a struct without
+them and the field then fails to resolve for that file. Scan everything.
 
 Two queries every cost total needs, because the record shapes now allow both
 errors to be refused rather than merely documented:
 
 ```sql
--- All spend, leaves only. Since 2026-08-09 no record summarises others, so
--- this needs no exclusion clause; a verification completion used to carry a
--- roll-up of its own stage records and counting both inflated the study by
--- 80.4M tokens (27%). Older records still carry `usageRollup`; exclude those.
-SELECT sum(usage.input + usage.output) FROM ev WHERE usage IS NOT NULL;
+-- All spend, leaves only, per meter. EVERY campaign currently on disk predates
+-- 7bd75d5, so the usageRollup exclusion is not historical housekeeping — drop
+-- it and this query reproduces the exact 80.4M-token (27%) double count the
+-- roll-up was deleted for. Grouping by meter is not optional either: `input`
+-- is the uncached part on every lane, but the lanes bill against different
+-- accounts, so one total across them is not a currency.
+SELECT usage.meter, sum(usage.input) AS fresh_in,
+       sum(usage.cacheRead) AS cached_in, sum(usage.output) AS out
+FROM ev WHERE usage IS NOT NULL AND usageRollup IS NULL
+GROUP BY usage.meter;
 
 -- Coordinator spend. Since 2026-08-09 these are LEAF records — what each wake
 -- spent — so they sum like every other role's and need no epoch grouping and
@@ -947,7 +951,7 @@ Billable tokens by verdict stage:
 -- double-counts. measurement-protocol.md rule 1; this query used to get it
 -- wrong on this very page while the protocol forbade it two files away.
 SELECT kind, sum(usage.input + usage.output) AS billable
-FROM ev WHERE kind IN ('audit','bundle-cert','reconstruction','comparison')
+FROM ev WHERE kind IN ('audit','bundle-cert','reconstruction','comparison','role-call')
 GROUP BY kind;
 ```
 

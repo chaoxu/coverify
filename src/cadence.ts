@@ -202,21 +202,27 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
       const id = deps.mintVerificationId();
       const cadenceStop = new AbortController();
       let cancelled: () => boolean = () => cadenceStop.signal.aborted;
+      /** The provider was paid for a stage whose record was never written.
+       *  Emit that spend as its own leaf so it is on file rather than lost.
+       *  Idempotent, and called from BOTH the cancellation path and the
+       *  cadence's outer finally — cancellation is only one of the ways this
+       *  window unwinds: newEvidencePath, writeFileSync, sha256File and
+       *  store.append itself can all throw (ENOSPC, EACCES, read-only
+       *  checkout) between the provider call and the record. */
+      const flushUnrecordedSpend = (why: string) => {
+        if (!unrecordedSpend) return;
+        store.append({
+          kind: "role-call",
+          dispatchId: id,
+          revision: rel,
+          orphaned: why,
+          usage: unrecordedSpend,
+        });
+        unrecordedSpend = undefined;
+      };
       const abortIfCancelled = () => {
         if (!cancelled()) return;
-        // The provider may already have been paid for a stage whose record was
-        // never written. Emit that spend as a leaf before unwinding, so it is
-        // on file rather than recoverable only by subtraction.
-        if (unrecordedSpend) {
-          store.append({
-            kind: "role-call",
-            dispatchId: id,
-            revision: rel,
-            orphaned: "cadence cancelled after the provider returned, before the stage record",
-            usage: unrecordedSpend,
-          });
-          unrecordedSpend = undefined;
-        }
+        flushUnrecordedSpend("cadence cancelled after the provider returned, before the stage record");
         throw new Error(`verification cancelled; no verdict recorded for ${rel}`);
       };
       /**
@@ -274,6 +280,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         // hash-blocks a legitimate bundle forever — re-running the stage is
         // the contract's legitimate response to an infrastructure failure.
         const verdict = pass ? "PASS" : verdictLine === undefined ? "UNPARSEABLE" : "FAIL";
+        try {
         store.append({
           kind: stage.kind,
           revision: rel,
@@ -303,7 +310,13 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           promptChars,
           durationMs,
         });
-        unrecordedSpend = undefined;
+        } finally {
+          // The stage record now carries this spend. Cleared in a finally so a
+          // failure of store.append's in-tree journal MIRROR — which runs after
+          // the authoritative line is already on disk — cannot leave the debt
+          // standing and have the next flush emit a duplicate leaf.
+          unrecordedSpend = undefined;
+        }
         return { text, pass, unparseable: verdictLine === undefined, artifact };
       };
 
@@ -523,6 +536,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           const reconEvidence = newEvidencePath(dir, `audits/${slug}.reconstruction`);
           fs.writeFileSync(reconEvidence, reconText);
           reconArtifact = path.relative(dir, reconEvidence);
+          try {
           store.append({
             kind: "reconstruction",
             // Every other stage carries this (verdictStage sets it); without
@@ -553,7 +567,9 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
               : {}),
             ...(reconBackendCwd !== undefined ? { backendCwd: reconBackendCwd } : {}),
           });
-          unrecordedSpend = undefined;
+          } finally {
+            unrecordedSpend = undefined;
+          }
         }
 
         // Stage 2b — comparison: maps the reconstruction to the candidate's
@@ -603,7 +619,18 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         // is fully synchronous and checks abortIfCancelled(), so it must not
         // start before registerHandle sets the handle — registerHandle
         // guarantees that ordering for thunks.
-        promise: cadence,
+        // Every unwinding path flushes, not just cancellation: before 7bd75d5
+        // the roll-up meant persist()'s failure branch still carried a
+        // cadence's spend, so losing it here would be a regression against the
+        // aggregate that was deleted. flushUnrecordedSpend self-clears, so the
+        // cancel path's earlier call makes this a no-op.
+        promise: async () => {
+          try {
+            return await cadence();
+          } finally {
+            flushUnrecordedSpend("cadence failed after the provider returned, before the stage record");
+          }
+        },
         // No `usage` here, deliberately. Every stage of this cadence already
         // records its own, and a summary alongside them was a derived
         // aggregate inside an append-only log: it cost 80.4M tokens of
