@@ -31,23 +31,19 @@ import {
 import { requestVerificationTool } from "./cadence.js";
 import { archiveLedgerHistory, recordRunConfig, refuse, wakeBookkeeping } from "./observe.js";
 import { loadLauncherContract } from "./launcher.js";
+import { CHARGES } from "./roles.js";
+import { createCliRoleSession, isCliProvider } from "./backends.js";
 import {
   buildModels,
-  CHARGES,
-  runMemMb,
-  runTimeoutMs,
-  createCliRoleSession,
   createHarnessRoleSession,
   resolveFamily,
-  isCliProvider,
   roleModelSpec,
-  runRole,
-  type RoleUsage,
-  specLabel,
-  toolText,
   type RoleSession,
-  type WriteScope,
-} from "./roles.js";
+  type RoleUsage,
+  runRole,
+  specLabel,
+} from "./providers.js";
+import { runMemMb, runTimeoutMs, toolText, type WriteScope } from "./supervise.js";
 
 export interface CampaignOptions {
   campaignDir: string;

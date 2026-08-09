@@ -8,7 +8,7 @@ import { afterEach, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const { createCliRoleSession } = await import("../src/providers.ts");
+const { createCliRoleSession } = await import("../src/backends.ts");
 
 const stubDir = fs.mkdtempSync("/private/tmp/coverify-cli-stub-");
 afterEach(() => {

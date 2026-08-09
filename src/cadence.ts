@@ -21,17 +21,17 @@ import {
   sameRevision,
   statementHash,
 } from "./gates.js";
+import { CHARGES } from "./roles.js";
+import { isCliProvider } from "./backends.js";
 import {
-  CHARGES,
   addUsage,
-  isCliProvider,
+  type Models,
   roleModelSpec,
+  type RoleUsage,
   runRole,
   specLabel,
-  toolText,
-  type Models,
-  type RoleUsage,
-} from "./roles.js";
+} from "./providers.js";
+import { toolText } from "./supervise.js";
 
 /** What the cadence needs from the campaign loop. Narrow by design: the
  *  cadence never touches the settle queue, wake counters, or compaction —

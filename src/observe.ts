@@ -19,16 +19,15 @@ import {
   promotionsMissingFromProved,
   retractionClosure,
 } from "./gates.js";
+import { cliBackendCommand } from "./backends.js";
 import {
-  ROLE_NAMES,
-  cliBackendCommand,
   codexTransport,
   retryPolicy,
+  ROLE_NAMES,
   roleModelSpec,
-  sandboxMode,
   specLabel,
-  toolText,
-} from "./roles.js";
+} from "./providers.js";
+import { sandboxMode, toolText } from "./supervise.js";
 
 /**
  * Run-config stamp (issue #21 P2): the resolved, non-secret policy that
