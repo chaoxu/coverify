@@ -433,7 +433,15 @@ interface SupervisedOut {
  */
 async function supervise(
   specs: { file: string; args: string[] }[],
-  opts: { cwd: string; marks?: readonly string[]; signal?: AbortSignal; outputLimit?: number },
+  opts: {
+    cwd: string;
+    marks?: readonly string[];
+    signal?: AbortSignal;
+    outputLimit?: number;
+    /** Wall override (hang protection for thinking CLIs); defaults to the
+     *  run_script batch cap, which remains the compute host-protection wall. */
+    timeoutMs?: number;
+  },
 ): Promise<{ outs: SupervisedOut[]; fate?: string }> {
   const limit = opts.outputLimit ?? OUTPUT_LIMIT;
   const marks = opts.marks ?? [];
@@ -480,11 +488,12 @@ async function supervise(
   };
   installReaperHooks();
   liveReapers.add(killGroups);
+  const wallMs = opts.timeoutMs ?? runTimeoutMs();
   const timer = setTimeout(() => {
     if (finished) return;
-    fate = `timed out after ${Math.round(runTimeoutMs() / 60000)} minutes`;
+    fate = `timed out after ${Math.round(wallMs / 60000)} minutes`;
     void killAll();
-  }, runTimeoutMs());
+  }, wallMs);
   const onAbort = () => {
     if (finished) return;
     fate = "cancelled";
@@ -557,7 +566,7 @@ const APPEND_ONLY_LEDGERS = new Set(["failed.md"]);
  * final argument.
  */
 const literatureCmd = () =>
-  (process.env.COVERIFY_LITERATURE_CMD ?? "agy --dangerously-skip-permissions --print-timeout 10m -p").split(
+  (process.env.COVERIFY_LITERATURE_CMD ?? "agy --dangerously-skip-permissions --print-timeout 168h -p").split(
     /\s+/,
   );
 
@@ -610,6 +619,10 @@ function literatureSearchTool(cwd: string, scope: WriteScope): AgentTool {
         cwd,
         signal,
         outputLimit: OUTPUT_LIMIT * 4,
+        // 7-day wall: hang protection, never a search-work limit (user
+        // decision, Chao 2026-08-09). The 10-minute batch cap is for
+        // host-protection of computation, not for a thinking librarian.
+        timeoutMs: 7 * 24 * 3_600_000,
       });
       const { stdout, stderr, failure } = outs[0];
       if (fate || failure || !stdout.trim()) {

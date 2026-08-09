@@ -93,7 +93,10 @@ const CLI_BACKENDS: Record<"claude-cli" | "codex-cli" | "chatgpt-cli" | "agy", C
    *  to ChatGPT-Pro-only models (gpt-5.6-pro) — the deep one-shot prover.
    *  The daemon picks the actual model; the spec's modelId is a provenance
    *  label. Emits {ok, text, error} JSON on stdout. */
-  "chatgpt-cli": { env: "COVERIFY_CHATGPT_CMD", cmd: "chatgpt-cli oracle --quiet --timeout 6000", output: "oracle-json" },
+  /** --timeout here is the oracle's poll deadline; 604800s = 7 days — a hang
+   *  guard, not a work limit (user decision: no timeouts on model thinking,
+   *  Chao 2026-08-09). */
+  "chatgpt-cli": { env: "COVERIFY_CHATGPT_CMD", cmd: "chatgpt-cli oracle --quiet --timeout 604800", output: "oracle-json" },
   /** Antigravity CLI (Google subscription): the gemini ideation family.
    *  Prompt-as-argv and spaced display-name model ids are handled by the
    *  bin/agy-oracle transport wrapper ({repo} resolves to the checkout). */
