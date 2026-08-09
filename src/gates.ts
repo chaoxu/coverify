@@ -628,8 +628,19 @@ export function priorReusableRecord(
   inputHashes: Record<string, string>,
   policy: { requireStranded: boolean },
 ): GateRecord | undefined {
+  // Stranded = the journal's definition of an infrastructure failure: a
+  // dispatch with NO completion, or one whose completion is itself a failure
+  // or cancellation (a restart records failed completions for killed
+  // cadences — without this clause, byte-identical re-runs after a restart
+  // re-paid every stage; observed twice on lin3cut, 2026-08-09).
   const stranded = policy.requireStranded
-    ? new Set(store.dispatchesWithoutCompletion().map((d) => d.id as string))
+    ? new Set([
+        ...store.dispatchesWithoutCompletion().map((d) => d.id as string),
+        ...store
+          .all()
+          .filter((e) => e.kind === "completion" && (e.failed !== undefined || e.cancelled === true))
+          .map((e) => e.id as string),
+      ])
     : undefined;
   return [...store.all()]
     .reverse()

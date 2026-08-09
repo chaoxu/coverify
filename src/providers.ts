@@ -14,7 +14,7 @@ import {
   type AgentTool,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import { createModels, retryAssistantCall, type AssistantMessage, type Transport } from "@earendil-works/pi-ai";
+import { createModels, isContextOverflow, retryAssistantCall, type AssistantMessage, type Transport } from "@earendil-works/pi-ai";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
@@ -545,7 +545,11 @@ export async function createHarnessRoleSession(
       // real cause instead of an empty string (which would read as the
       // empty-report infra failure and trigger a pointless salvage nudge).
       if (final.stopReason === "error") {
-        throw new Error(final.errorMessage ?? "provider error (no message)");
+        // Classify overflow with pi's own predicate while the structured
+        // message still exists (issue #24) — the appended marker is what the
+        // harness diagnosis keys on, independent of provider phrasing.
+        const overflow = isContextOverflow(final) ? " [context window exceeded]" : "";
+        throw new Error((final.errorMessage ?? "provider error (no message)") + overflow);
       }
       if (final.stopReason === "aborted") return "";
       if (typeof final.content === "string") return final.content;

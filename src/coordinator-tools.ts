@@ -469,6 +469,18 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
       if (!rel) return toolText(`revision must be a path inside EVIDENCE/ (got: ${p.revision})`);
       const decision = checkPromotion(store, dir, rel);
       if (!decision.allowed) return refuse(store, "promotion", decision.reason ?? "", { revision: rel });
+      // Idempotence: a byte-identical revision already promoted is a no-op,
+      // not a second PROVED.md entry (lin3cut double-promoted r358 across a
+      // restart boundary, 2026-08-09).
+      const already = store
+        .all()
+        .find((e) => e.kind === "promotion" && sameRevision(e.revision, rel));
+      if (already !== undefined) {
+        return toolText(
+          `already promoted: ${rel} has a promotion on record (${String(already.ts)}). ` +
+            "No duplicate entry was written; cite the existing promotion.",
+        );
+      }
       const resolved = resolvePremises(store, p.premises ?? []);
       if ("unresolved" in resolved) {
         return refuse(
