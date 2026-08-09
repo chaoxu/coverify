@@ -15,6 +15,7 @@ import { danglingCitations, gitInRepo, readLedger, repoRoot, sha256File, sha256T
 import {
   GateStore,
   VERIFICATION_MECHANISM_PREFIX,
+  viewsOf,
   normalizeMechanism,
   promotionsMissingFromProved,
   retractionClosure,
@@ -81,7 +82,12 @@ export function recordRunConfig(
     ...extra,
     gitDirty: gitStatus === undefined ? "unknown" : gitStatus !== "",
     bunVersion: process.versions.bun,
-    piVersions: { "pi-agent-core": piVersion("pi-agent-core"), "pi-ai": piVersion("pi-ai") },
+    // Every direct @earendil-works dependency, not just the two the harness
+    // imports most: pi-coding-agent supplies the file tools and its exports
+    // map shapes what we can reuse, so its version is part of run identity.
+    piVersions: Object.fromEntries(
+      ["pi-agent-core", "pi-ai", "pi-coding-agent", "pi-tui"].map((p) => [p, piVersion(p)]),
+    ),
     ...(patches && Object.keys(patches).length > 0 ? { patches } : {}),
     roleSpecs: Object.fromEntries(
       ROLE_NAMES.map((r) => {
@@ -140,7 +146,7 @@ export function archiveLedgerHistory(store: GateStore, dir: string, wakeCount: n
  */
 export function refuse(
   store: GateStore,
-  site: "dispatch" | "verification" | "promotion",
+  site: "dispatch" | "verification" | "promotion" | "gate" | "declaration",
   reason: string,
   fields: { mechanism?: string; revision?: string; role?: string; candidateHash?: string } = {},
 ): ReturnType<typeof toolText> {
@@ -166,6 +172,10 @@ export function refusalsWithoutFollowup(
   // Only the newest refusal per subject matters, and it is decided first so
   // superseded refusals never pay a follow-up scan: any follow-up that clears
   // the newest refusal lies after the older ones too.
+  // Only refusals with a re-proposable SUBJECT are follow-up-tracked:
+  // dispatch (a mechanism) and verification/promotion (a revision). Gate and
+  // declaration refusals are recorded for the audit trail but have no
+  // subject to re-propose, so they are deliberately not surfaced here.
   const subjectKey = (r: (typeof records)[number]): string | undefined => {
     if (r.refusal === "dispatch" && typeof r.mechanism === "string") {
       return `dispatch:${r.mechanism.toLowerCase()}`;
@@ -230,9 +240,10 @@ export function modelSubstitutions(
   store: GateStore,
 ): { kind: string; revision: string; requested: string; actual: string }[] {
   const out: { kind: string; revision: string; requested: string; actual: string }[] = [];
-  for (const e of store.all()) {
-    const actual = typeof e.reportedModel === "string" ? e.reportedModel : undefined;
-    const requested = typeof e.modelFamily === "string" ? e.modelFamily : undefined;
+  const stages = ["audit", "bundle-cert", "reconstruction", "comparison"] as const;
+  for (const e of stages.flatMap((k) => viewsOf(store, k))) {
+    const actual = e.reportedModel;
+    const requested = e.modelFamily;
     if (actual === undefined || requested === undefined || actual === requested) continue;
     // Same-provider model-id drift is the signal; a bare provider prefix
     // match is not enough (claude-cli/opus vs claude-cli/claude-opus-5 is
@@ -240,7 +251,7 @@ export function modelSubstitutions(
     if (sameModelId(actual, requested)) continue;
     out.push({
       kind: String(e.kind),
-      revision: String(e.revision ?? ""),
+      revision: e.revision ?? "",
       requested,
       actual,
     });

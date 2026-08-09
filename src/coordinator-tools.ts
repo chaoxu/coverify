@@ -113,9 +113,12 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
     // process that is about to return, and its report would be discarded.
     const declared = deps.declaration();
     if (declared) {
-      return toolText(
-        `DISPATCH REFUSED: the campaign is already declared ${declared.state}; the contract says ` +
-          "cease dispatch. Checkpoint the ledgers and finish this turn.",
+      return refuse(
+        store,
+        "dispatch",
+        `the campaign is already declared ${declared.state}; the contract says cease dispatch. ` +
+          "Checkpoint the ledgers and finish this turn.",
+        { mechanism: packet.mechanism, role },
       );
     }
     if (role === "technician" && opts.noComputation) {
@@ -383,8 +386,10 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
     execute: async (_id: string, params: unknown) => {
       const declared = deps.declaration();
       if (declared) {
-        return toolText(
-          `GATE REFUSED: the campaign is already declared ${declared.state}; cease dispatch and checkpoint.`,
+        return refuse(
+          store,
+          "gate",
+          `the campaign is already declared ${declared.state}; cease dispatch and checkpoint.`,
         );
       }
       const p = params as { mechanism: string; firstImplication: string; importedPremises?: string };
@@ -615,9 +620,11 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
     execute: async (_id: string, params: unknown) => {
       const p = params as { state: "pause" | "complete"; reason: string; continueSupervised?: boolean };
       if (p.state === "complete" && !store.all().some((e) => e.kind === "promotion")) {
-        return toolText(
-          "DECLARATION REFUSED: no promotion is on record; the completion criterion requires the " +
-            "final result to pass the full cadence (verify, then record_promotion) first.",
+        return refuse(
+          store,
+          "declaration",
+          "no promotion is on record; the completion criterion requires the final result to pass " +
+            "the full cadence (verify, then record_promotion) first.",
         );
       }
       deps.declare(p);

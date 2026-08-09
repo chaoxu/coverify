@@ -97,9 +97,11 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
     execute: async (_id: string, params: unknown) => {
       const declared = deps.declaration();
       if (declared) {
-        return toolText(
-          `VERIFICATION REFUSED: the campaign is already declared ${declared.state}; cease dispatch ` +
-            "and checkpoint. Re-request verification after resuming.",
+        return refuse(
+          store,
+          "verification",
+          `the campaign is already declared ${declared.state}; cease dispatch and checkpoint. ` +
+            "Re-request verification after resuming.",
         );
       }
       const p = params as {

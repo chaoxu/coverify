@@ -468,6 +468,16 @@ export const VIEW = String.raw`
       parts.push(row("candidate", esc(e.revision), "mono"));
       parts.push(row("recorded", clock(e.t), "mono"));
       parts.push(row("verifier model", e.model ? esc(e.model) : absent(NOT_RECORDED), "mono"));
+      if (e.reportedModel && e.reportedModel !== e.model) {
+        parts.push(
+          row(
+            "model substitution",
+            "<b>requested " + esc(e.model) + ", answered " + esc(e.reportedModel) + "</b>" +
+              "<div class='t-mono'>the backend self-reported a different model; a cross-family " +
+              "check that ran same-family is weaker evidence than its label suggests</div>",
+          ),
+        );
+      }
       parts.push(row("note", "This is one call inside a verification cadence. In current runs the cadence " +
         "itself is a dispatched agent (v###) and appears in the agents lane; these marks are the verdicts it recorded."));
     } else if (item.kind === "gate") {

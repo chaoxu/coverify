@@ -35,6 +35,74 @@ export interface GateRecord {
 }
 
 /**
+ * Read-side views (issue #21 data layer). WRITES STAY OPEN — `store.append`
+ * takes any `GateRecord`, and no schema is versioned — but readers state the
+ * fields they expect through these types instead of hand-casting. Every
+ * field is optional by design: a campaign recorded before a field existed
+ * narrows to `undefined` rather than becoming an error, which is exactly why
+ * this layer has no migrations.
+ */
+export interface DispatchView {
+  id?: string;
+  role?: string;
+  mechanism?: string;
+  task?: string;
+  /** Ideation family + resolved model, when the dispatch was family-routed. */
+  family?: string;
+  model?: string;
+}
+export interface CompletionView {
+  id?: string;
+  report?: string;
+  reportSha256?: string;
+  failed?: string;
+  cancelled?: boolean;
+}
+/** audit | bundle-cert | reconstruction | comparison records. */
+export interface VerdictView {
+  revision?: string;
+  verdict?: string;
+  candidateHash?: string;
+  artifact?: string;
+  artifactHash?: string;
+  /** Requested spec, or the server-attested model when one exists (#20). */
+  modelFamily?: string;
+  /** The backend's own statement of what answered, when it makes one (#21 P3). */
+  reportedModel?: string;
+}
+export interface PromotionView {
+  revision?: string;
+  entry?: string;
+}
+/** Refusal notes: `kind:"note"` carrying a `refusal` site. */
+export interface RefusalView {
+  refusal?: "dispatch" | "verification" | "promotion" | "gate" | "declaration";
+  reason?: string;
+  mechanism?: string;
+  revision?: string;
+  role?: string;
+}
+
+interface ViewByKind {
+  dispatch: DispatchView;
+  completion: CompletionView;
+  audit: VerdictView;
+  "bundle-cert": VerdictView;
+  reconstruction: VerdictView;
+  comparison: VerdictView;
+  promotion: PromotionView;
+}
+
+/** Records of one kind, as its read-side view. The cast is the single place
+ *  the open write shape is narrowed, so queries below hold no casts. */
+export function viewsOf<K extends keyof ViewByKind>(
+  store: GateStore,
+  kind: K,
+): (ViewByKind[K] & GateRecord)[] {
+  return store.all().filter((e) => e.kind === kind) as (ViewByKind[K] & GateRecord)[];
+}
+
+/**
  * A campaign's identity, stored inside the campaign so it survives being moved.
  *
  * It used to be `sha256(realpath(dir))`, which meant renaming a folder — or

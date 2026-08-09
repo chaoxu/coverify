@@ -167,6 +167,9 @@ export function traceData(dir: string): TraceData {
         revision: g.revision,
         verdict: g.verdict,
         model: g.modelFamily ?? "",
+        // Requested-vs-answered (#21 P3): carried so the inspector can flag a
+        // verdict whose backend self-reported a different model.
+        reportedModel: g.reportedModel ?? "",
       });
     } else if (g?.kind === "gate-verdict") {
       events.push({ type: "gate", t, verdict: g.verdict, mechanism: String(g.mechanism ?? "").slice(0, 70) });

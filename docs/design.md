@@ -508,7 +508,7 @@ all campaigns ever, measured 2026-08-08), so analytics is a convention,
 not infrastructure: DuckDB directly over the out-of-tree JSONL
 (`read_json_auto(..., format='newline_delimited', union_by_name=true,
 filename=true)` — drift-tolerant, cross-campaign by filename, zero sync,
-no second trust domain). Canonical queries live in `docs/queries.md`.
+no second trust domain). Canonical queries live in the appendix below.
 Derived stores were reviewed and rejected (synced SQLite: schema drift
 yields confidently wrong answers; OTel-shaped events: a one-way projection
 if ever wanted, never the authoritative shape). House rule from the same
