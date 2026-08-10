@@ -36,10 +36,7 @@ async function callStub(input: number, cached: number) {
 }
 
 test("telemetry is OFF by default — a campaign with no exporter emits nothing", async () => {
-  // The property that makes this deletable without changing any campaign
-  // outcome (CLAUDE.md rule 2, and pi-telemetry's own "a span is diagnostic
-  // data, not business state"). If the default ever became a recorder, every
-  // run would pay for spans nobody consumes.
+  // Deletable without changing any campaign outcome (rule 2).
   initTelemetry(undefined);
   const ctx = telemetry();
   let ran = false;
@@ -85,10 +82,7 @@ test("an unreported token field stays absent rather than becoming zero", async (
 });
 
 test("passing a parent span makes the call a CHILD structurally", async () => {
-  // The reason to adopt a span contract at all: the tree used to exist only as
-  // fields somebody remembered to copy (runId, wake, dispatchId), and three
-  // reviews found gaps in that copying. A parent passed here cannot be
-  // forgotten — the child is nested by construction.
+  // A passed parent cannot be forgotten the way a copied dispatchId can.
   const recorder = useInMemoryTelemetry();
   await recorder.startSpan(
     { name: "coverify.dispatch", attributes: { "coverify.dispatch_id": "r001" } },

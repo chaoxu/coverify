@@ -4,28 +4,16 @@
 // be withdrawn. These pin that the check FAILS on the shapes that caused that,
 // and passes on a healthy one.
 import { expect, test } from "bun:test";
-import * as fs from "node:fs";
-import * as path from "node:path";
+import { sessionFixture } from "./helpers.ts";
 
 const { corpusChecks, formatCorpusChecks } = await import("../src/view/corpus.ts");
-
-/** A campaign whose session tree contains the given files. */
-function corpus(label: string, files: Record<string, string[]>): string {
-  const dir = fs.mkdtempSync(`/private/tmp/coverify-corpus-${label}-`);
-  const sess = path.join(dir, ".coverify", "sessions", "--camp--");
-  fs.mkdirSync(sess, { recursive: true });
-  for (const [name, lines] of Object.entries(files)) {
-    fs.writeFileSync(path.join(sess, name), lines.join("\n") + "\n");
-  }
-  return dir;
-}
 
 const msg = (ts: number, input: number) =>
   `{"type":"message","message":{"role":"assistant","content":"x","timestamp":${ts},` +
   `"usage":{"input":${input},"output":1,"cacheRead":0}}}`;
 
 test("a healthy corpus passes every applicable check", () => {
-  const dir = corpus("clean", {
+  const dir = sessionFixture("clean", {
     "2026-08-02T00-00-00_aaa.jsonl": [msg(1000, 10), msg(2000, 20)],
     "2026-08-02T00-00-01_bbb.jsonl": [msg(3000, 30)],
   });
@@ -39,7 +27,7 @@ test("two files sharing a session id fail check 1", () => {
   // prefix, so summing files counted that prefix 64 times. This also catches
   // the coordinator-session-id collision fixed in #33, where every process
   // re-minted `coordinator-1`.
-  const dir = corpus("dupid", {
+  const dir = sessionFixture("dupid", {
     "2026-08-02T00-00-00_coordinator-1.jsonl": [msg(1000, 10)],
     "2026-08-02T00-00-01_coordinator-1.jsonl": [msg(2000, 20)],
   });
@@ -53,14 +41,14 @@ test("a pile of billed events on one timestamp fails check 3", () => {
   // Replay signature. Counted over BILLED events only — a parallel tool batch
   // legitimately lands several toolResults on one millisecond, and counting
   // those made this check fail on every healthy campaign on disk.
-  const dir = corpus("replay", {
+  const dir = sessionFixture("replay", {
     "2026-08-02T00-00-00_rep.jsonl": [msg(5000, 10), msg(5000, 10), msg(5000, 10)],
   });
   expect(corpusChecks(dir).find((c) => c.n === 3)!.ok).toBe(false);
 });
 
 test("a parallel tool batch is not mistaken for replay", () => {
-  const dir = corpus("toolbatch", {
+  const dir = sessionFixture("toolbatch", {
     "2026-08-02T00-00-00_tb.jsonl": [
       msg(1000, 10),
       ...[0, 1, 2, 3].map(
@@ -75,7 +63,7 @@ test("a compacted session still reconciles, because compaction belongs to no tur
   // A summarization call's usage lives on the compaction entry, so
   // sum(turn deltas) legitimately differs from the session total. Tolerating
   // that as slop would hide real corruption; it is added back explicitly.
-  const dir = corpus("compacted", {
+  const dir = sessionFixture("compacted", {
     "2026-08-02T00-00-00_cmp.jsonl": [
       msg(1000, 10),
       '{"type":"compaction","usage":{"input":500,"output":9,"cacheRead":0}}',
@@ -91,7 +79,7 @@ test("check 2 declares itself inapplicable rather than answering", () => {
   // pi logs a per-message delta, not a running total, so "does the first
   // cumulative start near zero" has no referent here. Rule 10: a check that
   // cannot apply says so — it does not quietly pass.
-  const dir = corpus("na", { "2026-08-02T00-00-00_na.jsonl": [msg(1000, 10)] });
+  const dir = sessionFixture("na", { "2026-08-02T00-00-00_na.jsonl": [msg(1000, 10)] });
   const c = corpusChecks(dir).find((c) => c.n === 2)!;
   expect(c.notApplicable).toBe(true);
   expect(formatCorpusChecks(corpusChecks(dir))).toContain("n/a");
@@ -106,7 +94,7 @@ test("burn rate is measured over a real span, not between adjacent samples", asy
   const { campaignLimits } = await import("../src/view/limits.ts");
   // No rollouts will match this fixture, so this pins the honest-empty path:
   // an absent measurement must not render as a measurement of zero.
-  const dir = corpus("limits", { "2026-08-02T00-00-00_x.jsonl": [msg(1000, 10)] });
+  const dir = sessionFixture("limits", { "2026-08-02T00-00-00_x.jsonl": [msg(1000, 10)] });
   const r = campaignLimits(dir);
   expect(r.attribution).toBe("none");
   expect(r.fastestBurn).toBeUndefined();

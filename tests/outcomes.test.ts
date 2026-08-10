@@ -3,19 +3,10 @@
 // cost tables are supposed to be divided by. Every assertion pins a refusal
 // or a join that a hand-rolled query got wrong before.
 import { expect, test } from "bun:test";
-import * as fs from "node:fs";
-import * as path from "node:path";
+import { recordFixture } from "./helpers.ts";
 
 const { campaignOutcomes, formatOutcomes } = await import("../src/view/outcomes.ts");
-const { GateStore } = await import("../src/gates.ts");
-
-function fixture(records: Record<string, unknown>[]): string {
-  const dir = fs.mkdtempSync("/private/tmp/coverify-outcomes-");
-  fs.writeFileSync(path.join(dir, "STATEMENT.md"), "# STATEMENT\n\nA fixture.\n");
-  const store = new GateStore(dir);
-  for (const r of records) store.append(r as { kind: "note" } & Record<string, unknown>);
-  return dir;
-}
+const fixture = (records: Record<string, unknown>[]) => recordFixture("outcomes", records);
 
 test("spend splits by whether the revision ever promoted", () => {
   // The question the cost tables cannot answer on their own: what did the
@@ -82,11 +73,9 @@ test("gate verdicts are counted but never attributed to a revision", () => {
 });
 
 test("the on-path fraction refuses a graph too sparse to carry it", () => {
-  // Issue #38's instrument walks promotion premises, which are Type.Optional
-  // and were absent on 54 of 64 promotions across all seven campaigns. Every
-  // premise-less promotion is an isolated node and therefore trivially its own
-  // terminal, so a fraction computed anyway comes out ~1.0 and means "nothing
-  // was recorded" rather than "all work was on path".
+  // Premises are optional and were absent on 54 of 64 promotions. A
+  // premise-less promotion is its own terminal, so a fraction computed anyway
+  // is ~1.0 and means "nothing was recorded" (#38).
   const dir = fixture([
     { kind: "promotion", revision: "a.md" },
     { kind: "promotion", revision: "b.md" },
@@ -100,12 +89,7 @@ test("the on-path fraction refuses a graph too sparse to carry it", () => {
 });
 
 test("the on-path fraction is computed once the premise edge exists", () => {
-  // The instrument is not absent — it returns a number the moment the graph
-  // can carry the question. Chain: c depends on b depends on a; d is a
-  // free-standing result. Terminals are c and d; everything is reachable, so
-  // the answer is 4/4. `off.md` promotes but nothing depends on it and it
-  // depends on nothing — it is its own terminal, which is why coverage, not
-  // edge count, gates the division.
+  // c→b→a, plus d→a. Terminals c and d reach everything: 4/4.
   const dir = fixture([
     { kind: "promotion", revision: "a.md" },
     { kind: "promotion", revision: "b.md", premises: ["a.md"] },
@@ -120,10 +104,7 @@ test("the on-path fraction is computed once the premise edge exists", () => {
 });
 
 test("work off every result's dependency path is counted as off it", () => {
-  // The measurement that matters: a promotion nothing depends on AND that
-  // depends on nothing is still its own terminal, so to see a fraction below 1
-  // the graph must have a component that no terminal reaches. Two chains,
-  // where the second terminal is reached only from within its own component.
+  // A retracted promotion is excluded from the graph, not counted off-path.
   const dir = fixture([
     { kind: "promotion", revision: "root.md" },
     { kind: "promotion", revision: "mid.md", premises: ["root.md"] },
@@ -141,11 +122,8 @@ test("work off every result's dependency path is counted as off it", () => {
 });
 
 test("lanes are split by the same inference spend.ts uses, never one bucket", () => {
-  // Bucketing on `u.meter ?? "unstamped"` put every record of every pre-stamp
-  // campaign — which is all of them — into ONE row, which then added nested
-  // `input` (includes cached) to disjoint `input` (excludes it) and printed an
-  // unmeasured fresh input as a measured 0.00M. Rule 1 and rule 10, the exact
-  // two errors this reader's sibling exists to refuse.
+  // One "unstamped" bucket would add nested `input` (includes cached) to
+  // disjoint `input` (excludes it) — rules 1 and 10.
   const dir = fixture([
     // Disjoint: cacheRead > input is impossible under the nested convention.
     { kind: "audit", revision: "a.md", verdict: "PASS", usage: { input: 1, output: 1, cacheRead: 900 } },
@@ -161,9 +139,8 @@ test("lanes are split by the same inference spend.ts uses, never one bucket", ()
 });
 
 test("a retracted promotion is not counted as an outcome", () => {
-  // A promotion contradicted by a later substantive FAIL is not a result. For
-  // a reader whose whole purpose is the outcome term of rules 7 and 8, an
-  // error in the flattering direction is the one it must not make.
+  // A promotion contradicted by a later FAIL is not a result; erring in the
+  // flattering direction is the one error an outcome reader must not make.
   const dir = fixture([
     { kind: "audit", revision: "r.md", verdict: "PASS", candidateHash: "h1", usage: { input: 10, output: 1, cacheRead: 0 } },
     { kind: "promotion", revision: "r.md", candidateHash: "h1" },

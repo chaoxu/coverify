@@ -88,11 +88,8 @@ test("every match is returned; the caller decides how many to show", () => {
 });
 
 test("stopwords do not outrank the entry that actually matches", () => {
-  // Without a stopword list, a query written as a sentence ranks on "the" and
-  // "not": an entry whose HEADING held three stopwords scored 6 and beat the
-  // entry whose BODY held the real close route — noise presented first under a
-  // "best first" label, which is the false-"no close prior route" failure this
-  // lookup exists to prevent.
+  // Without stopwords a sentence-shaped query ranks on "the" and "not", and
+  // heading noise beats the entry holding the real close route.
   const md = `# FAILED (append-only)
 
 ## F001 — the route that does not use any of the words we care about
@@ -106,9 +103,8 @@ the exact matroid-basis contraction argument fails at rank 4
 });
 
 test("a `## ` inside a fenced block is a code comment, not an entry", () => {
-  // Fence-unawareness invented a phantom entry AND detached everything after
-  // it from the real one — including the retry bar the launcher requires,
-  // which is exactly the text a lookup gets asked about.
+  // A fence-unaware parse invents a phantom entry and detaches the retry bar
+  // from the real one.
   const md = `# FAILED (append-only)
 
 ## F001 — real entry

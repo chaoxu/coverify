@@ -1,8 +1,6 @@
-// Model providers and role invocation: pi-ai provider registry, per-role
-// model specs, runRole, harness role sessions, and usage accounting (the
-// subscription CLI transports live in backends.ts). Semantics-invisible
-// mechanics (design rule 2): how a model gets called, never what it is told
-// (charges live in roles.ts).
+// Provider registry, per-role model specs, runRole, harness sessions, usage
+// accounting. Subscription CLI transports live in backends.ts. Mechanics only
+// (design rule 2): how a model gets called, never what it is told.
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import {
@@ -38,14 +36,12 @@ import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 export type Models = ReturnType<typeof createModels>;
 
 export async function buildModels(): Promise<Models> {
-  // Persistent credential store: OAuth subscription logins (coverify login)
-  // survive across runs; API-key env vars keep working unchanged.
+  // Persistent store so OAuth subscription logins survive across runs.
   const models = createModels({ credentials: fileCredentialStore() });
   models.setProvider(anthropicProvider());
   models.setProvider(openaiProvider());
   models.setProvider(openaiCodexProvider());
   models.setProvider(googleProvider());
-  // Subscription tool-loop transport (Agent SDK); see src/claude-bridge.ts.
   models.setProvider((await claudeBridgeProvider()) as Parameters<Models["setProvider"]>[0]);
   return models;
 }
@@ -102,16 +98,11 @@ const ROLE_ENV: Record<RoleName, string> = {
   comparator: "COVERIFY_MODEL_COMPARATOR",
 };
 
-/** Subscription-only defaults (user decisions, 2026-08-01): OpenAI for
- *  almost everything — the coordinator's tool loop and the dispatched agents run
- *  GPT-5.6 Sol as full pi agents through the openai-codex provider
- *  (ChatGPT-subscription OAuth via `coverify login openai-codex`; @max is
- *  the top of Sol's thinking-level map), and the single-shot verdict roles
- *  run through the `codex` CLI. The one exception is the hostile auditor
- *  (the independent audit): it stays on Opus via `claude -p`, so every
- *  candidate still gets one cross-family check. Third-party OAuth against
- *  Anthropic draws Extra Credits, hence the official Claude CLI. Every
- *  role is overridable per-role via COVERIFY_MODEL_<ROLE>. */
+/** Subscription-only defaults (user decision, 2026-08-01), overridable via
+ *  COVERIFY_MODEL_<ROLE>. The hostile auditor stays on a different family so
+ *  every candidate gets one cross-family check; it goes through the official
+ *  `claude` CLI because third-party OAuth against Anthropic draws Extra
+ *  Credits. */
 const ROLE_DEFAULTS: Record<RoleName, string> = {
   coordinator: "openai-codex/gpt-5.6-sol@max",
   reasoner: "openai-codex/gpt-5.6-sol@max",
@@ -123,21 +114,17 @@ const ROLE_DEFAULTS: Record<RoleName, string> = {
   comparator: "codex-cli/gpt-5.6-sol",
 };
 
-/** One resolver for every env-overridable spec: role defaults and ideation
- *  families are the same mechanism (user-recorded default, env override). */
 const envSpec = (env: string, fallback: string): ModelSpec =>
   parseModelSpec(process.env[env] ?? fallback);
 
-/** Is this provider usable right now — CLI binary on PATH, or an API/OAuth
- *  credential the models registry resolves? One answer for the prove()
- *  preflight and dispatch-time family checks; they must never disagree. */
+/** Is this provider usable right now — CLI binary on PATH, or a credential the
+ *  registry resolves? One answer for the prove() preflight and dispatch-time
+ *  family checks; they must never disagree. */
 export async function providerUsable(models: Models, provider: ModelSpec["provider"]): Promise<boolean> {
   if (isCliProvider(provider)) {
     const { spawnSync } = await import("node:child_process");
-    // Substitute template placeholders BEFORE probing: the agy backend's
-    // command starts with "{repo}/bin/agy-oracle", and `which "{repo}/..."`
-    // refused every gemini dispatch on the first live night (10/10) while
-    // the wrapper worked fine — audit finding, 2026-08-09.
+    // Substitute {repo} BEFORE probing: `which "{repo}/bin/agy-oracle"` refused
+    // 10/10 gemini dispatches while the wrapper worked (2026-08-09).
     const head = cliBackendCommand(provider).replaceAll("{repo}", repoRoot()).split(/\s+/)[0];
     return (head.startsWith("/") ? fs.existsSync(head) : spawnSync("which", [head]).status === 0);
   }
@@ -173,22 +160,11 @@ export const THINKING_LEVELS: ThinkingLevel[] = [
 ];
 
 /**
- * Reasoning-effort override that changes ONLY the thinking level, inheriting
- * provider and model from whatever the spec already resolves to.
- * `COVERIFY_EFFORT_<ROLE>` beats `COVERIFY_EFFORT`; absent, nothing changes.
- *
- * This exists because the alternative is respelling the whole spec —
- * `COVERIFY_MODEL_REASONER=openai-codex/gpt-5.6-sol@xhigh` — and issue #31's
- * A/B is a comparison in which effort must be the ONLY difference between the
- * arms. A fat-fingered model id there silently changes the model too, which
- * does not fail, does not warn, and quietly makes the experiment measure
- * something else. One variable is the treatment, so one variable is what you
- * set.
- *
- * No default (rule 3): unset means the role's own spec stands. An invalid
- * value hard-stops rather than falling back, for the same reason `--agent-limit`
- * does — a typo that silently disables the thing you are testing is worse than
- * a crash.
+ * Thinking-level-only override, inheriting provider and model from the resolved
+ * spec. `COVERIFY_EFFORT_<ROLE>` beats `COVERIFY_EFFORT`; unset changes nothing
+ * (rule 3). Exists so issue #31's A/B can vary effort alone — respelling the
+ * whole spec can silently change the model too. An invalid value hard-stops
+ * rather than falling back, so a typo cannot make an arm compare to itself.
  */
 function effortOverride(role: RoleName): ThinkingLevel | undefined {
   const raw = process.env[`COVERIFY_EFFORT_${ROLE_ENV[role].replace("COVERIFY_MODEL_", "")}`] ??
@@ -212,26 +188,18 @@ export function roleModelSpec(role: RoleName): ModelSpec {
   return thinking === undefined ? spec : { ...spec, thinking };
 }
 
-/** Ideation families (user decision, Chao 2026-08-09): a reasoner dispatch
- *  may carry family:"fable"|"gemini" to run that one worker on a different
- *  model family — decorrelated proposal streams through the same charge and
- *  the same gates (Danus study: same-family swarms added no new ideas; the
- *  different-family consult carried the plan). Model routing is harness
- *  mechanics (design rule 2); specs overridable via COVERIFY_FAMILY_<NAME>. */
-// Family -> default spec; env override is derived (COVERIFY_FAMILY_<NAME>).
-// Subscription-billed CLIs, not metered APIs (same policy as the role
-// defaults): fable through the official Claude CLI (Max), gemini through
-// agy (Google), and "pro" — the Danus-style advisor lane — through the
-// chatgpt-cli oracle. All three are single-shot toolless consults (the
-// packet must inline everything). For "pro", served-model attestation is
-// enforced at the oracle parse: a router-downgraded reply is discarded as
-// "no useful response" (user policy, Chao 2026-08-09), so weak-model advice
-// cannot enter the campaign wearing a Pro label.
+/** Ideation families (user decision, 2026-08-09): a reasoner dispatch may carry
+ *  family:"fable"|"gemini"|"pro" to run that one worker on another model family
+ *  — decorrelated proposals through the same charge and gates (Danus study:
+ *  same-family swarms added no new ideas). All are subscription-billed CLIs and
+ *  single-shot toolless consults, so the packet must inline everything.
+ *  Overridable via COVERIFY_FAMILY_<NAME>. For "pro", the oracle parse enforces
+ *  served-model attestation: a router-downgraded reply is discarded as "no
+ *  useful response", so weak-model advice cannot enter wearing a Pro label. */
 const FAMILY_SPECS: Record<string, string> = {
-  // Repointed to Opus 2026-08-09 (user decision: Fable quota exhausted;
-  // "let's switch to opus for ideas"). The family name stays "fable" as the
-  // Anthropic-lane label coordinators already know; dispatch records stamp
-  // the resolved model, so provenance is exact either way.
+  // Repointed to Opus 2026-08-09 (Fable quota exhausted); the name stays as the
+  // Anthropic-lane label coordinators know, and dispatch records stamp the
+  // resolved model.
   fable: "claude-cli/opus",
   gemini: "agy/gemini-3.1-pro-high",
   pro: "chatgpt-cli/gpt-5-6-pro",
@@ -244,9 +212,8 @@ export function familyModelSpec(family: string): ModelSpec | undefined {
     : envSpec(`COVERIFY_FAMILY_${family.toUpperCase()}`, fallback);
 }
 
-/** Resolve an ideation-family request to a usable spec, or a refusal reason
- *  the coordinator can act on in the same turn. Owns the model policy so the
- *  harness keeps only the refuse() wiring. */
+/** Resolve an ideation-family request to a usable spec, or a refusal reason the
+ *  coordinator can act on in the same turn. */
 export async function resolveFamily(
   models: Models,
   family: string,
@@ -273,9 +240,9 @@ export function specLabel(spec: ModelSpec): string {
   return `${spec.provider}/${spec.modelId}`;
 }
 
-/** A spec including its thinking level. Journalled per role in the run-config
- *  stamp and per usage event; the two must be spelled identically, because
- *  that string is the join between them. */
+/** Spec including thinking level. Journalled in the run-config stamp and per
+ *  usage event; this string is the join between them, so both must spell it
+ *  identically. */
 export function specKey(spec: ModelSpec): string {
   return `${specLabel(spec)}@${spec.thinking}`;
 }
@@ -298,8 +265,8 @@ export interface RoleRun {
   /** One-paragraph role charge appended after the contract. */
   charge: string;
   prompt: string;
-  /** Give the role the workspace tools (read/ls/grep, scoped write; run_script iff code;
-   *  librarian search iff literature). */
+  /** Workspace tools: read/ls/grep, scoped write; run_script iff code;
+   *  librarian search iff literature. */
   workspace?: {
     cwd: string;
     scope: WriteScope;
@@ -314,23 +281,18 @@ export interface RoleRun {
 }
 
 /**
- * Run one fresh, ephemeral role instance (single-shot roles: idea-gate
- * critic, hostile auditor, bundle certifier, reconstructor, comparator):
- * an in-memory harness session on API providers, an official CLI otherwise —
- * toolless either way. The coordinator and dispatched agents run as durable
- * sessions via createHarnessRoleSession (harness.ts). What each
- * instance sees is decided by the bundle its caller builds; the journal
- * records supplied inputs and which restrictions are platform-enforced
- * versus instructed.
+ * Run one fresh, ephemeral, toolless role instance (the single-shot verdict
+ * roles): an in-memory harness session on API providers, an official CLI
+ * otherwise. Coordinator and dispatched agents instead run durable sessions via
+ * createHarnessRoleSession. What an instance sees is decided by the bundle its
+ * caller builds.
  */
 export async function runRole(
   run: Omit<RoleRun, "workspace" | "extraTools">,
   signal?: AbortSignal,
-  /** Parent span, when the caller has one. A TelemetrySpan IS a context, so
-   *  passing it makes this call a CHILD structurally instead of by copying a
-   *  dispatchId into a field and hoping every writer remembers. Omitted, the
-   *  span is a root under the process context — which is NOOP unless an
-   *  exporter is attached, so nothing is emitted and nothing changes. */
+  /** Parent span, when the caller has one: a TelemetrySpan IS a context, so
+   *  passing it makes this call a child structurally. Omitted, the span roots
+   *  under the process context (NOOP without an exporter). */
   parent?: TelemetryContext,
 ): Promise<RoleResult> {
   return (parent ?? telemetry()).startSpan(
@@ -358,10 +320,9 @@ async function runRoleInner(
 ): Promise<RoleResult> {
   const started = Date.now();
   // One invocation surface: every role call is a session asked once. A CLI
-  // backend is a degenerate session (answers once, stoppable, not
-  // steerable); an API provider gets an in-memory harness session with a
-  // stable per-call prompt-cache key (pi derives prompt_cache_key from the
-  // session id — ~80% prefix-cache hit measured, see f0ad016).
+  // backend is a degenerate session (answers once, stoppable, not steerable);
+  // an API provider gets an in-memory harness session whose id becomes pi's
+  // prompt_cache_key — ~80% prefix-cache hit measured (f0ad016).
   const cli = isCliProvider(run.spec.provider) ? createCliRoleSession(run, signal) : undefined;
   const session = cli ?? (await createHarnessRoleSession(run, { sessionId: randomUUID(), ephemeral: true }));
   const text = await session.ask(run.prompt);
@@ -374,54 +335,46 @@ async function runRoleInner(
     backendCwd: cli?.backendCwd?.(),
     attempts: session.attempts?.(),
     requests: session.requests?.(),
-    // promptChars counts what actually went over the wire: the CLI path
-    // inlines the contract+charge into one prompt string.
+    // What actually went over the wire (the CLI path inlines contract+charge).
     promptChars: cli ? cli.promptChars() : run.prompt.length,
     durationMs: Date.now() - started,
   };
 }
 
 export interface RoleSession {
-  /** What this substrate can actually do, stated explicitly rather than
-   *  inferred from which fields exist: a spawned CLI answers once and can be
-   *  stopped but not steered (the honesty ledger's claim, kept observable);
-   *  a harness session is steerable, and durable when its transcript
-   *  persists. */
+  /** Stated, not inferred from which fields exist: a spawned CLI answers once
+   *  and is stoppable but not steerable; a harness session is steerable, and
+   *  durable when its transcript persists. */
   readonly capabilities: { steerable: boolean; durable: boolean };
   ask(prompt: string): Promise<string>;
-  /** Context size in tokens from pi's estimator over the session's context messages. */
+  /** Context size in tokens from pi's estimator over the context messages. */
   approxTokens(): number;
-  /** Cumulative provider-reported token usage across the session's calls;
-   *  undefined when the backend reported none (never fabricated zeros). */
+  /** Cumulative provider-reported usage; undefined when the backend reported
+   *  none (absent ≠ zero; see RoleUsage). */
   usage(): RoleUsage | undefined;
-  /** Server-attested served model, when the backend reports one (oracle
-   *  backends only; issue #20). Undefined everywhere else — never an echo. */
+  /** Server-attested served model (oracle backends only; issue #20). Undefined
+   *  elsewhere — never an echo of the request. */
   servedModel?(): string | undefined;
   /** Self-reported model, when the backend states one (#21 P3). */
   reportedModel?(): string | undefined;
-  /** Provider calls this session made whose tokens cannot be measured — an
-   *  external agent with no machine-readable usage. Real spend, recorded as a
+  /** Provider calls whose tokens cannot be measured. Real spend, recorded as a
    *  gap so it never reads as costing nothing. */
   unmetered?(): { lane: string; detail: string }[];
-  /** Provider attempts made by this session, retries included. A retry
-   *  re-presents the whole context and is billed again but leaves no message,
-   *  so this is the one part of request-level cost that cannot be recovered
-   *  from a transcript afterwards. */
+  /** Provider attempts, retries included. A retry re-presents the whole context
+   *  and is billed again but leaves no message, so it is unrecoverable from the
+   *  transcript afterwards. */
   attempts?(): number;
-  /** Provider requests that produced output. Derived from the transcript where
-   *  one exists, so it never becomes a second source that can drift. */
+  /** Provider requests that produced output. Derived from the transcript, never
+   *  a second source that can drift. */
   requests?(): number;
-  /** Join keys into the provider's own transcript, where telemetry this
-   *  harness cannot see otherwise lives — for the codex lane, the rollout
-   *  under ~/.codex/sessions/ carrying rate_limits.primary.used_percent.
-   *  Recorded so the account's window trajectory becomes joinable; that
-   *  series is account-wide, never coverify-attributable consumption. */
+  /** Join key into the provider's own transcript (codex lane: the rollout under
+   *  ~/.codex/sessions/ carrying rate_limits.primary.used_percent, which is
+   *  account-wide and never coverify-attributable). */
   providerSessionId?(): string | undefined;
   /** Second route to the same transcript when the id is unavailable. */
   backendCwd?(): string | undefined;
-  /** In-place lossy compaction (harness-backed sessions only): summarize
-   *  older turns, keep a recent tail verbatim. The caller owns the policy
-   *  and the contract's post-compaction reread rule. */
+  /** In-place lossy compaction (harness sessions only). The caller owns the
+   *  policy and the contract's post-compaction reread rule. */
   compact?(customInstructions?: string): Promise<void>;
   /** Inject a steering message while the session is running. Resolves true
    *  iff the session accepted it (false: session idle, message dropped). */
@@ -462,68 +415,50 @@ function wireLogPayload(wirePath: string) {
 }
 
 
-/** Which parser produced a usage record. NOT a convention discriminator —
- *  all three normalize `input` to the uncached part (pi and codex-cli both
- *  subtract cached and cache-write; Anthropic reports it exclusive natively).
- *  It is provenance: which adapter to go fix when a number looks wrong. */
+/** Which parser produced a usage record. NOT a convention discriminator — all
+ *  three normalize `input` to the uncached part. It is provenance: which
+ *  adapter to go fix when a number looks wrong. */
 export type Meter = "pi-session" | "codex-cli-jsonl" | "claude-cli-json";
 
-/** Coverify's usage record: pi's `Usage` contract minus what only pi can
- *  compute, plus provenance. Derived from pi's type rather than paralleling
- *  it — view/turns.ts parses pi's own session JSONL as a RoleUsage, so the
- *  two were already structurally coupled across a package boundary, with a pi
- *  upgrade as the silent failure trigger.
+/** Coverify's usage record: pi's `Usage` minus what only pi can compute, plus
+ *  provenance. Derived from pi's type rather than paralleling it, because
+ *  view/turns.ts parses pi's session JSONL as a RoleUsage — a pi upgrade would
+ *  otherwise break the two silently.
  *
- *  From pi's contract, and the reason two fields are optional:
- *  - `reasoning` is a SUBSET of `output` (output already includes it), left
- *    undefined by providers that expose no breakdown. Adding it to output
- *    double-counts.
- *  - `cacheWrite` is optional HERE though required in pi's type: absence means
- *    the provider never reported it, which is different from a measured zero.
- *    Both the pi and codex-cli lanes hit this — cache_write_input_tokens is
- *    absent upstream (codex #32479, pi #6469), so a 0 there is a broken meter,
- *    not a measurement. Absence carries that, so no parallel gap-list is
- *    needed.
- *  `cacheWrite1h` is omitted rather than inherited: no lane sets it and neither
- *  combinator carries it, and a type that advertises a field addUsage silently
- *  drops is how a sum starts losing tokens on the next pi upgrade. */
+ *  CANONICAL RULES for usage numbers everywhere in this codebase:
+ *  - Absent ≠ measured zero. `cacheWrite` is optional here though required in
+ *    pi's type: cache_write_input_tokens is absent upstream on both the pi and
+ *    codex-cli lanes (codex #32479, pi #6469), so a 0 there is a broken meter,
+ *    not a measurement. Every reader, summer, and renderer must preserve the
+ *    distinction rather than coercing absence to 0.
+ *  - `reasoning` is a SUBSET of `output`; adding it to output double-counts.
+ *    Undefined when the provider exposes no breakdown.
+ *  - `cacheWrite1h` is omitted rather than inherited: no lane sets it and
+ *    neither combinator carries it, and a field addUsage silently drops is how
+ *    a sum starts losing tokens on the next pi upgrade. */
 export type RoleUsage = Omit<PiUsage, "cost" | "totalTokens" | "cacheWrite" | "cacheWrite1h"> & {
   cacheWrite?: number;
-  /** Which adapter produced this record — provenance, not convention (see
-   *  Meter). Absent on records written before 2026-08-09. */
+  /** Provenance, not convention (see Meter). Absent before 2026-08-09. */
   meter?: Meter;
-  /** No dollar field, deliberately. Every role runs on a subscription lane
-   *  (see ROLE_DEFAULTS), so every price a provider reports — pi's per-message
-   *  cost, the claude CLI's `total_cost_usd` — is notional list price, not
-   *  money spent. Tokens and the model identity (recorded per dispatch as
-   *  `modelFamily`) are the facts; a reader wanting dollars applies a rate
-   *  table at read time, where "these are list prices" is an explicit
-   *  assumption rather than a field name that quietly asserts otherwise. */
+  /** No dollar field, deliberately: every role runs on a subscription lane, so
+   *  every provider-reported price is notional list price, not money spent. A
+   *  reader wanting dollars applies a rate table at read time. */
 };
 
-/** Field-wise RoleUsage sum (reduce-friendly). An optional field stays absent
- *  unless some addend reported it: a measured 0 and "no backend reported this"
- *  are different records, and coercing the second into the first is how this
- *  journal used to claim things it did not know. */
-/** Sum two usages FROM THE SAME METER. The generic parameter is the whole
- *  point: `M` is bound by the first argument's meter, so passing a
- *  `codex-cli-jsonl` usage as `b` to a `pi-session` `a` is a type error at the
- *  call site — the cross-meter sum is inexpressible rather than merely
- *  discouraged (issue #32).
- *
- *  Type-level and not a runtime throw, deliberately, and the two are not
- *  interchangeable: see the totality note in the body. A checked call site
- *  costs nothing at runtime; a throw on the settle path costs the campaign. */
+/** Field-wise sum of two usages FROM THE SAME METER; an optional field stays
+ *  absent unless some addend reported it (absent ≠ zero; see RoleUsage). `M` is
+ *  bound by `a`'s meter, so a cross-meter sum is a type error at the call site
+ *  rather than merely discouraged (issue #32). Type-level and not a runtime
+ *  throw — see the totality note in the body. */
 export function addUsage<M extends Meter | undefined>(
   a: RoleUsage & { meter?: M },
   b: RoleUsage & { meter?: NoInfer<M> },
 ): RoleUsage {
   const reported = (x?: number, y?: number) =>
     x === undefined && y === undefined ? undefined : (x ?? 0) + (y ?? 0);
-  // Deliberately TOTAL: this runs inside persist()'s store.append argument on
-  // the settle path, where a throw would skip the completion record, orphan a
-  // report already on disk, and reject handle.settled — whose contract is
-  // "resolves, never rejects" — taking the whole campaign down with every live
+  // Deliberately TOTAL: this runs inside persist()'s store.append on the settle
+  // path, where a throw skips the completion record and rejects handle.settled
+  // (contract: "resolves, never rejects"), killing the campaign with every live
   // agent's work unharvested. Observability may not end a campaign (rule 2).
   const sum: RoleUsage = {
     input: a.input + b.input,
@@ -532,24 +467,19 @@ export function addUsage<M extends Meter | undefined>(
     cacheWrite: reported(a.cacheWrite, b.cacheWrite),
     reasoning: reported(a.reasoning, b.reasoning),
   };
-  // Provenance survives only when both addends agree. Summing a stamped record
-  // with an unstamped one (a pre-2026-08-09 line, or usage rebuilt from pi's
-  // session JSONL) leaves it absent: "unknown" is the truth, and asserting the
-  // known one would be the guessing this field exists to stop.
+  // Provenance survives only when both addends agree; mixing a stamped record
+  // with an unstamped one leaves it absent, because "unknown" is the truth.
   if (a.meter !== undefined && a.meter === b.meter) sum.meter = a.meter;
   return sum;
 }
 
-/** `a - b`, field-wise, for turning a cumulative session total into the leaf
- *  each wake actually spent. Optional fields follow the same absent-vs-zero
- *  rule as addUsage: a field neither side reported stays absent. Clamped at
- *  zero — a session total is monotone (usage() sums every message ever plus
- *  compaction), so a negative would mean the baseline came from another
- *  session, and recording a negative token count would poison every sum
- *  downstream. */
+/** `a - b`, field-wise, turning a cumulative session total into the leaf each
+ *  wake actually spent (absent ≠ zero; see RoleUsage). Clamped at zero: a
+ *  session total is monotone, so a negative means the baseline came from
+ *  another session, and a negative token count poisons every sum downstream. */
 export function subUsage(a: RoleUsage, b?: RoleUsage): RoleUsage & { nonMonotone?: true } {
   // Copy, never alias: the caller keeps `a` as the next baseline while this
-  // result is journalled, and a shared object would couple the two.
+  // result is journalled.
   if (b === undefined) return { ...a };
   let clamped = false;
   const clamp = (x: number) => {
@@ -557,8 +487,7 @@ export function subUsage(a: RoleUsage, b?: RoleUsage): RoleUsage & { nonMonotone
     clamped = true;
     return 0;
   };
-  // An absent minuend stays absent: subtracting from "the provider never
-  // reported this" must not manufacture a measured zero.
+  // An absent minuend stays absent (absent ≠ zero; see RoleUsage).
   const less = (x?: number, y?: number) => (x === undefined ? undefined : clamp(x - (y ?? 0)));
   const d: RoleUsage & { nonMonotone?: true } = {
     input: clamp(a.input - b.input),
@@ -568,29 +497,21 @@ export function subUsage(a: RoleUsage, b?: RoleUsage): RoleUsage & { nonMonotone
     reasoning: less(a.reasoning, b.reasoning),
   };
   if (a.meter !== undefined) d.meter = a.meter;
-  // The clamp is the last line of defence, not a silent correction: a session
-  // total is monotone today, and if that ever stops being true real spend
-  // vanishes into a Math.max. Absence must be observable — mark it.
+  // The clamp is a last line of defence, not a silent correction: if totals
+  // ever stop being monotone, real spend vanishes into it. Mark it.
   if (clamped) d.nonMonotone = true;
   return d;
 }
 
 /** The one accumulation rule for pi-lane usage. Exported because view/turns.ts
- *  rebuilds the same totals from pi's own session JSONL, and the agreement
- *  between the two is the 2026-08-09 study's only genuine cross-check — journal
- *  peaks against session trees agreed to 0.2%, and the one place they disagreed
- *  (41% on fresh input) located a real defect. Two hand-synced copies of this
- *  rule would have made that check a comparison of one rule against a stale
- *  fork of itself (issue #43). A view may import from core; core may not import
- *  from a view (scripts/conformance-check.ts). */
+ *  rebuilds the same totals from pi's session JSONL; their agreement is the
+ *  2026-08-09 study's only genuine cross-check (agreed to 0.2%, and the one 41%
+ *  disagreement located a real defect). A second copy would make that check
+ *  compare the rule against a stale fork of itself (issue #43). */
 export function sumMessagesUsage(messages: readonly unknown[]): RoleUsage {
   const total: RoleUsage = { input: 0, output: 0, cacheRead: 0, meter: "pi-session" };
-  // cacheWrite is deliberately NOT initialised: pi's type requires the field
-  // and always emits 0, but cache_write_input_tokens is absent upstream
-  // (pi #6469 / codex #32479), so that 0 is a broken meter rather than a
-  // measurement. Leaving it absent lets the record say "unknown". Delete this
-  // guard the day upstream reports it — this list is provider bugs, not
-  // schema.
+  // cacheWrite deliberately NOT initialised (absent ≠ zero; see RoleUsage).
+  // Drop this guard the day upstream actually reports it.
   for (const m of messages) {
     const msg = m as { role?: string; usage?: RoleUsage };
     if (msg.role !== "assistant" || !msg.usage) continue;

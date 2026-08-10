@@ -2,20 +2,10 @@
 // assertion here is a refusal purchased with a specific error from the
 // 2026-08-09 study (docs/measurement-protocol.md).
 import { expect, test } from "bun:test";
-import * as fs from "node:fs";
-import * as path from "node:path";
+import { recordFixture } from "./helpers.ts";
 
 const { campaignSpend, formatSpend } = await import("../src/view/spend.ts");
-const { GateStore } = await import("../src/gates.ts");
-
-/** A campaign directory with a statement, so GateStore will open it. */
-function fixture(records: Record<string, unknown>[]): string {
-  const dir = fs.mkdtempSync("/private/tmp/coverify-spend-");
-  fs.writeFileSync(path.join(dir, "STATEMENT.md"), "# STATEMENT\n\nA fixture.\n");
-  const store = new GateStore(dir);
-  for (const r of records) store.append(r as { kind: "note" } & Record<string, unknown>);
-  return dir;
-}
+const fixture = (records: Record<string, unknown>[]) => recordFixture("spend", records);
 
 test("lanes are reported separately and never summed into one number", () => {
   // `input` is the uncached part on every lane, but the lanes bill against

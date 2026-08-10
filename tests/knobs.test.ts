@@ -7,11 +7,8 @@ const { KNOBS, knobSnapshot, knobUsage, readKnob, resolvedKnobs, formatResolvedK
   await import("../src/knobs.ts");
 
 test("a present-but-invalid value hard-stops instead of falling back", () => {
-  // The subtle rule, verified against envalid's behaviour before adopting it:
-  // a declared default must NOT rescue a value that was set and is wrong. A
-  // typo'd limit that silently means "no limit", or an effort setting that is
-  // silently ignored, is worse than a crash — the second would make issue
-  // #31's A/B compare an arm against itself.
+  // A declared default must not rescue a present-but-wrong value: a silently
+  // ignored effort setting makes #31's A/B compare an arm against itself.
   try {
     process.env.COVERIFY_RUN_MEM_MB = "lots";
     expect(() => readKnob("COVERIFY_RUN_MEM_MB")).toThrow(/is invalid/);
@@ -26,10 +23,8 @@ test("a present-but-invalid value hard-stops instead of falling back", () => {
 });
 
 test("reads are live, not parsed once and frozen", () => {
-  // Why no config library was adopted: envalid, znv and @t3-oss/env-core all
-  // parse eagerly and freeze. This codebase resolves specs and limits per call
-  // so a mid-campaign change takes effect, and the tests set env vars after
-  // import and expect the next read to see them.
+  // Reads are live: the surveyed config libraries all parse once and freeze,
+  // which this codebase and its tests depend on not happening.
   try {
     process.env.COVERIFY_RETRY_MAX = "0";
     expect(readKnob("COVERIFY_RETRY_MAX")).toBe("0");
@@ -100,13 +95,9 @@ test("the config report names the effective role routing, not just the variables
 });
 
 test("declared defaults match the real read sites", async () => {
-  // A registry that DISPLAYS a wrong default is worse than none: `coverify
-  // config` is billed as the A/B pre-flight, so a confidently-wrong number
-  // there is read as ground truth. The first version shipped three wrong —
-  // RETRY_MAX 5 (really 3), RETRY_BASE_MS 1000 (really 2000), and
-  // CODEX_TRANSPORT "responses", which is not even a member of pi's Transport
-  // union, so an operator who trusted it and set it explicitly would have
-  // pushed an invalid transport into pi.
+  // `coverify config` is the A/B pre-flight, so a wrong displayed default is
+  // read as ground truth. Three shipped wrong once, including a transport
+  // value that is not a member of pi's Transport union.
   const { retryPolicy, codexTransport } = await import("../src/providers.ts");
   const { runTimeoutMs, runMemMb } = await import("../src/sandbox.ts");
   const declared = (n: string) => KNOBS.find((k) => k.name === n)?.fallback;
@@ -227,12 +218,9 @@ test("no run-stamp field carries a command template verbatim when it was overrid
 });
 
 test("a free-form string knob accepts surrounding whitespace", () => {
-  // Regression: the re-serialization guard that defeats typebox Convert's
-  // leniency on NUMBERS was applied to strings too, where Convert is the
-  // identity and Check always passes — so it could only ever reject. It
-  // rejected any command template with a trailing newline (a heredoc, a .env
-  // loader) and, since validateKnobs() is the first statement of prove(),
-  // refused to start the campaign, with an empty reason.
+  // The numeric re-serialization guard must not touch strings: for a plain
+  // string Convert is the identity, so it could only ever reject — and did,
+  // on any template with a trailing newline, refusing to start the campaign.
   try {
     process.env.COVERIFY_CLAUDE_CMD = " claude -p \n";
     expect(() => validateKnobs()).not.toThrow();
