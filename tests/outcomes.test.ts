@@ -5,7 +5,7 @@
 import { expect, test } from "bun:test";
 import { recordFixture } from "./helpers.ts";
 
-const { campaignOutcomes, formatOutcomes } = await import("../src/view/outcomes.ts");
+const { campaignOutcomes, formatOutcomes } = await import("../src/telemetry/outcomes.ts");
 const fixture = (records: Record<string, unknown>[]) => recordFixture("outcomes", records);
 
 test("spend splits by whether the revision ever promoted", () => {

@@ -7,8 +7,8 @@
 // pi's session JSONL logs a per-message DELTA, so those two are restated for
 // this corpus rather than silently answered — a check that cannot apply must say
 // so (rule 10).
-import { median } from "./shared.js";
-import { campaignTurns } from "./turns.js";
+import { median } from "../view/shared.js";
+import { campaignTurns } from "../view/turns.js";
 
 export interface CorpusCheck {
   n: number;

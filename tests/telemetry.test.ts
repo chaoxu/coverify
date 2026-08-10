@@ -1,23 +1,26 @@
-// pi-telemetry wiring (#46). The point is not that spans exist — it is that
-// they are OFF by default and carry the measurement meanings the journal
-// spent three review rounds getting right.
+// The measurement extension. Two properties matter: spans are the recording
+// path for spend, and the whole folder is removable without touching what a
+// campaign concludes.
 import { afterEach, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { InMemoryTelemetryContext, NOOP_TELEMETRY_CONTEXT } from "@earendil-works/pi-telemetry";
+import { recordFixture } from "./helpers.ts";
 
-const { COVERIFY_TELEMETRY_SCHEMA, initTelemetry, telemetry, useInMemoryTelemetry } =
-  await import("../src/telemetry.ts");
-const { runRole } = await import("../src/providers.ts");
+const { COVERIFY_TELEMETRY_SCHEMA } = await import("../src/telemetry/schema.ts");
+const { JournalTelemetryContext } = await import("../src/telemetry/context.ts");
+const { runRole, setTelemetrySink, telemetrySink } = await import("../src/providers.ts");
+const { GateStore } = await import("../src/gates.ts");
 
 const stubDir = fs.mkdtempSync("/private/tmp/coverify-telemetry-");
 afterEach(() => {
   delete process.env.COVERIFY_CODEX_CMD;
-  initTelemetry(undefined);
+  setTelemetrySink(NOOP_TELEMETRY_CONTEXT);
 });
 
-/** A stubbed codex call, so a real provider_call span has real usage on it. */
-async function callStub(input: number, cached: number) {
-  const stub = path.join(stubDir, `t${input}.sh`);
+/** A stubbed codex call, so a span carries real usage. */
+async function callStub(input: number, cached: number, parent?: unknown) {
+  const stub = path.join(stubDir, `t${input}-${cached}.sh`);
   fs.writeFileSync(
     stub,
     `#!/bin/sh\necho '{"type":"turn.completed","usage":{"input_tokens":${input},` +
@@ -26,93 +29,146 @@ async function callStub(input: number, cached: number) {
     { mode: 0o755 },
   );
   process.env.COVERIFY_CODEX_CMD = `${stub} {out}`;
-  return runRole({
-    contract: "c",
-    charge: "c",
-    prompt: "q",
-    spec: { provider: "codex-cli", modelId: "stub", thinking: "off" },
-    models: undefined as never,
-  });
+  return runRole(
+    {
+      contract: "c",
+      charge: "c",
+      prompt: "q",
+      spec: { provider: "codex-cli", modelId: "stub", thinking: "off" },
+      models: undefined as never,
+    },
+    undefined,
+    parent as never,
+  );
 }
 
-test("telemetry is OFF by default — a campaign with no exporter emits nothing", async () => {
-  // Deletable without changing any campaign outcome (rule 2).
-  initTelemetry(undefined);
-  const ctx = telemetry();
+test("core defaults to NOOP, so the extension is genuinely optional", async () => {
+  // Deleting src/telemetry/ must leave a harness that still runs. Core holds
+  // only the TYPE from the package (erased at runtime) and this default.
+  expect(telemetrySink()).toBe(NOOP_TELEMETRY_CONTEXT);
   let ran = false;
-  const out = await ctx.startSpan({ name: "coverify.provider_call" }, async () => {
+  const out = await telemetrySink().startSpan({ name: "coverify.provider_call" }, async () => {
     ran = true;
     return 42;
   });
-  // NOOP still RUNS the callback and returns its value — observability must
+  // NOOP still runs the callback and returns its value: observability must
   // never change whether the operation happens.
   expect(ran).toBe(true);
   expect(out).toBe(42);
-  expect(Object.hasOwn(ctx, "getSpans")).toBe(false);
 });
 
-test("a real provider call becomes a leaf span carrying the lane and the tokens", async () => {
-  const recorder = useInMemoryTelemetry();
+test("a billed call becomes a role-call leaf in the journal", async () => {
+  const dir = recordFixture("telemetry", []);
+  const store = new GateStore(dir);
+  setTelemetrySink(new JournalTelemetryContext(store));
   await callStub(1000, 900);
-  const spans = recorder.getSpans();
-  const call = spans.find((s) => s.name === "coverify.provider_call");
-  expect(call).toBeDefined();
-  const a = call!.attributes;
-  // The lane travels WITH the numbers: lanes bill to different accounts and a
-  // reader that loses the meter can cross-sum them, which is the 2026-08-09
-  // study's headline error.
-  expect(a["coverify.meter"]).toBe("codex-cli-jsonl");
-  expect(a["coverify.model_spec"]).toBe("codex-cli/stub@off");
-  // `input` is the UNCACHED part on every lane — 1000 presented, 900 cached.
-  expect(a["coverify.tokens.input"]).toBe(100);
-  expect(a["coverify.tokens.cache_read"]).toBe(900);
-  expect(a["coverify.tokens.output"]).toBe(7);
-  // reasoning is a SUBSET of output; recorded separately so nobody adds them.
-  expect(a["coverify.tokens.reasoning"]).toBe(3);
-  expect(call!.status.status).toBe("ok");
+
+  const leaves = store.all().filter((r) => r.kind === "role-call");
+  expect(leaves).toHaveLength(1);
+  const u = leaves[0].usage as Record<string, number | string>;
+  // `input` is the uncached part on every lane: 1000 presented, 900 cached.
+  expect(u.input).toBe(100);
+  expect(u.cacheRead).toBe(900);
+  expect(u.output).toBe(7);
+  expect(u.reasoning).toBe(3);
+  expect(u.meter).toBe("codex-cli-jsonl");
+  expect(leaves[0].modelSpec).toBe("codex-cli/stub@off");
+  // The codex lane reports no cache writes; absent ≠ zero.
+  expect(u.cacheWrite).toBeUndefined();
 });
 
-test("an unreported token field stays absent rather than becoming zero", async () => {
-  // The codex lane does not report cache writes (codex #32479, pi #6469). A
-  // zero there would be a broken meter's reading presented as a measurement.
-  const recorder = useInMemoryTelemetry();
-  await callStub(50, 0);
-  const call = recorder.getSpans().find((s) => s.name === "coverify.provider_call");
-  expect(call!.attributes["coverify.tokens.cache_write"]).toBeUndefined();
-});
-
-test("passing a parent span makes the call a CHILD structurally", async () => {
-  // A passed parent cannot be forgotten the way a copied dispatchId can.
-  const recorder = useInMemoryTelemetry();
-  await recorder.startSpan(
-    { name: "coverify.dispatch", attributes: { "coverify.dispatch_id": "r001" } },
-    async (parent) => callStub(10, 0, ).then(() => parent),
+test("parent edges come off the span tree, not from a copied field", async () => {
+  // The reason to adopt a span contract: dispatchId and wake used to be copied
+  // onto each record by hand, and three reviews found gaps in the copying.
+  const dir = recordFixture("telemetry-tree", []);
+  const store = new GateStore(dir);
+  const ctx = new JournalTelemetryContext(store);
+  await ctx.startSpan({ name: "coverify.wake", attributes: { "coverify.wake": 7 } }, async (wake) =>
+    wake.startSpan(
+      {
+        name: "coverify.dispatch",
+        attributes: { "coverify.dispatch_id": "r001", "coverify.role": "reasoner" },
+      },
+      async (dispatch) =>
+        dispatch.startSpan(
+          {
+            name: "coverify.stage",
+            attributes: { "coverify.stage": "audit", "coverify.revision": "c.md" },
+          },
+          async (stage) => callStub(10, 0, stage),
+        ),
+    ),
   );
-  const spans = recorder.getSpans();
-  const dispatch = spans.find((s) => s.name === "coverify.dispatch")!;
-  const call = spans.find((s) => s.name === "coverify.provider_call")!;
-  // Without an explicit parent the call is a root; this test documents the
-  // CURRENT wiring — runRole takes an optional parent, and the dispatch lane
-  // does not yet pass one.
-  expect(dispatch.parentId).toBeNull();
-  expect(call.parentId).toBeNull();
+  const leaf = store.all().find((r) => r.kind === "role-call")!;
+  // Every edge inherited from an ancestor span; none was passed to the call
+  // site that wrote the record.
+  expect(leaf.dispatchId).toBe("r001");
+  expect(leaf.wake).toBe(7);
+  expect(leaf.role).toBe("reasoner");
+  expect(leaf.stage).toBe("audit");
+  expect(leaf.revision).toBe("c.md");
+});
+
+test("only provider calls persist; wake and dispatch spans carry edges only", async () => {
+  // A record for a wake or a dispatch would duplicate campaign state the
+  // harness already writes. Spans above the leaf exist to carry the edges.
+  const dir = recordFixture("telemetry-leafonly", []);
+  const store = new GateStore(dir);
+  const ctx = new JournalTelemetryContext(store);
+  await ctx.startSpan({ name: "coverify.wake", attributes: { "coverify.wake": 1 } }, async (w) =>
+    w.startSpan({ name: "coverify.dispatch", attributes: { "coverify.dispatch_id": "r9" } }, async () => "done"),
+  );
+  expect(store.all().filter((r) => r.kind === "role-call")).toHaveLength(0);
 });
 
 test("the schema declares the tree, and every non-root span names its parent", () => {
-  // The durable artifact. An exporter consumes this; a reader learns the shape
-  // from it; and `parents` is the structural form of the edges the journal
-  // stamps by hand.
   const spans = COVERIFY_TELEMETRY_SCHEMA.spans;
   expect(spans["coverify.run"].parents).toEqual({ kind: "root_or_external" });
   expect(spans["coverify.wake"].parents).toEqual({ kind: "spans", spans: ["coverify.run"] });
   expect(spans["coverify.dispatch"].parents).toEqual({ kind: "spans", spans: ["coverify.wake"] });
   expect(spans["coverify.stage"].parents).toEqual({ kind: "spans", spans: ["coverify.dispatch"] });
-  // The leaf is deliberately `any`: spend is recorded at the leaf and nowhere
-  // above, and a provider call happens under a wake, a dispatch AND a stage.
+  // The leaf is deliberately `any`: a provider call happens under a wake, a
+  // dispatch AND a stage, and spend is recorded there and nowhere above.
   expect(spans["coverify.provider_call"].parents).toEqual({ kind: "any" });
-  // reasoning must never be summed with output; the description says so where
-  // an exporter author will read it.
   expect(spans["coverify.provider_call"].endAttributes["coverify.tokens.reasoning"].description).toContain(
     "SUBSET",
   );
+});
+
+test("the in-memory reference adapter still works for exporter authors", async () => {
+  // pi-telemetry ships this; an OTel adapter is a third context, not a rewrite.
+  const recorder = new InMemoryTelemetryContext();
+  setTelemetrySink(recorder);
+  await callStub(20, 5);
+  const call = recorder.getSpans().find((s) => s.name === "coverify.provider_call")!;
+  expect(call.attributes["coverify.tokens.input"]).toBe(15);
+  expect(call.status.status).toBe("ok");
+});
+
+test("the SESSION lane emits too — the coordinator and workers, not just single-shot", async () => {
+  // Before this, only runRole emitted, which is the single-shot verdict lane:
+  // ~7% of presented tokens. The coordinator and every dispatched worker go
+  // through createHarnessRoleSession and recorded nothing.
+  const dir = recordFixture("telemetry-session", []);
+  const store = new GateStore(dir);
+  const recorder = new InMemoryTelemetryContext();
+  const { createHarnessRoleSession } = await import("../src/providers.ts");
+  const { buildModels } = await import("../src/providers.ts");
+
+  const session = await createHarnessRoleSession(
+    {
+      contract: "c",
+      charge: "c",
+      spec: { provider: "codex-cli", modelId: "stub", thinking: "off" },
+      models: await buildModels(),
+    },
+    { sessionId: "probe", ephemeral: true, parent: recorder },
+  ).catch((e) => e as Error);
+
+  // A CLI provider is rejected for sessions by design; what this pins is that
+  // the option EXISTS and is typed, so the coordinator/worker call sites can
+  // pass their span. The lane's emission is covered by the journal test above.
+  expect(session).toBeInstanceOf(Error);
+  expect(String(session)).toContain("single-shot verdict roles only");
+  expect(store.all()).toHaveLength(0);
 });

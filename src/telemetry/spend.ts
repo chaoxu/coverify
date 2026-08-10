@@ -12,7 +12,7 @@
 //   - never add reasoning to output: reasoning is a SUBSET of output, so adding
 //     it double-counts
 import type { Meter, RoleUsage } from "../providers.js";
-import { M, runRecords } from "./shared.js";
+import { M, runRecords } from "../view/shared.js";
 
 /** One lane's totals. `input` is always the uncached part. */
 export interface LaneSpend {

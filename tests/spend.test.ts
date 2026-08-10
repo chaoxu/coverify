@@ -4,7 +4,7 @@
 import { expect, test } from "bun:test";
 import { recordFixture } from "./helpers.ts";
 
-const { campaignSpend, formatSpend } = await import("../src/view/spend.ts");
+const { campaignSpend, formatSpend } = await import("../src/telemetry/spend.ts");
 const fixture = (records: Record<string, unknown>[]) => recordFixture("spend", records);
 
 test("lanes are reported separately and never summed into one number", () => {

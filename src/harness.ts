@@ -25,8 +25,10 @@ import { coordinatorTools } from "./coordinator-tools.js";
 import { archiveLedgerHistory, recordRunConfig, wakeBookkeeping } from "./observe.js";
 import { loadLauncherContract } from "./launcher.js";
 import { CHARGES } from "./roles.js";
+import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import {
   buildModels,
+  setTelemetrySink,
   createHarnessRoleSession,
   roleModelSpec,
   specKey,
@@ -45,6 +47,9 @@ export interface CampaignOptions {
   /** User-set reasoning-only policy: refuse every technician dispatch, so no
    *  code is written or run anywhere in the campaign (Chao, 2026-08-08). */
   noComputation?: boolean;
+  /** Builds the measurement sink from the run's store. Supplied by cli.ts;
+   *  absent means NOOP, which is what makes src/telemetry/ deletable. */
+  telemetry?: (store: GateStore) => TelemetryContext;
 }
 
 export interface Handle {
@@ -118,6 +123,9 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   // record predates 2026-08-09" breaks if a present-day writer emits unstamped.
   const runId = randomUUID().slice(0, 8);
   store.setRunId(runId);
+  // The measurement extension, if one was supplied. Core never imports it: the
+  // factory comes from cli.ts, so deleting src/telemetry/ leaves this a no-op.
+  if (opts.telemetry !== undefined) setTelemetrySink(opts.telemetry(store));
 
   // One-time import: guidance recorded before the event-log unification
   // (2026-08-07) lives only in the in-tree journal. The marker keeps the

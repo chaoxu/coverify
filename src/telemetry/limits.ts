@@ -11,7 +11,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { runRecords } from "./shared.js";
+import { runRecords } from "../view/shared.js";
 
 export interface LimitSample {
   ts: number;

@@ -5,7 +5,7 @@
 // onPathFraction for the one refusal.
 import { promotionsNeedingRetraction } from "../gates.js";
 import type { RoleUsage } from "../providers.js";
-import { M, median, runRecords } from "./shared.js";
+import { M, median, runRecords } from "../view/shared.js";
 import { type LaneSpend, bumpLane, bySpend, inferLanes, roleOf } from "./spend.js";
 
 /** The four verification stages plus the pre-verification gate. A stage record

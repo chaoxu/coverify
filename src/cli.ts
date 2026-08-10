@@ -24,12 +24,14 @@ import {
 import { runCampaign } from "./harness.js";
 import { writeTrace } from "./view/trace.js";
 import { campaignTurns } from "./view/turns.js";
-import { campaignSpend, formatSpend } from "./view/spend.js";
-import { campaignOutcomes, formatOutcomes } from "./view/outcomes.js";
-import { corpusChecks, formatCorpusChecks } from "./view/corpus.js";
-import { campaignLimits, formatLimits } from "./view/limits.js";
+// The whole measurement extension, imported only here. Delete src/telemetry/
+// and these four lines and the harness still proves theorems.
+import { campaignSpend, formatSpend } from "./telemetry/spend.js";
+import { campaignOutcomes, formatOutcomes } from "./telemetry/outcomes.js";
+import { corpusChecks, formatCorpusChecks } from "./telemetry/corpus.js";
+import { campaignLimits, formatLimits } from "./telemetry/limits.js";
 import { formatResolvedKnobs, knobUsage, resolvedKnobs, validateKnobs } from "./knobs.js";
-import { initTelemetry } from "./telemetry.js";
+import { JournalTelemetryContext } from "./telemetry/context.js";
 
 function usage(): never {
   console.error(`usage:
@@ -203,7 +205,7 @@ async function prove(resume: boolean): Promise<void> {
   // nothing provided.
   try {
     validateKnobs();
-    initTelemetry(process.env.COVERIFY_TELEMETRY);
+
   } catch (e) {
     console.error(String(e instanceof Error ? e.message : e));
     process.exit(2);
@@ -259,6 +261,7 @@ async function prove(resume: boolean): Promise<void> {
     }
   }
   const synthesis = await runCampaign({
+    telemetry: (store) => new JournalTelemetryContext(store),
     campaignDir: dir,
     userAgentLimit: agentLimit(),
     maxWakes: optionalInt("max-wakes"),

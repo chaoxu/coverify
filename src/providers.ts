@@ -30,8 +30,11 @@ import { fileCredentialStore } from "./credentials.js";
 import { CLAUDE_BRIDGE_ID, claudeBridgeProvider } from "./claude-bridge.js";
 import { envNumber, type WriteScope } from "./sandbox.js";
 import { workspaceTools } from "./workspace.js";
-import { recordProviderCall, telemetry } from "./telemetry.js";
-import type { TelemetryContext } from "@earendil-works/pi-telemetry";
+import {
+  NOOP_TELEMETRY_CONTEXT,
+  type TelemetryContext,
+  type TelemetrySpan,
+} from "@earendil-works/pi-telemetry";
 
 export type Models = ReturnType<typeof createModels>;
 
@@ -295,14 +298,13 @@ export async function runRole(
    *  under the process context (NOOP without an exporter). */
   parent?: TelemetryContext,
 ): Promise<RoleResult> {
-  return (parent ?? telemetry()).startSpan(
+  return (parent ?? sink).startSpan(
     {
       name: "coverify.provider_call",
       attributes: { "coverify.model_spec": specKey(run.spec) },
     },
     async (span) => {
       const result = await runRoleInner(run, signal);
-      span.setAttributes({ "coverify.meter": result.usage?.meter });
       if (result.usage) {
         recordProviderCall(span, result.usage, {
           attempts: result.attempts,
@@ -312,6 +314,35 @@ export async function runRole(
       return result;
     },
   );
+}
+
+/** The measurement sink. Injected by cli.ts via runCampaign; NOOP until then,
+ *  so core never imports src/telemetry/ and that folder stays deletable. */
+let sink: TelemetryContext = NOOP_TELEMETRY_CONTEXT;
+export function setTelemetrySink(next: TelemetryContext): void {
+  sink = next;
+}
+export function telemetrySink(): TelemetryContext {
+  return sink;
+}
+
+/** Attach a billed call's tokens to its span. Absent fields stay absent:
+ *  absent ≠ zero; see RoleUsage. */
+function recordProviderCall(
+  span: TelemetrySpan,
+  usage: RoleUsage,
+  counts?: { attempts?: number; requests?: number },
+): void {
+  span.setAttributes({
+    "coverify.tokens.input": usage.input,
+    "coverify.tokens.cache_read": usage.cacheRead,
+    "coverify.tokens.output": usage.output,
+    "coverify.tokens.cache_write": usage.cacheWrite,
+    "coverify.tokens.reasoning": usage.reasoning,
+    "coverify.meter": usage.meter,
+    "coverify.attempts": counts?.attempts,
+    "coverify.requests": counts?.requests,
+  });
 }
 
 async function runRoleInner(
@@ -552,6 +583,9 @@ export type HarnessSessionOpts = {
   /** Stable session identity; becomes the provider's prompt_cache_key (keep
    *  ≤64 chars). */
   sessionId: string;
+  /** Parent span, so each turn nests under its dispatch or wake rather than
+   *  rooting on its own. */
+  parent?: TelemetryContext;
 } & (
   | {
       /** Directory for durable session trees (e.g. <campaign>/.coverify/sessions). */
@@ -672,9 +706,7 @@ export async function createHarnessRoleSession(
   // harness.abort() only aborts an in-flight prompt, and between attempts there
   // is none. retryAssistantCall honors this controller as terminal.
   const sessionStop = new AbortController();
-  return {
-    capabilities: { steerable: true, durable: !opts.ephemeral },
-    async ask(prompt: string): Promise<string> {
+  const askTurn = async (prompt: string): Promise<string> => {
       // Turn-level retry at the ask boundary: retryAssistantCall restarts the
       // turn on transient transport failures with backoff, while quota/billing
       // errors and aborts stay fail-fast. 2026-08-08 measured ~30% of long Sol
@@ -724,6 +756,32 @@ export async function createHarnessRoleSession(
         .filter((b): b is { type: "text"; text: string } => (b as { type?: string }).type === "text")
         .map((b) => b.text)
         .join("\n");
+  };
+  return {
+    capabilities: { steerable: true, durable: !opts.ephemeral },
+    /** Each billed turn is a span. Without this the coordinator and every
+     *  dispatched worker — ~93% of presented tokens — emitted nothing, because
+     *  only the single-shot lane went through runRole. */
+    ask(prompt: string): Promise<string> {
+      return (opts.parent ?? sink).startSpan(
+        { name: "coverify.provider_call", attributes: { "coverify.model_spec": specKey(run.spec) } },
+        async (span) => {
+          // usage() is CUMULATIVE over the session, so this turn is the delta.
+          const before = addUsage(sumMessagesUsage(allMessages), compactionUsage);
+          const attemptsBefore = attempts;
+          const requestsBefore = allMessages.filter((m) => (m as { role?: string }).role === "assistant").length;
+          try {
+            return await askTurn(prompt);
+          } finally {
+            const after = addUsage(sumMessagesUsage(allMessages), compactionUsage);
+            const requestsAfter = allMessages.filter((m) => (m as { role?: string }).role === "assistant").length;
+            recordProviderCall(span, subUsage(after, before), {
+              attempts: attempts - attemptsBefore,
+              requests: Math.max(0, requestsAfter - requestsBefore),
+            });
+          }
+        },
+      );
     },
     approxTokens(): number {
       return estimateContextTokens(contextMessages).tokens;

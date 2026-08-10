@@ -6,7 +6,7 @@
 import { expect, test } from "bun:test";
 import { sessionFixture } from "./helpers.ts";
 
-const { corpusChecks, formatCorpusChecks } = await import("../src/view/corpus.ts");
+const { corpusChecks, formatCorpusChecks } = await import("../src/telemetry/corpus.ts");
 
 const msg = (ts: number, input: number) =>
   `{"type":"message","message":{"role":"assistant","content":"x","timestamp":${ts},` +
@@ -91,13 +91,13 @@ test("burn rate is measured over a real span, not between adjacent samples", asy
   // rise by 1ms reported 7,200,000 points/hour on a live campaign. The
   // quantity that matters is the sustained rate: Danus died at ~11.6
   // points/hour (55% -> 100% in 3h52m).
-  const { campaignLimits } = await import("../src/view/limits.ts");
+  const { campaignLimits } = await import("../src/telemetry/limits.ts");
   // No rollouts will match this fixture, so this pins the honest-empty path:
   // an absent measurement must not render as a measurement of zero.
   const dir = sessionFixture("limits", { "2026-08-02T00-00-00_x.jsonl": [msg(1000, 10)] });
   const r = campaignLimits(dir);
   expect(r.attribution).toBe("none");
   expect(r.fastestBurn).toBeUndefined();
-  const { formatLimits } = await import("../src/view/limits.ts");
+  const { formatLimits } = await import("../src/telemetry/limits.ts");
   expect(formatLimits(r)).toContain("not a measurement of zero");
 });
