@@ -95,7 +95,7 @@ export function campaignIdPath(campaignDir: string): string {
  * Existing campaigns keep their id by writing the legacy path hash on first
  * read.
  */
-function campaignIdentity(campaignDir: string, stateDir: string): string {
+function campaignIdentity(campaignDir: string, stateDir: string, readOnly = false): string {
   const idFile = campaignIdPath(campaignDir);
   if (fs.existsSync(idFile)) {
     const id = fs.readFileSync(idFile, "utf-8").trim();
@@ -106,11 +106,16 @@ function campaignIdentity(campaignDir: string, stateDir: string): string {
   const id = fs.existsSync(path.join(stateDir, legacy, "gates.jsonl"))
     ? legacy
     : sha256Text(`${campaignDir}:${Date.now()}:${Math.random()}`).slice(0, 16);
-  try {
-    fs.mkdirSync(path.dirname(idFile), { recursive: true });
-    fs.writeFileSync(idFile, id + "\n");
-  } catch {
-    /* read-only checkout or a race: the legacy lookup still works */
+  // A reader must not brand a campaign it is only looking at: `coverify spend`
+  // on someone else's directory used to mint .coverify/campaign-id there and
+  // create a state directory for it, which is a write dressed as a read.
+  if (!readOnly) {
+    try {
+      fs.mkdirSync(path.dirname(idFile), { recursive: true });
+      fs.writeFileSync(idFile, id + "\n");
+    } catch {
+      /* read-only checkout or a race: the legacy lookup still works */
+    }
   }
   return id;
 }
@@ -204,9 +209,11 @@ export class GateStore {
     const resolved = path.resolve(campaignDir);
     this.campaignDir = fs.existsSync(resolved) ? fs.realpathSync.native(resolved) : resolved;
     const stateDir = stateRootDir();
-    const id = campaignIdentity(this.campaignDir, stateDir);
+    const id = campaignIdentity(this.campaignDir, stateDir, opts?.readOnly === true);
     const dir = path.join(stateDir, id);
-    fs.mkdirSync(dir, { recursive: true });
+    // Same rule for the state directory: a reader of a campaign that has never
+    // run must not create one.
+    if (opts?.readOnly !== true) fs.mkdirSync(dir, { recursive: true });
     this.file = path.join(dir, "gates.jsonl");
     // meta.json names the opaque 16-hex state dir for cross-campaign analytics
     // (design.md, Appendix: Canonical analytics queries): campaign path plus the
@@ -258,7 +265,9 @@ export class GateStore {
       const next = JSON.stringify({ campaignDir: this.campaignDir, statement: firstLine.slice(0, 200) }) + "\n";
       // Skip identical rewrites so read-only commands (status, outcomes) stay
       // write-free on an unchanged campaign.
-      if (!fs.existsSync(meta) || fs.readFileSync(meta, "utf-8") !== next) fs.writeFileSync(meta, next);
+      if (opts?.readOnly !== true && (!fs.existsSync(meta) || fs.readFileSync(meta, "utf-8") !== next)) {
+        fs.writeFileSync(meta, next);
+      }
     } catch {
       /* fresh campaign without a statement yet */
     }
