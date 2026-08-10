@@ -111,18 +111,13 @@ const declared = new Set(KNOBS.map((k) => k.name));
 const seen = new Set<string>();
 /** Every .ts under a root, recursively — a `src/anything/` subdirectory added
  *  later must not become invisible to this check. */
-const tsFiles = (root: string): string[] => {
-  const out: string[] = [];
-  const walk = (d: string) => {
-    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
-      const p = path.join(d, e.name);
-      if (e.isDirectory()) walk(p);
-      else if (e.name.endsWith(".ts")) out.push(p);
-    }
-  };
-  if (fs.existsSync(root)) walk(root);
-  return out;
-};
+const tsFiles = (root: string): string[] =>
+  fs.existsSync(root)
+    ? fs
+        .readdirSync(root, { recursive: true, encoding: "utf8" })
+        .filter((p) => p.endsWith(".ts"))
+        .map((p) => path.join(root, p))
+    : [];
 for (const root of ["src", "scripts", "bin"]) {
   for (const p of tsFiles(path.join(repoRoot(), root))) {
     if (path.basename(p) === "knobs.ts") continue;
