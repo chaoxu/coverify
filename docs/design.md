@@ -520,6 +520,35 @@ and leaves the judgment to the coordinator (rule 3).
 
 
 
+Three readers make the journal's measurement fields answerable rather than
+merely written. `coverify spend` reports per-lane and per-role token totals
+and refuses, by construction, the three errors the 2026-08-09 study made:
+it never cross-sums meters (different provider accounts are not one
+currency), never counts a roll-up (flagged or historical), and never sums a
+cumulative snapshot. It prints no grand total, deliberately, and names its
+floors: a lane that does not report `reasoning` or `cacheWrite` yields a
+LOWER BOUND, bounded for cache writes by the empirical 0.25–2.5 write/read
+ratio rather than read as zero.
+
+`coverify outcomes` is the other half of that ledger, and the reason the
+cost tables mean anything: stage verdicts, repair-loop depth per revision,
+and spend split by whether the revision ever promoted. Rules 7 and 8 say a
+cost number alone is non-diagnostic; this is what it divides by. It
+deliberately does not report the on-path fraction of issue #38 — that
+instrument walks promotion premises, which are optional and absent on 54 of
+64 promotions across all seven campaigns, so the number would measure the
+unrecorded edge rather than the misdirected work, and the report says so
+where the number would be.
+
+`coverify corpus-check` is `docs/measurement-protocol.md` rule 3b made
+executable: is this session corpus summable at all? Two of its four checks
+are stated for corpora logging a cumulative counter per event, and pi logs
+per-message deltas, so one declares itself inapplicable rather than quietly
+passing and one is restated with compaction spend — which belongs to no
+turn — added back explicitly. Run it before quoting a number off the
+session trees; the raw-skill corpus that failed it produced three defensible
+estimates spanning 27×.
+
 `coverify trace [--dir campaign] [--out file.html]` renders the campaign
 journal as a self-contained HTML timeline: agent lifetimes as ranges,
 verification and gate verdicts as points, coordinator wakes as bands, plus
