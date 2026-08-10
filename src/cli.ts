@@ -33,7 +33,7 @@ function usage(): never {
   coverify status [--dir campaign]
   coverify trace [--dir campaign] [--out file]
                                     render the journal as a self-contained HTML timeline
-  coverify spend [--dir campaign]
+  coverify spend [--dir campaign] [--run <runId>]
                                     per-lane, per-role token totals from the journal;
                                     refuses cross-meter sums and roll-ups
   coverify turns [--dir campaign] [--session substr]
@@ -320,7 +320,7 @@ switch (command) {
   }
   case "spend": {
     requireCampaign();
-    console.log(formatSpend(campaignSpend(dir)));
+    console.log(formatSpend(campaignSpend(dir, flags.get("run"))));
     break;
   }
   case "turns": {

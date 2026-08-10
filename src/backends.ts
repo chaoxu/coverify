@@ -62,6 +62,10 @@ export function createCliRoleSession(
      *  requested spec, never enforced (#21 P3). codex-cli emits no model
      *  echo in its JSONL (verified 2026-08-09), so it stays undefined. */
     reportedModel: () => reportedModel,
+    unmetered: () =>
+      CLI_BACKENDS[provider].unmetered && asked
+        ? [{ lane: provider, detail: `${provider} reports no usage payload` }]
+        : [],
     // A CLI oracle answers exactly once and keeps no transcript, so both
     // counts are exact rather than derived.
     attempts: () => (asked ? 1 : 0),
@@ -87,6 +91,9 @@ interface CliBackend {
   output: "stdout" | "claude-json" | "outfile" | "oracle-json";
   /** Backend-specific stdout-side usage parser (telemetry only), orthogonal to `output`. */
   usage?: (stdout: string) => RoleUsage | undefined;
+  /** This lane reports no usage at all. Not "reported zero" — no payload
+   *  exists — so a record must carry the gap explicitly. */
+  unmetered?: true;
 }
 
 /** Subscription-billed official CLIs as verdict-role backends. Command
@@ -120,11 +127,19 @@ const CLI_BACKENDS: Record<"claude-cli" | "codex-cli" | "chatgpt-cli" | "agy", C
   /** --timeout here is the oracle's poll deadline; 604800s = 7 days — a hang
    *  guard, not a work limit (user decision: no timeouts on model thinking,
    *  Chao 2026-08-09). */
-  "chatgpt-cli": { env: "COVERIFY_CHATGPT_CMD", cmd: "chatgpt-cli oracle --quiet --timeout 604800", output: "oracle-json" },
+  "chatgpt-cli": {
+    env: "COVERIFY_CHATGPT_CMD",
+    cmd: "chatgpt-cli oracle --quiet --timeout 604800",
+    output: "oracle-json",
+    // The daemon's reply carries no usage payload, so calls on this lane are
+    // real spend this harness cannot measure. Declared here so the record
+    // says "unmetered" rather than simply omitting a number.
+    unmetered: true,
+  },
   /** Antigravity CLI (Google subscription): the gemini ideation family.
    *  Prompt-as-argv and spaced display-name model ids are handled by the
    *  bin/agy-oracle transport wrapper ({repo} resolves to the checkout). */
-  agy: { env: "COVERIFY_AGY_CMD", cmd: "{repo}/bin/agy-oracle {model}", output: "stdout" },
+  agy: { env: "COVERIFY_AGY_CMD", cmd: "{repo}/bin/agy-oracle {model}", output: "stdout", unmetered: true },
 };
 
 export function cliBackendCommand(provider: keyof typeof CLI_BACKENDS): string {

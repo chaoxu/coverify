@@ -316,6 +316,10 @@ export interface RoleSession {
   servedModel?(): string | undefined;
   /** Self-reported model, when the backend states one (#21 P3). */
   reportedModel?(): string | undefined;
+  /** Provider calls this session made whose tokens cannot be measured — an
+   *  external agent with no machine-readable usage. Real spend, recorded as a
+   *  gap so it never reads as costing nothing. */
+  unmetered?(): { lane: string; detail: string }[];
   /** Provider attempts made by this session, retries included. A retry
    *  re-presents the whole context and is billed again but leaves no message,
    *  so this is the one part of request-level cost that cannot be recovered
@@ -572,6 +576,7 @@ export async function createHarnessRoleSession(
     ? workspaceTools(run.workspace.cwd, run.workspace.scope, {
         code: run.workspace.code,
         literature: run.workspace.literature,
+        onUnmetered: (lane, detail) => unmetered.push({ lane, detail }),
       })
     : [];
   if (run.extraTools) tools.push(...run.extraTools);
@@ -657,6 +662,8 @@ export async function createHarnessRoleSession(
   };
   // Provider attempts across this session's life, retries included.
   let attempts = 0;
+  // Calls this session made through tools whose spend cannot be measured.
+  const unmetered: { lane: string; detail: string }[] = [];
   // Cancellation must also cover the retry wrapper's backoff sleeps:
   // harness.abort() only aborts an in-flight prompt, and between attempts
   // there is none — so abort() additionally fires this controller, which
@@ -734,6 +741,7 @@ export async function createHarnessRoleSession(
       return addUsage(sumMessagesUsage(allMessages), compactionUsage);
     },
     attempts: () => attempts,
+    unmetered: () => unmetered,
     // Assistant messages are the provider requests that produced output; the
     // transcript already holds them, so this is derived rather than counted
     // twice — a stamped duplicate of derivable state is a second source that

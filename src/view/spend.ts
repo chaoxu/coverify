@@ -33,6 +33,11 @@ export interface RoleSpend extends LaneSpend {
 }
 
 export interface CampaignSpend {
+  /** Provider calls whose tokens this harness cannot measure at all — an
+   *  external agent or an oracle lane with no usage payload. Reported
+   *  separately from `excluded`: those are records a reader must SKIP, these
+   *  are spend nobody can count. Both would otherwise read as zero. */
+  unmetered: { lane: string; calls: number }[];
   byLane: LaneSpend[];
   byRole: RoleSpend[];
   /** Records whose usage was skipped, and why. Reported rather than silently
@@ -112,16 +117,25 @@ function inferLanes(records: readonly Record<string, unknown>[]): Map<string, st
   );
 }
 
-export function campaignSpend(campaignDir: string): CampaignSpend {
+export function campaignSpend(campaignDir: string, run?: string): CampaignSpend {
   const store = new GateStore(campaignDir);
   const lanes = new Map<string, LaneSpend>();
   const roles = new Map<string, RoleSpend>();
   const excluded = new Map<string, number>();
   let nonMonotone = false;
   const lanes0 = inferLanes(store.all() as unknown as Record<string, unknown>[]);
+  const unmetered = new Map<string, number>();
 
   for (const rec of store.all()) {
     const r = rec as Record<string, unknown>;
+    // A run filter makes `runId` readable; without one the edge added to every
+    // record would be write-only, which is the failure mode this whole reader
+    // exists to end.
+    if (run !== undefined && r.runId !== run) continue;
+    if (typeof r.unmetered === "string") {
+      bump(unmetered, r.unmetered);
+      continue;
+    }
     // Pre-2026-08-09 verification completions summed their own stage records,
     // which are also on file. Counting both is the 27% error.
     // Flagged roll-ups (post-7bd75d5 records; the flag exists only on the
@@ -184,6 +198,7 @@ export function campaignSpend(campaignDir: string): CampaignSpend {
     byLane: [...lanes.values()].sort(bySpend),
     byRole: [...roles.values()].sort(bySpend),
     excluded: [...excluded].map(([reason, records]) => ({ reason, records })),
+    unmetered: [...unmetered].map(([lane, calls]) => ({ lane, calls })),
     nonMonotone,
   };
 }
@@ -219,6 +234,11 @@ export function formatSpend(s: CampaignSpend): string {
     out.push("");
     out.push("excluded (counted would be wrong, not missing):");
     for (const e of s.excluded) out.push(`  ${String(e.records).padStart(5)}  ${e.reason}`);
+  }
+  if (s.unmetered.length > 0) {
+    out.push("");
+    out.push("UNMETERED — real spend nobody can count, not spend that was zero:");
+    for (const u of s.unmetered) out.push(`  ${String(u.calls).padStart(5)}  ${u.lane}`);
   }
   if (s.nonMonotone) {
     out.push("");

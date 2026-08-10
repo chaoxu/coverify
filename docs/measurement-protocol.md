@@ -456,6 +456,7 @@ attributed to the wake that ordered it. Every edge below is now stamped:
 | dispatch → stage | `dispatchId` on audit, bundle-cert, reconstruction, comparison, gate-verdict, role-call |
 | dispatch → completion | the handle `id` |
 | stage → provider request | `attempts` + `requests` on every usage-bearing record |
+| unmeasurable spend | `role-call` with `unmetered: <lane>` — a record, not a silence |
 
 **`attempts` is the one count that cannot be derived after the fact.** A retry
 re-presents the whole context and is billed again while leaving no message
@@ -464,9 +465,18 @@ behind, so a transcript cannot tell a 500k-token turn from three 170k attempts.
 twice — a stored duplicate of derivable state is a second source that can drift
 from the first.
 
-The tree is now complete. Any aggregate — per campaign, run, wake, dispatch,
-stage, lane, role or model — is a `GROUP BY` over leaves, and no level stores a
-summary of the level below it.
+**Spend that cannot be measured is recorded as a gap, never omitted.** Three
+sources have no usage payload at all: the librarian (a full external agent with
+live web search), and the `agy` and `chatgpt-cli` oracle lanes. Omitting them
+would read as "this cost nothing", so each call appends a `role-call` carrying
+`unmetered: <lane>`, and `coverify spend` reports them under their own heading
+— separate from `excluded`, which is records a reader must SKIP rather than
+spend nobody can count.
+
+The tree is complete. Any aggregate — per campaign, run, wake, dispatch, stage,
+lane, role or model — is a `GROUP BY` over leaves; no level stores a summary of
+the level below it; and every path that spends tokens either records them or
+records that it cannot.
 
 ## 13b. What must be recorded
 

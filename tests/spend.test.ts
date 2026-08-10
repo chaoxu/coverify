@@ -87,3 +87,37 @@ test("a clamped delta anywhere raises a warning", () => {
   expect(s.nonMonotone).toBe(true);
   expect(formatSpend(s)).toContain("WARNING");
 });
+
+test("unmetered lanes are reported as spend nobody can count", () => {
+  // The librarian is a full external agent with live web search and no
+  // machine-readable usage; agy and chatgpt-cli emit no usage payload either.
+  // Silence would read as "this cost nothing", which is the one thing rule 10
+  // forbids — so the gap is a record, and the report names it separately from
+  // `excluded` (records a reader must skip, not spend nobody can count).
+  const dir = fixture([
+    { kind: "role-call", unmetered: "librarian", detail: "no usage payload" },
+    { kind: "role-call", unmetered: "librarian", detail: "no usage payload" },
+    { kind: "role-call", unmetered: "chatgpt-cli", detail: "no usage payload" },
+  ]);
+  const s = campaignSpend(dir);
+  expect(s.unmetered).toEqual([
+    { lane: "librarian", calls: 2 },
+    { lane: "chatgpt-cli", calls: 1 },
+  ]);
+  const text = formatSpend(s);
+  expect(text).toContain("UNMETERED");
+  expect(text).toContain("real spend nobody can count");
+});
+
+test("--run filters to one harness process", () => {
+  // runId is stamped on every record; without a reader that groups on it the
+  // edge is write-only, which is the failure mode this reader exists to end.
+  const dir = fixture([
+    { kind: "audit", runId: "aaaa1111", usage: { input: 10, output: 1, cacheRead: 0, meter: "codex-cli-jsonl" } },
+    { kind: "audit", runId: "bbbb2222", usage: { input: 99, output: 9, cacheRead: 0, meter: "codex-cli-jsonl" } },
+  ]);
+  expect(campaignSpend(dir, "aaaa1111").byLane[0].input).toBe(10);
+  expect(campaignSpend(dir, "bbbb2222").byLane[0].input).toBe(99);
+  // No filter sees both.
+  expect(campaignSpend(dir).byLane[0].input).toBe(109);
+});

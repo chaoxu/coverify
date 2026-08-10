@@ -173,7 +173,11 @@ const librarianStateDirs = () =>
  * process group, killed on exit/timeout) and archives the full report as an
  * evidence artifact so citations remain auditable.
  */
-function literatureSearchTool(cwd: string, scope: WriteScope): AgentTool {
+function literatureSearchTool(
+  cwd: string,
+  scope: WriteScope,
+  onUnmetered?: (lane: string, detail: string) => void,
+): AgentTool {
   return {
     name: "literature_search",
     label: "Literature search",
@@ -208,6 +212,13 @@ function literatureSearchTool(cwd: string, scope: WriteScope): AgentTool {
         // host-protection of computation, not for a thinking librarian.
         timeoutMs: 7 * 24 * 3_600_000,
       });
+      // Real spend, no measurement: agy's -p mode emits a plain report with no
+      // usage payload. Recorded as a gap whether it succeeded or failed —
+      // a failed librarian was still billed for whatever it searched.
+      onUnmetered?.(
+        "librarian",
+        `literature_search via \`${literatureCmd()[0]}\` — external agent, no machine-readable usage`,
+      );
       const { stdout, stderr, failure } = outs[0];
       if (fate || failure || !stdout.trim()) {
         const detail = fate ?? failure ?? "produced no report";
@@ -415,7 +426,16 @@ function confineReads(tool: AgentTool, roots: string[], cwd: string): AgentTool 
 export function workspaceTools(
   cwd: string,
   scope: WriteScope,
-  opts?: { code?: boolean; literature?: boolean },
+  opts?: {
+    code?: boolean;
+    literature?: boolean;
+    /** Called when a tool spawns a provider whose tokens this harness cannot
+     *  measure. The librarian is a full external agent with live web search
+     *  and no machine-readable usage output, so its spend is real and
+     *  invisible. Recording the GAP is the contract (measurement-protocol
+     *  rule 10): a silent omission reads as "this cost nothing". */
+    onUnmetered?: (lane: string, detail: string) => void;
+  },
 ): AgentTool[] {
   const code = opts?.code === true;
   const scopedWrite = createWriteTool(cwd, {
@@ -464,6 +484,6 @@ export function workspaceTools(
     scopedWrite,
   ] as AgentTool[];
   if (code) tools.push(runScriptTool(cwd, scope, { exclusiveDir: true }));
-  if (opts?.literature === true) tools.push(literatureSearchTool(cwd, scope));
+  if (opts?.literature === true) tools.push(literatureSearchTool(cwd, scope, opts.onUnmetered));
   return tools;
 }

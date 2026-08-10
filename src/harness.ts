@@ -69,6 +69,8 @@ export interface Handle {
   /** Request-level counts; see RoleSession.attempts. */
   attempts?: () => number;
   requests?: () => number;
+  /** Tool-spawned provider calls with no measurable usage; see RoleSession. */
+  unmetered?: () => { lane: string; detail: string }[];
   /** Resolves (never rejects) when the handle finishes; set by registerHandle. */
   settled: Promise<void>;
 }

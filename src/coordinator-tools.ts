@@ -304,6 +304,7 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
       // Request-level counts, so a worker's completion can distinguish one
       // long turn from several retried ones.
       attempts: () => session?.attempts?.() ?? 0,
+      unmetered: () => session?.unmetered?.() ?? [],
       requests: () => session?.requests?.() ?? 0,
     });
     return toolText(
