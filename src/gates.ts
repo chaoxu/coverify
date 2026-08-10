@@ -196,7 +196,11 @@ export class GateStore {
    *  this record use" becomes "look up its run". */
   private runId: string | undefined;
 
-  constructor(campaignDir: string) {
+  /** `readOnly` downgrades the two-claimant refusal to a warning. The guard
+   *  protects the store from two WRITERS; a reader cannot corrupt it, and
+   *  refusing to let someone look at a copied campaign's history — with a stack
+   *  trace, no less — helps nobody diagnose the copy. */
+  constructor(campaignDir: string, opts?: { readOnly?: boolean }) {
     const resolved = path.resolve(campaignDir);
     this.campaignDir = fs.existsSync(resolved) ? fs.realpathSync.native(resolved) : resolved;
     const stateDir = stateRootDir();
@@ -219,7 +223,18 @@ export class GateStore {
     // path GONE; a copy leaves it standing with the same id. That difference
     // is the only signal available, and it is enough.
     if (fs.existsSync(metaPath)) {
-      const prior = JSON.parse(fs.readFileSync(metaPath, "utf-8")) as { campaignDir?: string };
+      // Torn meta reads as absent. It is written non-atomically, so a crash
+      // mid-write leaves a partial file — and because this check deliberately
+      // runs outside the best-effort block below, a bare JSON.parse here would
+      // make every prove/resume/amend/spend die on a raw SyntaxError forever,
+      // with nothing to repair it. That is the exact failure this file already
+      // guards against for gates.jsonl twenty lines down.
+      let prior: { campaignDir?: string } = {};
+      try {
+        prior = JSON.parse(fs.readFileSync(metaPath, "utf-8")) as { campaignDir?: string };
+      } catch {
+        prior = {};
+      }
       const other = prior.campaignDir;
       if (
         typeof other === "string" &&

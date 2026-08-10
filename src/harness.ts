@@ -300,7 +300,10 @@ async function runLockedCampaign(
           detail: u.detail,
           ...(u.usage === undefined
             ? { unmetered: u.lane }
-            : { role: u.lane, usage: u.usage, requests: 1 }),
+            : // modelSpec too: the sink path stamps it, and without it here the
+              // same call grouped under "(no modelSpec on record)" depending
+              // only on whether telemetry happened to be installed.
+              { role: u.lane, modelSpec: u.detail, usage: u.usage, requests: 1 }),
         });
       }
       if (failed !== undefined) {

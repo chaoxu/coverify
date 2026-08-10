@@ -224,20 +224,59 @@ export function familyModelSpec(family: string): ModelSpec | undefined {
  *  shipped `fable` family resolves to the auditor's own model, and
  *  docs/models.md recommends re-pointing the reasoner there when ChatGPT quota
  *  runs out, so this fires on a configuration the docs themselves suggest. */
+/** Which vendor's models a provider reaches. The audit's value is that a
+ *  candidate is read by a DIFFERENT model family, and a family is a vendor's
+ *  lineage — not a spec string. Comparing specs called `claude-cli/sonnet` and
+ *  `claude-cli/opus` different, and any `@thinking` override made two spellings
+ *  of one model differ, which silenced the warning while the audit stayed
+ *  in-family. */
+const VENDOR_OF: Record<string, string> = {
+  anthropic: "anthropic",
+  "claude-cli": "anthropic",
+  [CLAUDE_BRIDGE_ID]: "anthropic",
+  openai: "openai",
+  "openai-codex": "openai",
+  "codex-cli": "openai",
+  "chatgpt-cli": "openai",
+  google: "google",
+  agy: "google",
+};
+
+/** Roles and ideation families whose model comes from the auditor's own vendor.
+ *
+ *  Only makes the collision VISIBLE. Refusing would invent a policy the user
+ *  never set (design rule 3), and a same-vendor audit is still an audit. The
+ *  shipped `fable` family resolves to the auditor's own model, and
+ *  docs/models.md recommends re-pointing the reasoner there when ChatGPT quota
+ *  runs out, so this fires on a configuration the docs themselves suggest.
+ *
+ *  TOTAL by construction: this runs on the startup path of every `prove`, and a
+ *  malformed COVERIFY_FAMILY_* used to throw out of it and end the run before
+ *  the campaign existed — a warning that can kill a campaign is worse than no
+ *  warning. A family that cannot be parsed is reported as unknown; the dispatch
+ *  path refuses it later, where the coordinator can act on it. */
 export function sameFamilyAsAuditor(): string[] {
-  // specLabel, NOT specKey: specKey carries @thinking, so setting
-  // COVERIFY_EFFORT_AUDITOR made the auditor's key differ from the family's and
-  // silenced the warning entirely — while it remained literally the same model.
-  // Effort is not a second architecture.
-  const auditor = specLabel(roleModelSpec("hostileAuditor"));
+  let auditor: string;
+  try {
+    auditor = VENDOR_OF[roleModelSpec("hostileAuditor").provider] ?? "unknown";
+  } catch {
+    return [];
+  }
+  const vendor = (get: () => ModelSpec | undefined): string | undefined => {
+    try {
+      const spec = get();
+      return spec === undefined ? undefined : (VENDOR_OF[spec.provider] ?? "unknown");
+    } catch {
+      return undefined;
+    }
+  };
   const clashes: string[] = [];
   for (const role of ROLE_NAMES) {
     if (role === "hostileAuditor") continue;
-    if (specLabel(roleModelSpec(role)) === auditor) clashes.push(`role ${role}`);
+    if (vendor(() => roleModelSpec(role)) === auditor) clashes.push(`role ${role}`);
   }
   for (const family of IDEATION_FAMILIES) {
-    const spec = familyModelSpec(family);
-    if (spec !== undefined && specLabel(spec) === auditor) clashes.push(`ideation family ${family}`);
+    if (vendor(() => familyModelSpec(family)) === auditor) clashes.push(`ideation family ${family}`);
   }
   return clashes;
 }

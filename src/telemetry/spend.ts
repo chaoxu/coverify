@@ -169,7 +169,17 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
   // the handle id where a leaf carries the dispatch.
   const declaredUnmetered = new Set(
     records
-      .filter((r) => typeof r.unmetered === "string" && typeof r.dispatchId === "string")
+      .filter(
+        (r) =>
+          typeof r.unmetered === "string" &&
+          typeof r.dispatchId === "string" &&
+          // The dispatch's OWN lane, not a tool it spawned. A librarian gap
+          // belongs to a call made inside the role's turn, so treating it as
+          // the dispatch's declaration made one librarian search absorb the
+          // worker's own unmeasurable call — a real gap turned into silence,
+          // which is rule 10 inverted.
+          r.unmetered !== "librarian",
+      )
       .map((r) => String(r.dispatchId)),
   );
 

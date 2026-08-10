@@ -10,7 +10,7 @@ export function runRecords(
   campaignDir: string,
   run?: string,
 ): { store: GateStore; records: Record<string, unknown>[] } {
-  const store = new GateStore(campaignDir);
+  const store = new GateStore(campaignDir, { readOnly: true });
   const records = (store.all() as unknown as Record<string, unknown>[]).filter(
     (r) => run === undefined || r.runId === run,
   );
