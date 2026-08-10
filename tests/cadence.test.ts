@@ -105,10 +105,9 @@ async function runCadence(
 const stages = (store: InstanceType<typeof GateStore>) =>
   store.all().filter((r) => ["audit", "bundle-cert", "reconstruction", "comparison"].includes(String(r.kind)));
 
-test("a full cadence writes one leaf per stage, all under one dispatchId", async () => {
-  // The invariant that replaced the roll-up: the cadence's cost is the sum of
-  // its stage records and nothing else, so every stage must carry the same
-  // dispatchId and each payment must appear exactly once.
+test("a full cadence writes one decision per stage, all under one dispatchId", async () => {
+  // Decision records carry NO spend: they say what was decided, and they are
+  // written whether or not telemetry is on.
   const { dir, store, calls } = campaign("full", [
     "VERDICT: PASS\nthe candidate holds",
     "VERDICT: PASS\nthe bundle leaks nothing",
@@ -120,13 +119,38 @@ test("a full cadence writes one leaf per stage, all under one dispatchId", async
   const s = stages(store);
   expect(s.map((r) => r.kind).sort()).toEqual(["audit", "bundle-cert", "comparison", "reconstruction"]);
   expect(new Set(s.map((r) => r.dispatchId))).toEqual(new Set(["v1"]));
-  // Four provider calls, four leaves, 40 input tokens on file — counted once.
   expect(calls()).toBe(4);
-  const total = s.reduce((n, r) => n + ((r.usage as { input?: number })?.input ?? 0), 0);
-  expect(total).toBe(40);
-  // A successful stage leaves no orphaned-spend leaf: the stage record IS the
-  // record of that payment.
+  for (const r of s) expect(r.usage).toBeUndefined();
+  // Telemetry is off here, so nothing counted the tokens — and the verdicts
+  // still landed. That is the separation the extension exists to have.
   expect(store.all().filter((r) => r.kind === "role-call")).toHaveLength(0);
+});
+
+test("with telemetry on, the same cadence's spend lands on leaves under that dispatch", async () => {
+  // Cadence cost is GROUP BY dispatchId over role-call leaves. Four calls at
+  // 10 input each: 40, counted exactly once, and attributable to the stage
+  // that spent it without any stage record carrying a token.
+  const { dir, store } = campaign("full-telemetry", [
+    "VERDICT: PASS\nholds",
+    "VERDICT: PASS\nno leak",
+    "A reconstruction.",
+    "VERDICT: PASS\nmatches",
+  ]);
+  const { JournalTelemetryContext } = await import("../src/telemetry/context.ts");
+  const { setTelemetrySink } = await import("../src/providers.ts");
+  const { NOOP_TELEMETRY_CONTEXT } = await import("@earendil-works/pi-telemetry");
+  setTelemetrySink(new JournalTelemetryContext(store));
+  try {
+    await runCadence(dir, store);
+  } finally {
+    setTelemetrySink(NOOP_TELEMETRY_CONTEXT);
+  }
+  const leaves = store.all().filter((r) => r.kind === "role-call");
+  expect(leaves).toHaveLength(4);
+  expect(leaves.reduce((n, r) => n + ((r.usage as { input?: number })?.input ?? 0), 0)).toBe(40);
+  // Every leaf inherited the dispatch and the stage from its ancestors.
+  expect(new Set(leaves.map((r) => r.dispatchId))).toEqual(new Set(["v1"]));
+  expect(new Set(leaves.map((r) => r.stage)).size).toBe(4);
 });
 
 test("an audit FAIL exits before the second stage runs", async () => {

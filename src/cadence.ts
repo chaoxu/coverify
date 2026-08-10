@@ -288,7 +288,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         const spec = roleModelSpec(stage.role);
         const {
           text, usage, promptChars, durationMs, servedModel, reportedModel,
-          providerSessionId, backendCwd, attempts, requests,
+          providerSessionId, backendCwd,
         } = await stageSpan(stage.kind, (parent) =>
           runRole(
             { contract, charge: CHARGES[stage.role], prompt: stage.ctx.prompt, spec, models },
@@ -336,11 +336,13 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           // Self-reported model (#21 P3) — journal-only, never a refusal
           // trigger; modelSubstitutions() surfaces disagreements.
           ...defined({ reportedModel }),
-          usage,
+          // No usage, attempts or requests: this is a DECISION record. Spend is
+          // a role-call leaf written by the telemetry extension and joined on
+          // dispatchId, so a verdict never depends on telemetry being on, and a
+          // reader can tell "no spend recorded" from "no spend to record"
+          // (rule 13: record at leaves).
           promptChars,
           durationMs,
-          // stage -> provider request, the tree's last edge.
-          ...defined({ attempts, requests }),
         });
         } finally {
           // Cleared in a finally so a failure of store.append's in-tree journal
@@ -526,7 +528,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           const reconSpec = roleModelSpec("reconstructor");
           const {
             text, usage, promptChars, durationMs, servedModel, reportedModel,
-            providerSessionId, backendCwd, attempts, requests,
+            providerSessionId, backendCwd,
           } = await stageSpan("reconstruction", (parent) =>
             runRole(
               { contract, charge: CHARGES.reconstructor, prompt: reconCtx.prompt, spec: reconSpec, models },
@@ -561,10 +563,9 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             modelFamily: servedModel ?? specLabel(reconSpec),
             modelSpec: specKey(reconSpec),
             ...defined({ reportedModel }),
-            usage,
             promptChars,
             durationMs,
-            ...defined({ providerSessionId, backendCwd, attempts, requests }),
+            ...defined({ providerSessionId, backendCwd }),
           });
           } finally {
             unrecordedSpend = undefined;
