@@ -44,14 +44,26 @@ export interface CampaignSpend {
  *  the stage kind on verification records, the handle id's prefix on completions.
  *  DRIFT HAZARD: those prefixes are minted in coordinator-tools and nothing
  *  couples the two ends, so a new prefix lands in "other". */
+/** Stage identity -> role name. Keyed by both the stage attribute a leaf
+ *  inherits and the record `kind` a stage decision carries; they share spelling. */
+const STAGE_ROLES: Record<string, string> = {
+  audit: "auditor",
+  "bundle-cert": "certifier",
+  reconstruction: "reconstructor",
+  comparison: "comparator",
+};
+
 export function roleOf(r: Record<string, unknown>): string {
+  // `stage` before `role`: a verification leaf inherits role="verification"
+  // from its dispatch, which would collapse all four stages into one row and
+  // lose the per-stage gauge. The stage is the more specific fact.
+  const stage = STAGE_ROLES[String(r.stage)];
+  if (stage !== undefined) return stage;
   if (typeof r.role === "string") return r.role;
   const kind = String(r.kind);
+  const byKind = STAGE_ROLES[kind];
+  if (byKind !== undefined) return byKind;
   if (kind === "gate-verdict") return "gate-critic";
-  if (kind === "audit") return "auditor";
-  if (kind === "bundle-cert") return "certifier";
-  if (kind === "reconstruction") return "reconstructor";
-  if (kind === "comparison") return "comparator";
   if (kind === "role-call") return "orphaned-spend";
   const id = typeof r.id === "string" ? r.id : "";
   if (id.startsWith("r")) return "reasoner";

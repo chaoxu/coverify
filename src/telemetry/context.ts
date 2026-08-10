@@ -65,8 +65,23 @@ export class JournalTelemetryContext implements TelemetryContext {
   }
 
   /** Span attributes -> the journal's record shape. The names differ; every
-   *  reader and every campaign on disk uses the journal's, so translate here. */
+   *  reader and every campaign on disk uses the journal's, so translate here.
+   *
+   *  TOTAL, like `addUsage`: this runs in a `finally`, so a throw here would
+   *  replace the callback's outcome — a successful coordinator turn would
+   *  become a thrown one and cost the campaign its session. Measurement may
+   *  not end a campaign (rule 2), so a failed append loses the leaf and
+   *  nothing else. The lost leaf still surfaces: it lands in `coverify
+   *  spend`'s unattributed gap rather than being silently absorbed. */
   private write(state: SpanState, extra?: SpanAttributes): void {
+    try {
+      this.appendLeaf(state, extra);
+    } catch {
+      /* empty */
+    }
+  }
+
+  private appendLeaf(state: SpanState, extra?: SpanAttributes): void {
     const a = { ...state.attributes, ...extra };
     const num = (k: string) => (typeof a[k] === "number" ? (a[k] as number) : undefined);
     const usage = {
