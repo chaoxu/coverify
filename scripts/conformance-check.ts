@@ -44,13 +44,6 @@ if (missing.length > 0) {
   console.error("Update the coupled enforcement (see docs/design.md conformance table) or the launcher.");
   process.exit(1);
 }
-// Layer boundary (Chao, 2026-08-09): src/view/ is READ-ONLY CONSUMERS —
-// trace rendering and session telemetry. Nothing that runs a campaign may
-// depend on them, so observation can never change what a campaign concludes
-// and can be reasoned about (and counted) separately. cli.ts is the operator
-// surface and is the one module allowed to render a view.
-// A view may read core; core may not read a view — only the reverse edge
-// needs guarding.
 /** Every .ts under a root, recursively — a `src/anything/` subdirectory added
  *  later must not become invisible to a check. */
 const tsFiles = (root: string): string[] =>
@@ -61,25 +54,22 @@ const tsFiles = (root: string): string[] =>
         .map((p) => path.join(root, p))
     : [];
 
-// Both consumer folders are guarded the same way, for two different reasons
-// that want the same edge: view/ is read-only observability, and telemetry/ is
-// the deletable measurement extension. `rm -rf src/telemetry` must leave a
-// working harness (design rule 2), which is true only while no core file
-// imports it — a property that was verified by hand in a commit message until
-// this check started enforcing it.
+// src/telemetry/ is the deletable measurement extension: `rm -rf src/telemetry`
+// must leave a working harness (design rule 2), which holds only while no core
+// file imports it. cli.ts is the operator surface and is the one module allowed
+// to read it. The property was verified by hand in commit messages until this
+// check started enforcing it.
 const violations: string[] = [];
 for (const abs of tsFiles(path.join(repoRoot(), "src"))) {
   const rel = path.relative(repoRoot(), abs);
-  if (rel === "src/cli.ts" || rel.startsWith("src/view/") || rel.startsWith("src/telemetry/")) continue;
+  if (rel === "src/cli.ts" || rel.startsWith("src/telemetry/")) continue;
   const text = fs.readFileSync(abs, "utf-8");
-  for (const layer of ["view", "telemetry"]) {
-    if (new RegExp(`from "\\.[./]*/?${layer}/`).test(text)) violations.push(`${rel} -> src/${layer}/`);
-  }
+  if (/from "\.[./]*\/?telemetry\//.test(text)) violations.push(`${rel} -> src/telemetry/`);
 }
 if (violations.length > 0) {
-  console.error("LAYER VIOLATION — operational code imported a read-only consumer:");
+  console.error("LAYER VIOLATION — core imported the deletable measurement extension:");
   for (const v of violations) console.error(`  ${v}`);
-  console.error("Views are pure consumers: move the shared logic into core, or read it from cli.ts.");
+  console.error("telemetry/ is deletable: move the shared logic into core, or read it from cli.ts.");
   process.exit(1);
 }
 // Self-containment: coverify must run from a clean clone with no external
@@ -200,7 +190,7 @@ if (missingRoles.length > 0) {
 }
 
 console.log(
-  `conformance ok: ${REQUIRED.length} launcher tokens present; view/ layer boundary intact; ` +
+  `conformance ok: ${REQUIRED.length} launcher tokens present; telemetry/ stays deletable; ` +
     `no hidden home-path dependency; ${KNOBS.length} knobs declared, none undeclared ` +
     `(${dynamicReads} computed-key read site(s) cannot be checked statically)`,
 );

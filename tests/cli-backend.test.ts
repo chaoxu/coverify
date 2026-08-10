@@ -100,7 +100,7 @@ test("codex usage records only real reasoning tokens", async () => {
 test("codex-cli records input DISJOINT from cacheRead/cacheWrite", async () => {
   // Codex nests: input_tokens includes cached_input_tokens and
   // cache_write_input_tokens. Every other lane records `input` as the uncached
-  // part (view/turns.ts: "usage.input is the uncached part"), so copying
+  // part (telemetry/turns.ts: "usage.input is the uncached part"), so copying
   // input_tokens through unsubtracted made this lane's records mean something
   // different from the rest of the journal. That divergence overstated fresh
   // input by 30% across gate-critic/certifier/reconstructor/comparator in the

@@ -456,7 +456,7 @@ export type Meter = "pi-session" | "codex-cli-jsonl" | "claude-cli-json";
 
 /** Coverify's usage record: pi's `Usage` minus what only pi can compute, plus
  *  provenance. Derived from pi's type rather than paralleling it, because
- *  view/turns.ts parses pi's session JSONL as a RoleUsage — a pi upgrade would
+ *  telemetry/turns.ts parses pi's session JSONL as a RoleUsage — a pi upgrade would
  *  otherwise break the two silently.
  *
  *  CANONICAL RULES for usage numbers everywhere in this codebase:
@@ -537,7 +537,7 @@ export function subUsage(a: RoleUsage, b?: RoleUsage): RoleUsage & { nonMonotone
   return d;
 }
 
-/** The one accumulation rule for pi-lane usage. Exported because view/turns.ts
+/** The one accumulation rule for pi-lane usage. Exported because telemetry/turns.ts
  *  rebuilds the same totals from pi's session JSONL; their agreement is the
  *  2026-08-09 study's only genuine cross-check (agreed to 0.2%, and the one 41%
  *  disagreement located a real defect). A second copy would make that check

@@ -22,13 +22,11 @@ import {
   specLabel,
 } from "./providers.js";
 import { runCampaign } from "./harness.js";
-import { writeTrace } from "./view/trace.js";
-import { campaignTurns } from "./view/turns.js";
 // The whole measurement extension, imported only here: delete src/telemetry/
 // and these lines and the harness still proves theorems.
+import { campaignTurns } from "./telemetry/turns.js";
 import { campaignSpend, formatSpend } from "./telemetry/spend.js";
 import { campaignOutcomes, formatOutcomes } from "./telemetry/outcomes.js";
-import { corpusChecks, formatCorpusChecks } from "./telemetry/corpus.js";
 import { campaignLimits, formatLimits } from "./telemetry/limits.js";
 import { formatResolvedKnobs, knobUsage, resolvedKnobs, validateKnobs } from "./knobs.js";
 import { JournalTelemetryContext } from "./telemetry/context.js";
@@ -40,8 +38,6 @@ function usage(): never {
                                     (--agent-limit defaults to 6 workers — user policy 2026-08-08; 0 = unlimited)
   coverify stop [--dir campaign]    SIGTERM the lock-holding harness (reaper kills its CLI tree)
   coverify status [--dir campaign]
-  coverify trace [--dir campaign] [--out file]
-                                    render the journal as a self-contained HTML timeline
   coverify spend [--dir campaign] [--run <runId>]
                                     per-lane, per-role token totals from the journal;
                                     refuses cross-meter sums and roll-ups
@@ -49,8 +45,6 @@ function usage(): never {
                                     rate-limit window occupancy and burn rate — the constraint
                                     that actually ends campaigns (subscription runs are not
                                     metered in dollars)
-  coverify corpus-check [--dir campaign]
-                                    measurement-protocol rule 3b: is this session corpus summable?
   coverify outcomes [--dir campaign] [--run <runId>]
                                     what the spend bought: stage verdicts, repair-loop depth,
                                     and spend split by whether the revision ever promoted
@@ -362,13 +356,6 @@ switch (command) {
     }
     break;
   }
-  case "trace": {
-    requireCampaign();
-    const out = writeTrace(dir, flags.get("out"));
-    console.error(`[coverify] trace written: ${out}`);
-    console.log(out);
-    break;
-  }
   case "spend": {
     requireCampaign();
     console.log(formatSpend(campaignSpend(dir, flags.get("run"))));
@@ -398,11 +385,6 @@ switch (command) {
         ),
       ),
     );
-    break;
-  }
-  case "corpus-check": {
-    requireCampaign();
-    console.log(formatCorpusChecks(corpusChecks(dir)));
     break;
   }
   case "outcomes": {

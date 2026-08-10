@@ -1,4 +1,4 @@
-// Helpers shared by the read-only view/ consumers. A view may import from core;
+// Helpers shared by the read-only measurement consumers. A reader may import from core;
 // core may never import from a view (scripts/conformance-check.ts).
 import { GateStore } from "../gates.js";
 

@@ -1,4 +1,4 @@
-// Read-only consumer (design.md's view/ layer): what a campaign's tokens went
+// Read-only consumer: what a campaign's tokens went
 // on. Three refusals, each bought with an error from the 2026-08-09 study
 // (docs/measurement-protocol.md): never cross-sum meters (the lanes bill
 // different accounts, so one total is not a currency); never count a roll-up
@@ -6,7 +6,7 @@
 // both inflated that study by 27%); never add reasoning to output (it is a
 // SUBSET of output).
 import type { Meter, RoleUsage } from "../providers.js";
-import { M, runRecords } from "../view/shared.js";
+import { M, runRecords } from "./shared.js";
 
 /** One lane's totals. `input` is always the uncached part. */
 export interface LaneSpend {
@@ -40,10 +40,6 @@ export interface CampaignSpend {
   nonMonotone: boolean;
 }
 
-/** Which role a usage-bearing record belongs to: `role` on coordinator events,
- *  the stage kind on verification records, the handle id's prefix on completions.
- *  DRIFT HAZARD: those prefixes are minted in coordinator-tools and nothing
- *  couples the two ends, so a new prefix lands in "other". */
 /** Stage identity -> role name. Keyed by both the stage attribute a leaf
  *  inherits and the record `kind` a stage decision carries; they share spelling. */
 const STAGE_ROLES: Record<string, string> = {
@@ -53,6 +49,10 @@ const STAGE_ROLES: Record<string, string> = {
   comparison: "comparator",
 };
 
+/** Which role a usage-bearing record belongs to: the stage it ran, else `role`
+ *  on coordinator events, else the handle id's prefix on completions.
+ *  DRIFT HAZARD: those prefixes are minted in coordinator-tools and nothing
+ *  couples the two ends, so a new prefix lands in "other". */
 export function roleOf(r: Record<string, unknown>): string {
   // `stage` before `role`: a verification leaf inherits role="verification"
   // from its dispatch, which would collapse all four stages into one row and

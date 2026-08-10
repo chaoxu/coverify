@@ -249,7 +249,7 @@ async function runLockedCampaign(
       // records handle.usage() synchronously, but a pi session refreshes totals
       // only in an attempt's `finally`, so the cancel record of a mid-turn
       // worker is ~0 and the real number lands HERE. Both are cumulative
-      // snapshots of one session and view/spend.ts keeps the last per id, so
+      // snapshots of one session and telemetry/spend.ts keeps the last per id, so
       // writing both de-duplicates at read time.
       //
       // `billed` is the fallback for a call the provider was PAID for before it
