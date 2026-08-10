@@ -129,15 +129,39 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
   const roles = new Map<string, RoleSpend>();
   const excluded = new Map<string, number>();
   let nonMonotone = false;
-  const lanes0 = inferLanes(store.all() as unknown as Record<string, unknown>[]);
+  // A run filter makes `runId` readable; without one the edge added to every
+  // record would be write-only, which is the failure mode this whole reader
+  // exists to end. Applied BEFORE lane inference, so a report about one run
+  // never labels its lanes from a record it does not show.
+  const records = (store.all() as unknown as Record<string, unknown>[]).filter(
+    (r) => run === undefined || r.runId === run,
+  );
+  const lanes0 = inferLanes(records);
   const unmetered = new Map<string, number>();
+  // A cancelled worker keeps running, so its dispatch can write TWO
+  // usage-bearing completions: one at the cancel, one when the work finally
+  // settles. Both are snapshots of the same session's CUMULATIVE total, so
+  // summing them counts the whole worker twice — and `declare_campaign_state`
+  // cancels every live worker, so this fires on essentially every pause.
+  // Fixed at the writer, but every journal already on disk carries the
+  // duplicate, and the reader is what those campaigns are read with.
+  // The LAST one wins: being cumulative, it is the complete total, and the
+  // earlier one is a strict prefix of it.
+  const lastCompletion = new Map<string, number>();
+  records.forEach((r, i) => {
+    if (r.kind === "completion" && typeof r.id === "string" && r.usage) lastCompletion.set(r.id, i);
+  });
 
-  for (const rec of store.all()) {
-    const r = rec as Record<string, unknown>;
-    // A run filter makes `runId` readable; without one the edge added to every
-    // record would be write-only, which is the failure mode this whole reader
-    // exists to end.
-    if (run !== undefined && r.runId !== run) continue;
+  for (const [i, r] of records.entries()) {
+    if (
+      r.kind === "completion" &&
+      typeof r.id === "string" &&
+      r.usage &&
+      lastCompletion.get(r.id) !== i
+    ) {
+      bump(excluded, "superseded completion for a cancelled dispatch (same session's cumulative total)");
+      continue;
+    }
     if (typeof r.unmetered === "string") {
       bump(unmetered, r.unmetered);
       continue;
@@ -177,7 +201,15 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
       // note never spends tokens. A provider call that reported nothing is the
       // thing a reader must see, because the agy and chatgpt-cli lanes have no
       // usage parser at all and would otherwise render as simply absent.
-      if (SPENDING_KINDS.has(String(r.kind))) {
+      // A verification or gate completion is EMPTY BY DESIGN: those handles
+      // register no usage() because their spend is leafed by the stage records
+      // underneath them. Counting them as gaps reports the leaf-only design
+      // itself as a measurement failure, which is how a first run of this
+      // reader claimed 122 unmeasured calls on a campaign that had measured
+      // every one of them.
+      const leafedElsewhere =
+        r.kind === "completion" && typeof r.id === "string" && /^[vg]\d/.test(r.id);
+      if (SPENDING_KINDS.has(String(r.kind)) && !leafedElsewhere) {
         bump(excluded, "provider call that reported no usage (unmetered lane, or a reject before parse)");
       }
       continue;

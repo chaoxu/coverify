@@ -241,6 +241,31 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     // and `failed` set ⟺ no report artifact exists.
     const persist = (report: string, failed?: string, partialText?: string) => {
       const live = handles.has(handle.id);
+      // The tree's last edge for this dispatch: `usage` when the handle
+      // measured something, and the two request counts beside it so a reader
+      // can tell four retried calls from one long one. Recorded ONLY while
+      // live — a cancelled handle already wrote a usage-bearing completion
+      // (coordinator-tools' cancel paths), and `handle.usage()` is the
+      // session's CUMULATIVE total, so repeating it here counted the whole
+      // worker twice. That is the double count six commits went into
+      // deleting, re-entering through the failure branch.
+      const spend = () =>
+        live
+          ? defined({
+              usage: handle.usage?.(),
+              attempts: handle.attempts?.(),
+              requests: handle.requests?.(),
+            })
+          : {};
+      // Tool-spawned provider calls this handle could not measure (the
+      // librarian's own searches, the agy and chatgpt-cli lanes, which ship no
+      // usage payload at all). Leafed once per settle, so an unmeasurable call
+      // reads as a declared gap instead of as silence. Drained rather than
+      // read: `persist` is the single settle path, but an array that is only
+      // ever peeked is one refactor away from emitting each gap twice.
+      for (const u of handle.unmetered?.().splice(0) ?? []) {
+        store.append({ kind: "role-call", dispatchId: handle.id, unmetered: u.lane, detail: u.detail });
+      }
       if (failed !== undefined) {
         // Preserve whatever the dead stream had produced. It is NOT a
         // deliverable — the completion stays an infrastructure failure, the
@@ -263,7 +288,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           id: handle.id,
           failed,
           ...defined({ partial }),
-          usage: handle.usage?.(),
+          ...spend(),
         });
         if (live) settledQueue.push({ h: handle, failed });
         return;
@@ -280,7 +305,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           id: handle.id,
           report: rel,
           reportSha256: sha256Text(report),
-          usage: handle.usage?.(),
+          ...spend(),
         });
         settledQueue.push({ h: handle, failed: undefined });
       } else {
@@ -495,7 +520,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   // series, so this resets with it — the one place the epoch boundary is now
   // used, and it is known here rather than inferred at read time. One object so
   // the two counters cannot be reset in different places and drift.
-  let prevCoord: { usage?: RoleUsage; attempts: number } = { attempts: 0 };
+  let prevCoord: { usage?: RoleUsage; attempts: number; requests: number } = { attempts: 0, requests: 0 };
   /** Both discard paths (compaction failure, failed turn) throw the session
    *  away, and the call that failed was already billed. This is the last
    *  chance to journal what it cost — as a leaf, like every ordinary wake. */
@@ -632,7 +657,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     if (coordinator === undefined) {
       fresh = true;
       coordinatorEpoch++;
-      prevCoord = { attempts: 0 };
+      prevCoord = { attempts: 0, requests: 0 };
       coordinator = await createHarnessRoleSession(
         {
           contract,
@@ -772,7 +797,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       // only for wakes that happened to succeed.
       leafDiscardedCoordSpend({ turnFailed: true });
       coordinator = undefined;
-      prevCoord = { attempts: 0 }; // the next turn rebuilds; a new series starts
+      prevCoord = { attempts: 0, requests: 0 }; // the next turn rebuilds; a new series starts
       wakeCount--; // a failed turn is not a wake the user asked to spend
       if (turnFailures >= TURN_FAILURE_LIMIT) {
         store.event({
@@ -816,14 +841,23 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     // actually fires.
     const attemptsNow = coordinator.attempts?.() ?? 0;
     const attempts = attemptsNow - prevCoord.attempts;
-    prevCoord = { usage: sessionTotal, attempts: attemptsNow };
+    // Requests is cumulative too — it counts assistant messages in the live
+    // transcript — so it is deltaed on the same baseline. Journalling it raw
+    // beside a delta made `attempts < requests` invert on every wake after the
+    // first and inflated any sum over wakes quadratically. It is also the one
+    // counter that can DROP, because a successful compaction shortens the
+    // transcript it counts; clamp at 0 there rather than record a negative
+    // number of calls, and let the usage delta carry that wake's real spend.
+    const requestsNow = coordinator.requests?.() ?? 0;
+    const requests = Math.max(0, requestsNow - prevCoord.requests);
+    prevCoord = { usage: sessionTotal, attempts: attemptsNow, requests: requestsNow };
     store.event({
       kind: "usage",
       role: "coordinator",
       sessionId: `coordinator-${coordinatorEpoch}`,
       wake: wakeCount,
       modelSpec: specKey(coordinatorSpec),
-      ...defined({ usage: spent, attempts, requests: coordinator.requests?.() }),
+      ...defined({ usage: spent, attempts, requests }),
       approxContextTokens: contextNow,
       ...defined({ contextGrowthTokens: growth }),
     });

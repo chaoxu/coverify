@@ -109,6 +109,38 @@ test("unmetered lanes are reported as spend nobody can count", () => {
   expect(text).toContain("real spend nobody can count");
 });
 
+test("a cancelled dispatch's two completions are not summed", () => {
+  // cancel_agent (and declare_campaign_state, for every live worker) writes a
+  // usage-bearing completion and drops the handle; the work keeps running and
+  // writes a second one when it settles. Both carry the SAME session's
+  // cumulative total, so adding them counts the worker twice. The later one is
+  // the complete total and the earlier is a strict prefix of it.
+  const dir = fixture([
+    { kind: "completion", id: "r3", cancelled: true, usage: { input: 100, output: 10, cacheRead: 5, meter: "pi-session" } },
+    { kind: "completion", id: "r3", failed: "empty report", usage: { input: 140, output: 12, cacheRead: 5, meter: "pi-session" } },
+  ]);
+  const s = campaignSpend(dir);
+  expect(s.byLane).toHaveLength(1);
+  expect(s.byLane[0].calls).toBe(1);
+  expect(s.byLane[0].input).toBe(140); // not 240
+  expect(formatSpend(s)).toContain("superseded completion");
+});
+
+test("a verification completion with no usage is not a measurement gap", () => {
+  // Verification and gate handles register no usage() because their spend is
+  // leafed by the stage records underneath them. Counting those as gaps
+  // reports the leaf-only design itself as a measurement failure.
+  const dir = fixture([
+    { kind: "completion", id: "v9", runId: "r1" },
+    { kind: "completion", id: "g2", runId: "r1" },
+    { kind: "completion", id: "r4", runId: "r1" }, // a worker really is a gap
+  ]);
+  const s = campaignSpend(dir);
+  expect(s.excluded).toEqual([
+    { reason: "provider call that reported no usage (unmetered lane, or a reject before parse)", records: 1 },
+  ]);
+});
+
 test("--run filters to one harness process", () => {
   // runId is stamped on every record; without a reader that groups on it the
   // edge is write-only, which is the failure mode this reader exists to end.

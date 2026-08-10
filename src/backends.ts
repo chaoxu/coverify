@@ -249,7 +249,18 @@ function codexJsonlUsage(stdout: string): RoleUsage | undefined {
  *  claimed request. Same event, counted rather than summed. */
 export function codexTurns(stdout: string): number {
   let n = 0;
-  for (const line of stdout.split("\n")) if (line.includes('"turn.completed"')) n++;
+  for (const line of stdout.split("\n")) {
+    // Parsed, not substring-matched, and gated on the SAME predicate
+    // codexJsonlUsage sums on. A truncated line, a turn.completed carrying no
+    // usage, or assistant prose quoting the literal (this repo's own comments
+    // do) would otherwise count a request whose tokens were never added —
+    // reporting more calls than the usage beside it can account for.
+    if (!line.includes('"turn.completed"')) continue;
+    try {
+      const e = JSON.parse(line) as { type?: string; usage?: unknown };
+      if (e.type === "turn.completed" && e.usage) n++;
+    } catch {}
+  }
   return n;
 }
 

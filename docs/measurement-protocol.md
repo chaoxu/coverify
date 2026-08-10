@@ -454,9 +454,20 @@ attributed to the wake that ordered it. Every edge below is now stamped:
 | run → wake | `wake` on the coordinator usage event |
 | wake → dispatch | `wake` on every dispatch record |
 | dispatch → stage | `dispatchId` on audit, bundle-cert, reconstruction, comparison, gate-verdict, role-call |
-| dispatch → completion | the handle `id` |
+| dispatch → completion | the handle `id` (see the cancel caveat below) |
 | stage → provider request | `attempts` + `requests` on every usage-bearing record |
 | unmeasurable spend | `role-call` with `unmetered: <lane>` — a record, not a silence |
+
+**A cancelled dispatch is the one place `id` does not identify a single
+record.** Cancelling does not stop the provider: the cancel path writes a
+usage-bearing completion and drops the handle, and the work keeps running until
+it settles and writes another. `declare_campaign_state` cancels every live
+worker, so this is the ordinary pause, not an edge case. Both records carry the
+same session's *cumulative* total, so summing them counts the worker twice.
+The writer now records usage only while the handle is live, but every journal
+written before that carries the duplicate — a reader must keep the LAST
+usage-bearing completion per `id`, which is the complete total and of which the
+earlier is a strict prefix. `view/spend.ts` does, and says so in `excluded`.
 
 **`attempts` is the one count that cannot be derived after the fact.** A retry
 re-presents the whole context and is billed again while leaving no message
