@@ -1,12 +1,8 @@
-/**
- * Manual-poking surface for interactive pi sessions: opening a campaign
- * directory in vanilla pi gets coverify's supervised `run_script` in place of
- * raw bash. Nothing here can write trusted state — gates, verification
- * cadence, dispatch, and promotion require the coverify CLI.
- *
- * Load via an extensions dir or `extensionFactories`:
- *   import coverify from ".../coverify/src/pi-extension.ts";
- */
+/** Manual-poking surface for interactive pi sessions: opening a campaign
+ *  directory in vanilla pi gets coverify's supervised `run_script` in place of
+ *  raw bash. Nothing here can write trusted state — gates, verification cadence,
+ *  dispatch, and promotion require the coverify CLI. Load via an extensions dir
+ *  or `extensionFactories`: import coverify from ".../src/pi-extension.ts". */
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { runScriptTool } from "./workspace.js";
 

@@ -1,13 +1,9 @@
-/**
- * Registers npm `pi-claude-bridge` as a plain pi-ai provider so tool-loop
- * roles can run on the Claude subscription. The bridge runs Claude Code with
- * `tools: []` + strict MCP config, so the model sees only pi-supplied tools
- * and coverify's write confinement is unchanged. Billing transport only; no
- * campaign semantics here.
- *
- * The package ships as a pi TUI extension, so we activate it against a stub
- * that captures registerProvider() and adapt the def to pi-ai's Provider.
- */
+/** Registers npm `pi-claude-bridge` as a plain pi-ai provider so tool-loop roles
+ *  can run on the Claude subscription. The bridge runs Claude Code with
+ *  `tools: []` + strict MCP config, so the model sees only pi-supplied tools and
+ *  coverify's write confinement is unchanged. Billing transport only. The
+ *  package ships as a pi TUI extension, so we activate it against a stub that
+ *  captures registerProvider() and adapt the def to pi-ai's Provider. */
 import { spawnSync } from "node:child_process";
 
 // Computed specifier: Bun resolves and runs the bridge's TypeScript source at
@@ -52,8 +48,7 @@ export async function claudeBridgeProvider(): Promise<AnyProvider> {
   }
   const id = capturedId;
   const def = capturedDef;
-  // The bridge's catalog entries omit provider/api/baseUrl (pi's registry
-  // fills them); complete them to full pi-ai Model records.
+  // The bridge's catalog entries omit provider/api/baseUrl; complete them.
   const catalog = def.models.map((m: Record<string, unknown>) => ({
     ...m,
     provider: id,

@@ -1,14 +1,10 @@
 // Read-only consumer (design.md's view/ layer): what a campaign's tokens went
-// on.
-//
-// Three refusals, each purchased with a specific error from the 2026-08-09
-// study (docs/measurement-protocol.md):
-//   - never cross-sum meters: `input` is the uncached part on every lane, but
-//     the lanes bill against different accounts, so one total is not a currency
-//   - never count a roll-up: a verification completion used to carry a sum of
-//     its own stage records, and counting both inflated that study by 27%
-//   - never add reasoning to output: reasoning is a SUBSET of output, so adding
-//     it double-counts
+// on. Three refusals, each bought with an error from the 2026-08-09 study
+// (docs/measurement-protocol.md): never cross-sum meters (the lanes bill
+// different accounts, so one total is not a currency); never count a roll-up
+// (verification completions used to sum their own stage records, and counting
+// both inflated that study by 27%); never add reasoning to output (it is a
+// SUBSET of output).
 import type { Meter, RoleUsage } from "../providers.js";
 import { M, runRecords } from "../view/shared.js";
 
@@ -29,29 +25,25 @@ export interface RoleSpend extends LaneSpend {
 }
 
 export interface CampaignSpend {
-  /** Provider calls whose tokens cannot be measured at all — distinct from
-   *  `excluded` (records a reader must SKIP). Both would else read as zero. */
+  /** Provider calls whose tokens cannot be measured at all, distinct from
+   *  `excluded` (records a reader must SKIP). Both else read as zero. */
   unmetered: { lane: string; calls: number }[];
   byLane: LaneSpend[];
   byRole: RoleSpend[];
-  /** Per (model, thinking level) — `modelSpec` keeps the @thinking suffix that
+  /** Per (model, thinking level): `modelSpec` keeps the @thinking suffix that
    *  `modelFamily` drops, the grouping issue #31's effort A/B needs. */
   byModel: RoleSpend[];
-  /** Records whose usage was skipped, and why: reported, never silently
-   *  dropped, so a reader can see that a total is partial. */
+  /** Records whose usage was skipped, and why, so a partial total shows. */
   excluded: { reason: string; records: number }[];
-  /** True when any record carried a clamped (non-monotone) delta — real spend
-   *  may be missing upstream of this reader. */
+  /** True when any record carried a clamped (non-monotone) delta: real spend
+   *  may be missing upstream. */
   nonMonotone: boolean;
 }
 
 /** Which role a usage-bearing record belongs to: `role` on coordinator events,
- *  the stage kind on verification records, the handle id's prefix on
- *  completions.
- *
- *  DRIFT HAZARD: the id prefixes are minted in coordinator-tools and nothing
- *  couples the two ends, so a new prefix silently lands in "other". Read-only,
- *  so the cost is a mislabelled row, never a wrong decision. */
+ *  the stage kind on verification records, the handle id's prefix on completions.
+ *  DRIFT HAZARD: those prefixes are minted in coordinator-tools and nothing
+ *  couples the two ends, so a new prefix lands in "other". */
 export function roleOf(r: Record<string, unknown>): string {
   if (typeof r.role === "string") return r.role;
   const kind = String(r.kind);
@@ -71,8 +63,7 @@ export function roleOf(r: Record<string, unknown>): string {
 
 const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
 
-/** Record kinds that represent a provider call, so a missing `usage` on one is
- *  a measurement gap rather than a record that never spent anything. */
+/** Record kinds representing a provider call: a missing `usage` on one is a gap. */
 const SPENDING_KINDS = new Set([
   "completion", "gate-verdict", "audit", "bundle-cert",
   "reconstruction", "comparison", "role-call", "usage",
@@ -89,24 +80,21 @@ export function accumulate(into: LaneSpend, u: RoleUsage): void {
 }
 
 /** Get-or-create one lane's bucket and add a record's usage. The seed omits
- *  `reasoning` and `cacheWrite` on purpose (absent ≠ zero). Share this rather
- *  than hand-writing a second seed, which breaks that rule silently (#43). */
+ *  `reasoning` and `cacheWrite` on purpose (absent ≠ zero) — share this rather
+ *  than hand-writing a second seed, which breaks that silently (#43). */
 export function bumpLane(lanes: Map<string, LaneSpend>, meter: LaneSpend["meter"], u: RoleUsage): void {
   const lane = lanes.get(meter) ?? { meter, calls: 0, input: 0, cacheRead: 0, output: 0 };
   accumulate(lane, u);
   lanes.set(meter, lane);
 }
 
-/** Row order only: biggest spender first. Summing input+output here ORDERS
- *  lanes, it never prints — a cross-lane total is what this reader refuses. */
+/** Row order only: summing input+output here ORDERS lanes, it never prints. */
 export const bySpend = (a: LaneSpend, b: LaneSpend) => b.input + b.output - (a.input + a.output);
 
 /** Which lane an unstamped (pre-2026-08-09) record came from, and whether its
- *  `input` is the uncached part — one "unstamped" bucket would mix three
- *  provider accounts and two conventions in a row. Rule 1's test: `cacheRead >
- *  input` is impossible when input INCLUDES cached, so one such record proves
- *  the role's lane disjoint. Measured: 0 of 925 codex-cli records versus 45/53
- *  coordinator and 193/193 auditor. */
+ *  `input` is the uncached part. Rule 1's test: `cacheRead > input` is impossible
+ *  when input INCLUDES cached, so one such record proves the role's lane
+ *  disjoint. Measured: 0 of 925 codex-cli vs 45/53 coordinator, 193/193 auditor. */
 export function inferLanes(records: readonly Record<string, unknown>[]): Map<string, string> {
   const disjoint = new Set<string>();
   const seen = new Set<string>();
@@ -131,16 +119,14 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
   const models = new Map<string, RoleSpend>();
   const excluded = new Map<string, number>();
   let nonMonotone = false;
-  // Filtered BEFORE lane inference, so a report about one run never labels its
+  // Filtered BEFORE lane inference, so a report on one run never labels its
   // lanes from a record it does not show.
   const { records } = runRecords(campaignDir, run);
   const lanes0 = inferLanes(records);
   const unmetered = new Map<string, number>();
-  // A cancelled worker keeps running, so one dispatch can write TWO
-  // usage-bearing records (cancel, then settle), both snapshots of the same
-  // session's CUMULATIVE total — summing counts the worker twice. LAST wins,
-  // since the earlier is a strict prefix. `note` counts too: a late artifact
-  // after cancellation is journalled as a note carrying settle-time totals.
+  // A cancelled worker keeps running, so one dispatch can write TWO usage
+  // records (cancel, then settle), both snapshots of the same CUMULATIVE total —
+  // LAST wins. `note` counts too: a late artifact carries settle-time totals.
   const superseded = (r: Record<string, unknown>) =>
     (r.kind === "completion" || r.kind === "note") && typeof r.id === "string" && Boolean(r.usage);
   const lastCompletion = new Map<string, number>();
@@ -157,23 +143,21 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
       bump(unmetered, r.unmetered);
       continue;
     }
-    // Flagged roll-ups (post-7bd75d5; the flag exists only on the handful
-    // written between it and the roll-up's deletion).
+    // Flagged roll-ups (post-7bd75d5).
     if (r.usageRollup === true) {
       bump(excluded, "roll-up of records already counted");
       continue;
     }
-    // Historical roll-ups carry no flag: every verification completion before
-    // 7bd75d5 summed its own four stage records, which are also on file, and
-    // every campaign on disk is in that era — counting both is the 80.4M-token
-    // (27%) inflation. `runId` marks a post-deletion record, which carries no
-    // sum and is not a historical duplicate.
+    // Historical roll-ups carry no flag: verification completions before 7bd75d5
+    // summed their own stage records, also on file, and every campaign on disk is
+    // in that era (the 80.4M-token, 27% inflation). `runId` marks a post-deletion
+    // record, which carries no sum.
     if (r.runId === undefined && r.kind === "completion" && typeof r.id === "string" && /^v\d/.test(r.id)) {
       bump(excluded, "verification roll-up, unflagged (pre-7bd75d5 record)");
       continue;
     }
-    // Pre-per-wake-leaf records carry a running session total. Summing
-    // snapshots multiplies them; they need max() per (runId, sessionId), a
+    // Pre-per-wake-leaf records carry a running session total: summing
+    // snapshots multiplies them, and max() per (runId, sessionId) is a
     // different query — say so, don't guess.
     if (r.cumulative !== undefined) {
       bump(excluded, "cumulative snapshot (pre-leaf coordinator record)");
@@ -181,10 +165,9 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
     }
     const u = r.usage as RoleUsage | undefined;
     if (!u || typeof u.input !== "number") {
-      // Only records that COULD carry usage count as a gap. A verification or
-      // gate completion is EMPTY BY DESIGN — its spend is leafed by the stage
-      // records underneath — so counting them reports 100+ phantom unmeasured
-      // calls.
+      // Only records that COULD carry usage count as a gap: a verification or
+      // gate completion is EMPTY BY DESIGN, its spend leafed by the stage
+      // records underneath, so counting them reports phantom unmeasured calls.
       const leafedElsewhere =
         r.kind === "completion" && typeof r.id === "string" && /^[vg]\d/.test(r.id);
       if (SPENDING_KINDS.has(String(r.kind)) && !leafedElsewhere) {
@@ -206,8 +189,8 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
     accumulate(byRole, u);
     roles.set(key, byRole);
 
-    // A record naming no spec is grouped as such rather than dropped, so these
-    // rows sum to the same total as byRole.
+    // A record naming no spec is grouped as such, not dropped, so these rows
+    // sum to the same total as byRole.
     const spec = typeof r.modelSpec === "string" ? r.modelSpec : "(no modelSpec on record)";
     const mKey = `${spec} ${meter}`;
     const byModel = models.get(mKey) ?? { role: spec, meter, calls: 0, input: 0, cacheRead: 0, output: 0 };
@@ -225,8 +208,7 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
   };
 }
 
-/** Human-readable report: per-lane subtotals and NO grand total, which would
- *  be the cross-meter sum this reader refuses. */
+/** Per-lane subtotals and NO grand total, which would be a cross-meter sum. */
 export function formatSpend(s: CampaignSpend): string {
   const W = 34;
   const lane = (s: string) => (s.length > W ? `${s.slice(0, W - 1)}…` : s).padEnd(W);
@@ -263,7 +245,7 @@ export function formatSpend(s: CampaignSpend): string {
   }
 
   // Floors: a row whose lane never reports a field is a LOWER BOUND on that
-  // column, and rule 10 forbids presenting a gap as a measurement.
+  // column; rule 10 forbids presenting a gap as a measurement.
   const noReasoning = s.byLane.filter((l) => l.reasoning === undefined).map((l) => String(l.meter));
   // Absent OR an exact zero across many calls: historical records carry a
   // literal 0 from a broken meter.

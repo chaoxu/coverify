@@ -1,8 +1,7 @@
 /**
- * The trace page's own markup, styles, and view code — kept apart from the
- * journal→data mapping in trace.ts so neither file is mostly a string literal.
- * The timeline itself is vis-timeline (vendored and inlined at render time, so
- * a trace works offline and inside a strict CSP).
+ * The trace page's own markup, styles, and view code, kept apart from the
+ * journal→data mapping in trace.ts. The timeline is vis-timeline, vendored and
+ * inlined at render time so a trace works offline and inside a strict CSP.
  */
 
 export const STYLES = String.raw`
@@ -175,9 +174,8 @@ export const VIEW = String.raw`
   const verifies = ev.filter((e) => e.type === "verify");
   const gates = ev.filter((e) => e.type === "gate");
   const proms = ev.filter((e) => e.type === "promotion");
-  // "Reported back" means a report exists. A cancelled run and an
-  // infrastructure failure both have an end time and no report; counting them
-  // as completions inflates the tile and poisons the lifetime stats.
+  // "Reported back" means a report exists: a cancelled run and an
+  // infrastructure failure both have an end time and no report.
   const ended = agents.filter((a) => a.end != null);
   const done = ended.filter((a) => !a.cancelled && a.failed == null);
   const stopped = ended.filter((a) => a.cancelled || a.failed != null);
@@ -193,12 +191,9 @@ export const VIEW = String.raw`
     return multiDay ? iso.slice(5, 16).replace("T", " ") + "Z" : iso.slice(11, 16) + "Z";
   };
   const fmtH = (h) => (h < 1 ? Math.round(h * 60) + "m" : h.toFixed(1) + "h");
-  // Quotes included, though every current interpolation lands in a text node
-  // where &<> would do. The content here is agent-authored (task, mechanism,
-  // report text) and this page is built by string concatenation into
-  // innerHTML, so the day someone interpolates into a quoted attribute the
-  // escape has to already be sufficient — that change would not look
-  // dangerous at review time.
+  // Escape quotes too, though today's interpolations all land in text nodes:
+  // this page concatenates agent-authored content into innerHTML, so the escape
+  // must already be attribute-safe before someone adds a quoted attribute.
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const STAGE = { audit: "hostile audit", "bundle-cert": "bundle certification", reconstruction: "blind reconstruction", comparison: "comparison" };
 
@@ -218,8 +213,7 @@ export const VIEW = String.raw`
     ["Idea gates", gates.length, gates.filter((g) => g.verdict === "IDEA PASS").length + " passed"],
     ["Promotions", proms.length, "reached PROVED.md"],
   ];
-  // Campaign-shape metrics (issue #15): ledger-citation coverage of worker
-  // artifacts, and worker-idle share of the dispatch window.
+  // Campaign-shape metrics (issue #15): citation coverage and worker-idle share.
   const M = DATA.metrics;
   if (M.citation) {
     tiles.push(["Cited by ledgers", M.citation.cited + "/" + M.citation.workers,
@@ -266,8 +260,7 @@ export const VIEW = String.raw`
         "<div class='t-mono'>click to inspect</div>",
     });
   });
-  // One point-item shape for every mark on the timeline; only the group,
-  // class, label and tooltip differ. kind/ev are what the inspector
+  // One point-item shape for every mark; kind/ev are what the inspector
   // dispatches on when a mark is clicked.
   const point = (id, group, cls, content, kind, e, title) =>
     items.push({ id, group, start: ms(e.t), type: "point", className: "stage " + cls, content, kind, ev: e, title });
@@ -312,10 +305,9 @@ export const VIEW = String.raw`
     .concat([{ id: "verify", content: "verification stages" }, { id: "gates", content: "idea gates & promotions" }]);
 
   // ---- idle-gap compression ----
-  // Long stretches with no events (harness stopped, overnight pauses)
-  // otherwise dominate the axis and flatten all activity into slivers.
-  // Gaps > 20 min are hidden (vis-timeline hiddenDates), keeping 60s of
-  // margin on each side, with a labeled marker at each cut.
+  // Overnight pauses otherwise dominate the axis and flatten activity into
+  // slivers. Gaps > 20 min are hidden (vis-timeline hiddenDates), keeping 60s
+  // of margin on each side, with a labeled marker at each cut.
   const stamps = [];
   items.forEach((it) => {
     if (it.start != null) stamps.push(+it.start);
@@ -353,9 +345,8 @@ export const VIEW = String.raw`
   const pad = Math.max(DATA.span * 0.02, 120) * 1000;
   const options = {
     hiddenDates: hiddenDates,
-    // Pan when zoomed: plain wheel/trackpad scrolls the time axis
-    // horizontally (vertical stays on the group panel's own scrollbar);
-    // ctrl+wheel zooms, drag pans too.
+    // Plain wheel/trackpad scrolls the time axis horizontally (vertical stays
+    // on the group panel's own scrollbar); ctrl+wheel zooms.
     horizontalScroll: true,
     stack: true,
     stackSubgroups: true,
@@ -380,8 +371,7 @@ export const VIEW = String.raw`
   const row = (k, v, cls) => '<div class="k">' + k + '</div><div class="v ' + (cls || "") + '">' + v + "</div>";
   const absent = (why) => '<span class="absent">' + why + "</span>";
   const block = (s) => "<pre>" + esc(s) + "</pre>";
-  // Packet fields older harness revisions never journaled; say that plainly
-  // rather than rendering an empty box.
+  // Packet fields older harness revisions never journaled: say so plainly.
   const NOT_RECORDED = "not recorded by the harness revision that ran this campaign";
 
   function inspectAgent(a) {

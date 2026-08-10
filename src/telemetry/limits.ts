@@ -1,11 +1,9 @@
 // The constraint that actually stops campaigns (issue #30): subscription runs
 // are not metered in dollars, so what binds is a rolling window. Danus died on
 // it, 55% -> 100% of a weekly allowance in 3h52m, which makes --agent-limit a
-// burst-rate control and not only a concurrency knob.
-//
-// `codex exec --json` stdout carries no rate-limit event (verified against
-// 0.145.0), so #35 records a join key and the numbers are read from codex's own
-// rollouts under ~/.codex/sessions/.
+// burst-rate control and not only a concurrency knob. `codex exec --json` stdout
+// carries no rate-limit event (verified against 0.145.0), so #35 records a join
+// key and the numbers are read from codex's rollouts under ~/.codex/sessions/.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -19,9 +17,9 @@ export interface LimitSample {
 }
 
 export interface LimitsReport {
-  /** `exact` = every rollout matched a recorded providerSessionId or
-   *  backendCwd; `time-window` = matched by coverify's temp-dir signature
-   *  within the campaign's span, an INFERENCE, and labelled as one. */
+  /** `exact` = matched a recorded providerSessionId or backendCwd;
+   *  `time-window` = matched by coverify's temp-dir signature within the
+   *  campaign's span, an INFERENCE, and labelled as one. */
   attribution: "exact" | "time-window" | "none";
   rollouts: number;
   samples: LimitSample[];
@@ -92,7 +90,7 @@ export function campaignLimits(campaignDir: string, run?: string): LimitsReport 
         (meta?.session_id !== undefined && sessionIds.has(meta.session_id)) ||
         (meta?.cwd !== undefined && cwds.has(meta.cwd));
       // Every CLI role gets its own temp workdir, so the cwd is this harness's
-      // signature even on records predating the join key. Reported as inference.
+      // signature even before the join key. Reported as inference.
       const inferred = !exact && (meta?.cwd ?? "").includes("coverify-cli-");
       if (!exact && !inferred) continue;
 
@@ -129,9 +127,9 @@ export function campaignLimits(campaignDir: string, run?: string): LimitsReport 
   }
 
   samples.sort((a, b) => a.ts - b.ts);
-  // Steepest rise over a span of at least BURN_SPAN_MS, never between adjacent
-  // samples: concurrent rollouts put consecutive samples milliseconds apart, and
-  // a 2-point rise over 1ms reads as millions of points/hour. The sustained rate
+  // Steepest rise over at least BURN_SPAN_MS, never between adjacent samples:
+  // concurrent rollouts put consecutive samples milliseconds apart, and a
+  // 2-point rise over 1ms reads as millions of points/hour. The sustained rate
   // is the one that matters (Danus died at roughly 11.6 points/hour).
   const BURN_SPAN_MS = 30 * 60_000;
   let fastestBurn: LimitsReport["fastestBurn"];
@@ -187,8 +185,7 @@ export function formatLimits(r: LimitsReport): string {
   );
   const hi = Math.max(...r.samples.map((s) => s.usedPercent));
   // NOT called resets: used_percent is account-wide and rollouts run
-  // concurrently, so a stale sample explains a fall equally well. Report the
-  // count rather than claim a reset.
+  // concurrently, so a stale sample explains a fall equally well.
   let falls = 0;
   for (let i = 1; i < r.samples.length; i++) {
     if (r.samples[i].usedPercent < r.samples[i - 1].usedPercent - 1) falls++;

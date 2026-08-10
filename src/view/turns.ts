@@ -23,9 +23,8 @@ export interface TurnRecord {
   usage?: RoleUsage;
 }
 
-/** Usage as pi writes it to the session log: token fields plus a `cost` block
- *  this harness does not record — every lane is subscription-billed, so that
- *  figure is notional list price (see RoleUsage). */
+/** Usage as pi writes it: token fields plus a `cost` block this harness does not
+ *  record — every lane is subscription-billed, so it is notional list price. */
 type SessionUsage = RoleUsage & { cost?: unknown };
 
 /** Drop the wire-only `cost` block; token fields pass through unchanged. */
@@ -42,7 +41,6 @@ interface SessionMessage {
   usage?: SessionUsage;
 }
 
-/** Walk a message history into TurnRecords (content sizes only). */
 function messagesToTurns(messages: readonly SessionMessage[]): TurnRecord[] {
   const out: TurnRecord[] = [];
   let prevAssistantTs: number | undefined;
@@ -87,14 +85,13 @@ export interface SessionTelemetry {
   /** Session id from the file name (<timestamp>_<id>.jsonl). */
   id: string;
   turns: TurnRecord[];
-  /** Message usage plus compaction entries' own spend (a summarization
-   *  call's usage lives on the compaction entry, not on any message). */
+  /** Message usage plus compaction entries' own spend (a summarization call's
+   *  usage lives on the compaction entry, not on any message). */
   usage: RoleUsage;
   /** The compaction half of `usage`, alone. Kept separable because it belongs
    *  to no turn: sum(turn deltas) legitimately differs from `usage` on any
    *  session that compacted (telemetry/corpus.ts, rule 3b check 4). */
   compaction?: RoleUsage;
-  /** How many compactions this session performed. */
   compactions: number;
 }
 
@@ -114,11 +111,8 @@ export function campaignTurns(campaignDir: string): SessionTelemetry[] {
   return walkJsonl(root).map((file) => {
     const messages: SessionMessage[] = [];
     // Everything that spent tokens, shaped as the accumulator expects. A
-    // compaction is not a message but its usage is billed exactly like one, so
-    // it is wrapped as an assistant message here — the same wrapping
-    // providers.ts does when it sums compaction entries. Reconstructed from
-    // pi's OWN session JSONL, so the provenance is known exactly as well as at
-    // the stamped site in providers.ts.
+    // compaction is not a message but is billed like one, so it is wrapped as
+    // an assistant message — the same wrapping providers.ts does.
     const billed: { role: string; usage: RoleUsage }[] = [];
     const compacted: { role: string; usage: RoleUsage }[] = [];
     const add = (raw: SessionUsage | undefined, into = billed) => {
@@ -135,10 +129,9 @@ export function campaignTurns(campaignDir: string): SessionTelemetry[] {
       }
       if (entry.type === "message" && entry.message) {
         messages.push(entry.message);
-        // Only assistant messages are billed. The filter matters even though
-        // pi writes no usage on user messages today: without it the two sides
-        // of the cross-check would silently disagree the day one appeared,
-        // and a cross-check that can drift is not evidence.
+        // Only assistant messages are billed. Keep the filter even though pi
+        // writes no usage on user messages today: without it the two sides of
+        // the cross-check silently disagree the day one appears.
         if (entry.message.role === "assistant") add(entry.message.usage);
       } else if (entry.type === "compaction") {
         add(entry.usage);

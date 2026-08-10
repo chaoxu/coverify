@@ -10,8 +10,7 @@ import { campaignTurns } from "../view/turns.js";
 export interface CorpusCheck {
   n: number;
   name: string;
-  /** false = the corpus fails this check and must not be summed until the
-   *  relationship is characterized. */
+  /** false = do not sum this corpus until the relationship is characterized. */
   ok: boolean;
   /** true when the check cannot be evaluated on this corpus shape at all. */
   notApplicable?: boolean;
@@ -86,9 +85,8 @@ export function corpusChecks(campaignDir: string): CorpusCheck[] {
   });
 
   // 4. Accumulated total vs the sum of per-turn deltas. Compaction spend belongs
-  //    to no turn, so it is added back: a compacted session is EXPECTED to differ
-  //    by exactly that amount. Assistant turns only, matching what the session
-  //    total bills (see turns.ts's assistant-only filter).
+  //    to no turn, so it is added back. Assistant turns only, matching what the
+  //    session total bills (see turns.ts's assistant-only filter).
   const mismatched = sessions.filter((s) => {
     const summed =
       s.turns.reduce((n, t) => n + (t.role === "assistant" ? (t.usage?.input ?? 0) : 0), 0) +

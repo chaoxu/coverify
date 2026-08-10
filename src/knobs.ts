@@ -1,34 +1,24 @@
-// Every environment knob, declared once (issue #45). Previously the truth lived
-// in three hand-synced places — the read site, cli.ts's usage string, and the
-// run stamp — and six knobs were stamped nowhere, so a campaign could not prove
-// what governed it.
-//
-// Counts are deliberately never written down here: this module's whole thesis is
-// that a number kept by hand goes stale.
-//
+// Every environment knob, declared once (issue #45), so the read site, the help
+// text, and the run stamp cannot disagree. Never write a knob COUNT down here.
 // Deliberately NOT a config file (issue #44 removed an ambient input that made
-// runs unreproducible; a config file adds "which config governed this run?"),
-// and deliberately NOT a config library: envalid, znv, @t3-oss/env-core, convict
-// and nconf provide no provenance, generated help, or serializable snapshot, and
-// all parse eagerly and freeze — which breaks the lazy reads this codebase and
-// its tests depend on.
+// runs unreproducible), and NOT a config library: the surveyed ones offer no
+// provenance, generated help, or serializable snapshot, and all parse eagerly
+// and freeze, which breaks the lazy reads this codebase depends on.
 import { Type, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 
 export interface Knob {
   name: string;
-  /** Validated with typebox: a present-but-invalid value never falls back to
-   *  the default (envalid's one genuinely subtle rule, worth stealing). */
+  /** A present-but-invalid value never falls back to the default. */
   schema: TSchema;
-  /** Rendered in help and used when the variable is unset. `undefined` means
-   *  the effective default is computed elsewhere and named in `detail`. */
+  /** Used when the variable is unset. `undefined` means the effective default
+   *  is computed elsewhere and named in `detail`. */
   fallback?: string;
   detail: string;
-  /** Which module reads it — so a reader can go straight to the enforcement. */
+  /** Which module reads it. */
   module: string;
-  /** A free-form shell command template, which routinely carries auth flags.
-   *  The run stamp is mirrored into the in-tree journal, which is plausibly
-   *  committed, so these are stamped as `<set>` rather than verbatim. */
+  /** A shell command template, which routinely carries auth flags. The run
+   *  stamp reaches the in-tree journal, so these are stamped `<set>`. */
   secret?: true;
 }
 
@@ -38,8 +28,8 @@ const nonNegInt = Type.Integer({ minimum: 0 });
 const flag = Type.Union([Type.Literal("1"), Type.Literal("true"), Type.Literal("yes")]);
 
 /** Role suffixes as spelled in the env names (NOT the RoleName union: the gate
- *  critic's variable is CRITIC, the auditor's AUDITOR). Importing providers.ts
- *  would be circular, so the conformance check pins these against ROLE_ENV. */
+ *  critic's is CRITIC). Importing providers.ts would be circular, so the
+ *  conformance check pins these against ROLE_ENV. */
 export const ROLE_ENV_SUFFIXES = [
   "COORDINATOR",
   "REASONER",
@@ -84,8 +74,7 @@ export const KNOBS: readonly Knob[] = [
     module: "providers.ts",
   })),
 
-  // Backend transports. Templates, not resolved argv: {model} and {out} are
-  // substituted per call.
+  // Backend transports. Templates, not argv: {model}/{out} substituted per call.
   { name: "COVERIFY_CLAUDE_CMD", secret: true, schema: str, detail: "claude-cli command template", module: "backends.ts" },
   { name: "COVERIFY_CODEX_CMD", secret: true, schema: str, detail: "codex-cli command template ({out})", module: "backends.ts" },
   { name: "COVERIFY_CHATGPT_CMD", secret: true, schema: str, detail: "chatgpt-cli oracle command template", module: "backends.ts" },
@@ -168,16 +157,10 @@ export const KNOBS: readonly Knob[] = [
 
 const BY_NAME = new Map(KNOBS.map((k) => [k.name, k]));
 
-/**
- * Read one knob, coercing and validating against its schema. A value that is
- * PRESENT BUT INVALID throws — it never falls back to the default, because a
- * silently-ignored setting is how an A/B ends up comparing an arm against
- * itself, and how a typo'd limit reads as no limit at all.
- *
- * Reads live, on every call, deliberately: this codebase resolves specs and
- * limits per call so a mid-campaign env change takes effect, and the tests
- * depend on it. Every surveyed config library parses once and freezes.
- */
+/** Read one knob, coercing and validating against its schema. A PRESENT BUT
+ *  INVALID value throws and never falls back: a silently-ignored setting is how
+ *  an A/B compares an arm against itself. Reads live on every call, so a
+ *  mid-campaign env change takes effect; the tests depend on that. */
 export function readKnob(name: string): string | undefined {
   const knob = BY_NAME.get(name);
   if (!knob) throw new Error(`unknown knob ${name} — declare it in src/knobs.ts`);
@@ -188,8 +171,7 @@ export function readKnob(name: string): string | undefined {
   return raw;
 }
 
-/** The literal values a union-schema knob accepts, read off the schema rather
- *  than spelled in prose. */
+/** The literal values a union-schema knob accepts, read off the schema. */
 function knobChoices(knob: Knob): string[] | undefined {
   const anyOf = (knob.schema as { anyOf?: { const?: string }[] }).anyOf;
   const consts = anyOf?.map((s) => s.const).filter((c): c is string => c !== undefined);
@@ -197,8 +179,7 @@ function knobChoices(knob: Knob): string[] | undefined {
 }
 
 /** Why this raw value is invalid for this knob, or undefined if it is fine.
- *  Validates the CONVERTED value but reports the RAW one, which is what the
- *  operator typed. */
+ *  Validates the CONVERTED value but reports the RAW one the operator typed. */
 function knobError(knob: Knob, raw: string): string | undefined {
   const converted = Value.Convert(knob.schema, raw);
   const choices = knobChoices(knob);
@@ -210,16 +191,12 @@ function knobError(knob: Knob, raw: string): string | undefined {
       ". Refusing to fall back to the default: a silently ignored setting is worse than a stop."
     );
   }
-  // Re-serialization check, for NUMERIC and enum knobs ONLY. It defeats typebox
-  // Convert's leniency: "true", "0x10" and "1e3" all satisfy Integer, and the
-  // real readers then Number() them into NaN.
-  //
-  // It must NOT apply to free-form strings: for a plain Type.String() Convert is
-  // the identity, so the comparison can only ever REJECT — it rejected any value
-  // with surrounding whitespace (` claude -p `, a heredoc's trailing newline),
-  // and validateKnobs() is the first statement of prove(), so that refused to
-  // start the campaign with an empty reason. Most knobs are plain strings,
-  // including every model spec and command template.
+  // Re-serialization check, for NUMERIC and enum knobs ONLY, defeating typebox
+  // Convert's leniency: "true", "0x10" and "1e3" all satisfy Integer and then
+  // Number() into NaN. It must NOT apply to free-form strings: Convert is the
+  // identity there, so it can only REJECT — it rejects surrounding whitespace
+  // (` claude -p `, a heredoc's trailing newline), and validateKnobs is the
+  // first statement of prove(), so the campaign refuses to start.
   const freeForm = (knob.schema as { type?: string }).type === "string" && choices === undefined;
   if (freeForm || String(converted) === raw.trim()) return undefined;
   return (
@@ -230,15 +207,12 @@ function knobError(knob: Knob, raw: string): string | undefined {
   );
 }
 
-/**
- * Validate every knob set in this environment, throwing with ALL the bad ones.
- * Called once at campaign start, which is where "never silently falls back" is
- * actually enforced: the individual readers stay lenient because `runTimeoutMs()`
- * runs while a tool executes and throwing there would kill a live campaign.
- * Without this, `COVERIFY_RETRY_MAX=abc` silently became 3 and
- * `COVERIFY_COORDINATOR_CONTEXT_TOKENS=abc` became NaN, making
- * `approxTokens() > NaN` false forever so compaction never fired.
- */
+/** Validate every knob set in this environment, throwing with ALL the bad ones.
+ *  Called once at campaign start, where "never silently falls back" is enforced:
+ *  individual readers stay lenient because `runTimeoutMs()` runs while a tool
+ *  executes and throwing there would kill a live campaign. Without this,
+ *  `COVERIFY_COORDINATOR_CONTEXT_TOKENS=abc` becomes NaN and compaction never
+ *  fires. */
 export function validateKnobs(): void {
   const bad = KNOBS.map((k) => {
     const raw = process.env[k.name];
@@ -250,14 +224,13 @@ export function validateKnobs(): void {
 export interface ResolvedKnob {
   name: string;
   value: string | undefined;
-  /** Where the value came from. The point of the whole exercise: an operator
-   *  can confirm an A/B arm is what they think BEFORE spending quota on it. */
+  /** Where the value came from, so an operator can confirm an A/B arm BEFORE
+   *  spending quota on it. */
   source: "env" | "default" | "unset";
   detail: string;
   module: string;
   /** Set when the environment holds a value this knob's schema rejects. The
-   *  pre-flight must SHOW this, or a typo'd A/B arm renders as a healthy
-   *  `env`-sourced value. */
+   *  pre-flight must SHOW it, or a typo'd A/B arm looks healthy. */
   invalid?: string;
 }
 
@@ -277,10 +250,9 @@ export function resolvedKnobs(): ResolvedKnob[] {
   });
 }
 
-/** The run stamp's view: only what was actually SET, so the record says what
- *  governed this run without an "unset" row for every knob that did not.
- *  Command templates are stamped as `<set>` — recording THAT one was overridden
- *  reproduces the run; recording the flag that authenticated it is a leak. */
+/** The run stamp's view: only what was actually SET. Command templates are
+ *  stamped `<set>` — that one was overridden reproduces the run, the flag that
+ *  authenticated it is a leak. */
 export function knobSnapshot(): Record<string, string> {
   return Object.fromEntries(
     KNOBS.filter((k) => {
@@ -290,8 +262,7 @@ export function knobSnapshot(): Record<string, string> {
   );
 }
 
-/** The env section of `coverify --help`, generated so it cannot drift from the
- *  table the way the hand-written list did. */
+/** The env section of `coverify --help`, generated so it cannot drift. */
 export function knobUsage(): string {
   const w = Math.max(...KNOBS.map((k) => k.name.length));
   return KNOBS.map((k) => {
@@ -305,13 +276,10 @@ export function knobUsage(): string {
   }).join("\n");
 }
 
-/**
- * @param effective role -> the spec that will actually be used. Passed in rather
- *        than imported so this module stays dependency-free (the conformance
- *        check imports it). Without it the model knobs render as "unset", which
- *        is true of the VARIABLE and misleading about the run, since their
- *        defaults live in ROLE_DEFAULTS.
- */
+/** @param effective role -> the spec that will actually be used. Passed in, not
+ *         imported, so this module stays dependency-free. Without it the model
+ *         knobs render "unset": true of the VARIABLE, misleading about the run,
+ *         since their defaults live in ROLE_DEFAULTS. */
 export function formatResolvedKnobs(
   rows: readonly ResolvedKnob[],
   effective?: Record<string, string>,
@@ -332,7 +300,7 @@ export function formatResolvedKnobs(
   const w = Math.max(...rows.map((r) => r.name.length));
   for (const r of rows) {
     // Redacted only when the ENVIRONMENT supplied it: a shipped default carries
-    // no secret and IS the fact this command exists to show.
+    // no secret.
     const secret = KNOBS.find((k) => k.name === r.name)?.secret === true;
     const shown = r.value === undefined ? "—" : secret && r.source === "env" ? "<set>" : r.value;
     out.push(`  ${(r.invalid ? "INVALID" : r.source).padEnd(7)} ${r.name.padEnd(w)}  ${shown}`);

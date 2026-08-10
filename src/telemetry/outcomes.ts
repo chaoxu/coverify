@@ -7,8 +7,7 @@ import type { RoleUsage } from "../providers.js";
 import { M, median, runRecords } from "../view/shared.js";
 import { type LaneSpend, bumpLane, bySpend, inferLanes, roleOf } from "./spend.js";
 
-/** The four verification stages plus the pre-verification gate. A stage record
- *  carries `verdict`, so a FAIL rate is a count, not an inference. */
+/** A stage record carries `verdict`, so a FAIL rate is a count, not an inference. */
 const STAGES = ["gate-verdict", "audit", "bundle-cert", "reconstruction", "comparison"] as const;
 
 export interface StageOutcome {
@@ -19,7 +18,7 @@ export interface StageOutcome {
 
 export interface RevisionOutcome {
   revision: string;
-  /** Verification rounds this revision went through — the repair loop's depth. */
+  /** Verification rounds: the repair loop's depth. */
   rounds: number;
   verdicts: string[];
   promoted: boolean;
@@ -27,12 +26,11 @@ export interface RevisionOutcome {
 
 export interface CampaignOutcomes {
   stages: StageOutcome[];
-  /** Revisions that entered verification, and what became of them. */
   revisions: RevisionOutcome[];
   promoted: number;
   /** Promotions contradicted by a later substantive FAIL. Excluded from
    *  `promoted` and from promoted spend, reported here so the exclusion is
-   *  visible rather than a silently smaller number. */
+   *  visible. */
   retracted: string[];
   /** Verification spend on revisions that never promoted, per lane. Never
    *  summed across lanes, for spend.ts's reason. */
@@ -43,7 +41,7 @@ export interface CampaignOutcomes {
   promotedWithoutVerification: string[];
   /** Issue #38's instrument: of the standing promotions, how many lie on the
    *  transitive premise path of a terminal result. `fraction` is present ONLY
-   *  when the premise graph can carry the question — see onPathFraction. */
+   *  when the premise graph can carry the question (see onPathFraction). */
   onPath: {
     promotions: number;
     /** Promotions carrying at least one machine-resolvable premise. */
@@ -53,7 +51,6 @@ export interface CampaignOutcomes {
     terminals: number;
     onPath?: number;
     fraction?: number;
-    /** Why the fraction is absent, when it is. */
     refusal?: string;
   };
 }
@@ -62,16 +59,12 @@ export interface CampaignOutcomes {
  *  sameRevision), so two case spellings of one file are one revision. */
 const key = (s: unknown) => String(s).toLowerCase();
 
-/**
- * Issue #38: of the work that promoted, how much lies on the dependency path of
- * a result? Walks `premises` backwards from terminal results.
- *
- * REFUSES to divide below 50% premise coverage. On the seven campaigns measured
- * 2026-08-09 only 10 of 64 promotions carried a premise, so the rest are
- * isolated nodes trivially their own terminal and the fraction comes out ~1.0
- * meaning "nothing was recorded". Parsing the promotion entry prose instead
- * finds the same 10 edges: the edge has to be recorded to exist.
- */
+/** Issue #38: of the work that promoted, how much lies on the dependency path
+ *  of a result? Walks `premises` backwards from terminal results, and REFUSES
+ *  to divide below 50% premise coverage — on the seven campaigns measured
+ *  2026-08-09 only 10 of 64 promotions carried a premise, so the rest are
+ *  isolated nodes trivially their own terminal and the fraction comes out ~1.0
+ *  meaning "nothing was recorded". */
 function onPathFraction(
   promotions: { revision: string; premises: string[] }[],
 ): CampaignOutcomes["onPath"] {
@@ -131,8 +124,8 @@ export function campaignOutcomes(campaignDir: string, run?: string): CampaignOut
     if (rows.length === 0) continue;
     const counts = new Map<string, number>();
     for (const r of rows) {
-      // A stage that reported nothing keeps its own bucket, so totals
-      // reconcile against the record count.
+      // A stage that reported nothing keeps its own bucket, so totals reconcile
+      // against the record count.
       const v = typeof r.verdict === "string" ? r.verdict : "(no verdict recorded)";
       counts.set(v, (counts.get(v) ?? 0) + 1);
     }
@@ -146,8 +139,7 @@ export function campaignOutcomes(campaignDir: string, run?: string): CampaignOut
   for (const r of records) {
     if (!STAGES.includes(r.kind as (typeof STAGES)[number])) continue;
     // gate-verdict records carry `mechanism`, never `revision` (issue #36), so
-    // they appear in the stage table but not the per-revision one — a visible
-    // gap rather than a fuzzy mechanism-string match.
+    // they appear in the stage table but not the per-revision one.
     if (typeof r.revision !== "string") continue;
     const k = key(r.revision);
     const e = perRevision.get(k) ?? { rounds: 0, verdicts: [], label: r.revision };
@@ -171,8 +163,8 @@ export function campaignOutcomes(campaignDir: string, run?: string): CampaignOut
     unpromotedSpend: [...unpromoted.values()].sort(bySpend),
     promotedSpend: [...promotedLanes.values()].sort(bySpend),
     promotedWithoutVerification: [...promoted].filter((p) => !perRevision.has(p)),
-    // Standing promotions only: a retracted one is not a result, so it is
-    // neither a terminal nor on anything's path.
+    // Standing promotions only: a retracted one is neither a terminal nor on
+    // anything's path.
     onPath: onPathFraction(
       records
         .filter((r) => r.kind === "promotion" && promoted.has(key(r.revision)))

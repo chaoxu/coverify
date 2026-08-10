@@ -1,11 +1,7 @@
-/**
- * Campaign trace: renders a campaign's append-only journal as a self-contained
- * HTML timeline — agent lifetimes, verification cadence, coordinator wakes.
- * Observability only: it reads harness audit metadata and writes nothing back,
- * so it cannot affect campaign semantics (design rule 2). The timeline widget
- * is vis-timeline, inlined at render time so a trace opens offline and inside
- * a strict CSP.
- */
+/** Renders a campaign's append-only journal as a self-contained HTML timeline.
+ *  Observability only: writes nothing back, so it cannot affect campaign
+ *  semantics (design rule 2). vis-timeline is inlined at render time so a trace
+ *  opens offline and inside a strict CSP — never switch it to a CDN link. */
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { citedEvidencePaths, gateOf, readJournal, readLedger, repoRoot } from "../campaign.js";
@@ -21,9 +17,9 @@ export interface TraceAgent {
   /** Infrastructure-failure reason (failed-flagged completion); no report exists. */
   failed?: string;
   mechanism: string;
-  /** The packet, as journaled. Fields beyond `task` exist only for campaigns
-   *  run by a harness revision that recorded them; older runs leave them
-   *  undefined and the inspector says so rather than implying emptiness. */
+  /** The packet, as journaled. Fields beyond `task` are undefined on campaigns
+   *  whose harness revision did not record them, and the inspector says so
+   *  rather than implying emptiness. */
   task: string;
   deliverable?: string;
   context?: string;
@@ -38,21 +34,17 @@ export interface TraceAgent {
 
 export type TraceEvent = Record<string, unknown> & { type: string; t: number };
 
-/**
- * Campaign-shape metrics (issue #15), derived read-only from the journal and
- * the ledger texts. Both exist because Danus's directed-cut-union campaign
- * could not see its own numbers: 85% of its verified facts were outside the
- * answer's ancestry, and no one knew until an external analysis.
- */
+/** Campaign-shape metrics (issue #15), derived read-only from the journal and
+ *  the ledger texts. Danus's directed-cut-union campaign spent 85% of its
+ *  verified facts outside the answer's ancestry without being able to see it. */
 export interface TraceMetrics {
-  /** Worker dispatches (reasoners/technicians) whose EVIDENCE/<id>/ artifacts
-   *  are cited by PROVED.md or FAILED.md — the rest is candidate dead weight.
-   *  Purely mechanical string matching, like citation lint: content is never
-   *  parsed or judged, and an uncited artifact may still have been useful. */
+  /** Worker dispatches whose EVIDENCE/<id>/ artifacts are cited by PROVED.md or
+   *  FAILED.md. Mechanical string matching only: an uncited artifact may still
+   *  have been useful. */
   citation?: { workers: number; cited: number; orphaned: string[] };
   /** Time with zero live workers inside the worker window (first dispatch →
-   *  last completion) — the coordinator-serialization signal, and the trigger
-   *  for the pipelining decision recorded in issue #17's study. */
+   *  last completion) — the coordinator-serialization signal behind issue #17's
+   *  pipelining decision. */
   idle?: { windowSec: number; idleSec: number; largestGapsSec: number[] };
 }
 
@@ -76,13 +68,10 @@ function vendored(rel: string): string {
   return fs.readFileSync(p, "utf-8");
 }
 
-/**
- * JSON safe to inline in a <script> block. Journal text is model-authored: a
- * report quoting HTML, or a technician pasting a snippet, would otherwise
- * close the tag — and the page then renders as a campaign in which nothing
- * happened, which is worse than an error. U+2028/9 are newlines to a JS
- * parser but not to JSON.
- */
+/** JSON safe to inline in a <script> block. Journal text is model-authored, so
+ *  a report quoting HTML would close the tag and the page would render as a
+ *  campaign in which nothing happened. U+2028/9 are newlines to a JS parser but
+ *  not to JSON. */
 function jsonForScript(value: unknown): string {
   return JSON.stringify(value)
     .replace(/</g, "\\u003c")
@@ -94,8 +83,7 @@ function esc(s: string): string {
   return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string);
 }
 
-/** Cut long text at a boundary the reader can see, so a stump is never
- *  mistaken for the whole value. */
+/** Cut long text visibly, so a stump is never read as the whole value. */
 function clip(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "\u2026 [truncated]" : s;
 }
@@ -104,9 +92,8 @@ function clip(s: string, max: number): string {
 export function traceData(dir: string): TraceData {
   const rows = readJournal(dir) as unknown as Record<string, any>[];
   if (rows.length === 0) throw new Error(`no journal entries under ${dir}/.coverify/`);
-  // A malformed ts must not become NaN geometry (or crash the render): rows
-  // whose timestamp does not parse are skipped, and the span falls back to the
-  // last one that did.
+  // A malformed ts must not become NaN geometry: rows whose timestamp does not
+  // parse are skipped, and the span falls back to the last one that did.
   const at = (s: unknown): number | undefined => {
     const ms = Date.parse(String(s));
     return Number.isFinite(ms) ? ms / 1000 : undefined;
@@ -128,8 +115,8 @@ export function traceData(dir: string): TraceData {
     if (row.kind === "wake") {
       events.push({ type: "wake", t, n: row.wake, live: row.live ?? 0, reports: row.newReports ?? 0 });
     } else if (row.kind === "note" && (row.runStart === true || row.note === "run-start")) {
-      // runStart is the structural marker; the prose match keeps journals
-      // written before it existed readable.
+      // runStart is the structural marker; the prose match keeps older
+      // journals readable.
       runStarts.push(t);
     } else if (g?.kind === "dispatch") {
       agents.set(g.id, {
@@ -167,11 +154,9 @@ export function traceData(dir: string): TraceData {
         revision: g.revision,
         verdict: g.verdict,
         model: g.modelFamily ?? "",
-        // Requested-vs-answered (#21 P3): carried ONLY when it is a genuine
-        // substitution. The alias rule lives in one place (sameModelId) —
-        // raw inequality here would flag every audit on the default config,
-        // where claude-cli answers a request for `opus` as `claude-opus-5`,
-        // and an alarm that always fires is trained away.
+        // Requested-vs-answered (#21 P3), carried ONLY on a genuine
+        // substitution. Use sameModelId, never raw inequality: claude-cli
+        // answers `opus` as `claude-opus-5`, which would flag every audit.
         reportedModel:
           typeof g.reportedModel === "string" &&
           typeof g.modelFamily === "string" &&
@@ -184,23 +169,20 @@ export function traceData(dir: string): TraceData {
     } else if (g?.kind === "promotion") {
       events.push({ type: "promotion", t, revision: g.revision });
     } else if (g?.kind === "rebuttal") {
-      // Verdict-permission record: rendered beside the verdicts so a
-      // FAIL->fresh-attempt->PASS sequence is legible as the contract's
-      // rebuttal lane rather than verdict shopping (skill-feedback
-      // 2026-08-09). Own event type: folding it into "gate" corrupted the
-      // idea-gate pass-rate tile.
+      // Verdict-permission record, rendered beside the verdicts so a
+      // FAIL->fresh-attempt->PASS reads as the contract's rebuttal lane. Own
+      // event type: folding it into "gate" corrupts the pass-rate tile.
       events.push({ type: "rebuttal", t, revision: g.revision, artifact: g.artifact });
     }
   }
-  // Inline each report so the page is inspectable on its own; capped, with the
-  // path kept so the full artifact is one click away in the campaign folder.
+  // Inline each report so the page is inspectable on its own; capped, path kept.
   const CAP = 12_000;
   for (const a of agents.values()) {
     if (!a.report) continue;
     const root = path.resolve(dir);
     const p = path.resolve(root, a.report);
-    // The harness writes this field itself, but the trace must not become a
-    // way to read (and publish) a file outside the campaign.
+    // The trace must not become a way to read (and publish) a file outside the
+    // campaign.
     if (!p.startsWith(root + path.sep) || !fs.existsSync(p)) continue;
     const text = fs.readFileSync(p, "utf-8");
     a.reportText = text.length > CAP ? text.slice(0, CAP) + "\n\n[truncated - open the artifact for the rest]" : text;
@@ -226,17 +208,15 @@ function computeMetrics(
   const workers = agents.filter((a) => WORKER_ROLES.has(a.role));
   const metrics: TraceMetrics = {};
 
-  // Ledger-citation coverage. A worker's artifacts all live under
-  // EVIDENCE/<id>/, and "cited" is the same token scan citation lint uses —
-  // one definition, shared. Cancelled and infrastructure-failed dispatches
-  // left no citable artifact and are skipped.
+  // Ledger-citation coverage, using the same token scan as citation lint.
+  // Cancelled and infrastructure-failed dispatches left no citable artifact.
   const cited = new Set<string>();
   for (const f of ["PROVED.md", "FAILED.md"]) {
     if (!fs.existsSync(path.join(dir, f))) continue;
     for (const token of citedEvidencePaths(readLedger(dir, f))) cited.add(token);
   }
-  // Zero citations with reported workers is 0/N — the 100%-dead-weight case
-  // is the one this metric exists to expose, never a reason to hide the tile.
+  // Zero citations with reported workers renders as 0/N: the 100%-dead-weight
+  // case is what this metric exists to expose, never a reason to hide the tile.
   const reported = workers.filter((a) => a.report !== undefined);
   if (reported.length > 0) {
     const isCited = (a: TraceAgent) =>
@@ -250,10 +230,9 @@ function computeMetrics(
   }
 
   // Worker-idle time: merge the workers' live intervals and subtract from the
-  // window they span. An open dispatch (no completion record) died with its
-  // run, so it counts as live only until the next run-start after it — an
-  // agent lost in epoch 2 was not running through epochs 3–7, and treating it
-  // so would report a serialized campaign as 0% idle (observed on lin3cut).
+  // window they span. An open dispatch died with its run, so it counts as live
+  // only until the next run-start; counting it to the end reports a serialized
+  // campaign as 0% idle (observed on lin3cut).
   if (workers.length > 0) {
     const openEnd = (start: number): number =>
       runStarts.find((r) => r > start) ?? span;
@@ -279,7 +258,6 @@ function computeMetrics(
   return metrics;
 }
 
-/** Self-contained HTML: no network, no external assets. */
 export function renderTrace(dir: string): string {
   const data = traceData(dir);
   const name = path.basename(path.resolve(dir));
@@ -312,11 +290,8 @@ ${body}
 `;
 }
 
-/**
- * Campaign files a trace must never overwrite. `--out` is a user-typed path,
- * and one typo aimed at the journal or a ledger would destroy the campaign
- * this tool exists to observe.
- */
+/** `--out` is user-typed: one typo aimed at the journal or a ledger would
+ *  destroy the campaign this tool exists to observe. */
 function assertSafeOutput(dir: string, target: string): void {
   const root = path.resolve(dir);
   const p = path.resolve(target);
@@ -326,7 +301,6 @@ function assertSafeOutput(dir: string, target: string): void {
   }
 }
 
-/** Writes the trace HTML and returns the output path. */
 export function writeTrace(dir: string, out?: string): string {
   const target = out ?? path.join(dir, ".coverify", "trace.html");
   assertSafeOutput(dir, target);

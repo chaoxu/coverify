@@ -16,15 +16,12 @@ import { defineTelemetrySchema } from "@earendil-works/pi-telemetry";
 const tokens = (description: string) =>
   ({ type: "number", description, cardinality: "high" }) as const;
 
-/**
- * The campaign → run → wake → dispatch → stage → provider-request tree.
- *
- * Token attributes mirror RoleUsage, not a vendor's shape: `input` is the
- * uncached part on every lane, `reasoning` is a SUBSET of `output`, and `meter`
- * names the lane because lanes bill to different accounts and are never summed.
- * An exporter flattening these into one "tokens" counter reintroduces the error
- * docs/measurement-protocol.md exists to prevent.
- */
+/** The campaign → run → wake → dispatch → stage → provider-request tree. Token
+ *  attributes mirror RoleUsage, not a vendor's shape: `input` is the uncached
+ *  part on every lane, `reasoning` is a SUBSET of `output`, and `meter` names
+ *  the lane because lanes bill to different accounts and are never summed. An
+ *  exporter flattening these into one "tokens" counter reintroduces the error
+ *  docs/measurement-protocol.md exists to prevent. */
 export const COVERIFY_TELEMETRY_SCHEMA = defineTelemetrySchema({
   version: 1,
   spans: {

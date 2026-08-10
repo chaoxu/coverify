@@ -19,9 +19,8 @@ interface SpanState {
   parent?: SpanState;
 }
 
-/** Span attributes are inherited up the ancestry rather than copied onto each
- *  record by hand: the edge is the tree, so `dispatchId`/`wake`/`runId` cannot
- *  go missing on a record. */
+/** Attributes are inherited up the ancestry rather than copied onto each record
+ *  by hand, so `dispatchId`/`wake`/`runId` cannot go missing. */
 function inherited(s: SpanState | undefined, key: string): unknown {
   for (let n = s; n !== undefined; n = n.parent) {
     const v = n.attributes[key];
@@ -30,12 +29,10 @@ function inherited(s: SpanState | undefined, key: string): unknown {
   return undefined;
 }
 
-/**
- * Writes one `role-call` leaf per billed provider call, with its parent edges
- * read off the span tree. Only provider_call spans persist — the others carry
- * edges; persisting a wake or dispatch span would duplicate campaign state the
- * harness already records.
- */
+/** Writes one `role-call` leaf per billed provider call, with its parent edges
+ *  read off the span tree. Only provider_call spans persist — the others carry
+ *  edges; persisting a wake or dispatch span would duplicate campaign state the
+ *  harness already records. */
 export class JournalTelemetryContext implements TelemetryContext {
   constructor(
     private readonly store: GateStore,

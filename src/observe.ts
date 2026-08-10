@@ -1,11 +1,8 @@
-/**
- * Observability, separated from operations: everything here RECORDS what
- * happened or NOTICES what the records imply, and never gates, dispatches,
- * schedules, or writes ledgers. Boundary with harness.ts: anything derived from
- * durable history belongs here, anything derived from live scheduler state
- * stays there. House rule (issue #21): every record ships with the derived query
- * that makes it actionable — an unread log is not an audit trail.
- */
+/** Observability, separated from operations: everything here RECORDS what
+ *  happened or NOTICES what the records imply, and never gates, dispatches,
+ *  schedules, or writes ledgers. Boundary with harness.ts: durable history here,
+ *  live scheduler state there. Every record ships with the derived query that
+ *  makes it actionable (issue #21). */
 import * as fs from "node:fs";
 import { knobSnapshot } from "./knobs.js";
 import * as path from "node:path";
@@ -28,26 +25,22 @@ import {
 } from "./providers.js";
 import { sandboxMode, toolText } from "./sandbox.js";
 
-/**
- * Run-config stamp (issue #21 P2): the resolved, non-secret policy that governed
- * this run, recorded once at run start so results are attributable to
- * configurations without commit-vs-restart archaeology. Carries runtime and
- * dependency identity, a dirty-tree flag (rev-parse alone misattributes local
- * edits), and the sandbox enforcement mode.
- */
+/** Run-config stamp (issue #21 P2): the resolved, non-secret policy that governed
+ *  this run. Carries runtime and dependency identity, a dirty-tree flag
+ *  (rev-parse alone misattributes local edits), and the sandbox mode. */
 export function recordRunConfig(
   store: GateStore,
   extra: {
     /** Identifies this harness process; every usage event carries it, so a
-     *  reader groups by it instead of inferring epoch boundaries. */
+     *  reader groups by it instead of inferring epochs. */
     runId: string;
     harnessRev: string;
     launcherSha256: string;
     userAgentLimit?: number;
     maxWakes?: number;
     noComputation?: boolean;
-    // Owned by harness.ts (its enforced constant); passed in rather than
-    // re-derived here so the stamp cannot drift from the enforced value.
+    // Owned by harness.ts; passed in rather than re-derived so the stamp
+    // cannot drift from the enforced value.
     coordinatorContextTokens: number;
   },
 ): void {
@@ -80,9 +73,8 @@ export function recordRunConfig(
     ...extra,
     gitDirty: gitStatus === undefined ? "unknown" : gitStatus !== "",
     bunVersion: process.versions.bun,
-    // Every @earendil-works package in the tree, including transitive pi-tui:
-    // they shape the file tools and what they render, so their versions are
-    // part of run identity.
+    // Every @earendil-works package, including transitive pi-tui: they shape
+    // the file tools and what they render, so they are part of run identity.
     piVersions: Object.fromEntries(
       ["pi-agent-core", "pi-ai", "pi-coding-agent", "pi-tui"].map((p) => [p, piVersion(p)]),
     ),
@@ -101,12 +93,9 @@ export function recordRunConfig(
   });
 }
 
-/**
- * Rewritten-ledger history: CURRENT_FRONTIER.md and REGISTRY.md are rewritten by
- * design, so each distinct post-wake version is stored once, content-addressed,
- * with a hash-bound event carrying order and integrity (A→B→A logs three events,
- * stores two snapshots).
- */
+/** CURRENT_FRONTIER.md and REGISTRY.md are rewritten by design, so each distinct
+ *  post-wake version is stored once, content-addressed, with a hash-bound event
+ *  carrying order (A→B→A logs three events, stores two snapshots). */
 export function archiveLedgerHistory(store: GateStore, dir: string, wakeCount: number): void {
   const histDir = path.join(dir, ".coverify", "ledger-history");
   fs.mkdirSync(histDir, { recursive: true });
@@ -128,12 +117,9 @@ export function archiveLedgerHistory(store: GateStore, dir: string, wakeCount: n
   }
 }
 
-/**
- * Refusal events (issue #21 P1): every refusal recorded at its choke point,
- * generically — the reason IS the refusal text, so new branches are covered
- * without enumeration. Record and tool reply are one step by design, so a
- * refusal site cannot record-skip (the promotion site did, twice).
- */
+/** Refusal events (issue #21 P1): the reason IS the refusal text, so new
+ *  branches are covered without enumeration. Record and tool reply are one step
+ *  by design, so a refusal site cannot record-skip. */
 export function refuse(
   store: GateStore,
   site: "dispatch" | "verification" | "promotion" | "gate" | "declaration",
@@ -149,19 +135,14 @@ export function refuse(
   return toolText(`${site.toUpperCase()} REFUSED: ${reason}`);
 }
 
-/**
- * The companion query: refusals whose subject never got a follow-up — a
- * dispatch refusal on a mechanism with no later dispatch on it, or a
- * verification refusal on a revision with no later verification dispatch.
- * Mechanical noticing only; whether a drop was right stays judgment.
- */
+/** Refusals whose subject never got a follow-up. Mechanical noticing only;
+ *  whether a drop was right stays judgment. */
 export function refusalsWithoutFollowup(
   store: GateStore,
 ): { site: string; subject: string; reason: string }[] {
   const records = store.all();
-  // Newest refusal per subject only, decided first so superseded refusals never
-  // pay a follow-up scan. Gate and declaration refusals have no re-proposable
-  // subject, so they are recorded but deliberately not surfaced here.
+  // Newest refusal per subject only, so superseded refusals never pay a
+  // follow-up scan. Gate and declaration refusals have no re-proposable subject.
   const subjectKey = (r: (typeof records)[number]): string | undefined => {
     if (r.refusal === "dispatch" && typeof r.mechanism === "string") {
       return `dispatch:${r.mechanism.toLowerCase()}`;
@@ -180,7 +161,6 @@ export function refusalsWithoutFollowup(
   records.forEach((r, i) => {
     const k = subjectKey(r);
     if (k === undefined || newest.get(k) !== i) return;
-    // Index-bounded scans (no per-refusal array copy).
     const after = (pred: (e: (typeof records)[number]) => boolean) =>
       records.some((e, j) => j > i && pred(e));
     if (r.refusal === "dispatch" && typeof r.mechanism === "string") {
@@ -210,12 +190,9 @@ export function refusalsWithoutFollowup(
   return out.reverse(); // newest first
 }
 
-/**
- * Model substitutions (#21 P3): verdict records whose backend reported a model
- * disagreeing with the requested spec. Journal-only — refusing on mismatch would
- * invent policy (rule 3) — so a cross-family guarantee cannot quietly become a
- * same-family one.
- */
+/** Model substitutions (#21 P3): verdict records whose backend reported a model
+ *  disagreeing with the requested spec. Journal-only; refusing on mismatch
+ *  would invent policy (rule 3). */
 export function modelSubstitutions(
   store: GateStore,
 ): { kind: string; revision: string; requested: string; actual: string }[] {
@@ -225,9 +202,8 @@ export function modelSubstitutions(
     const actual = e.reportedModel;
     const requested = e.modelFamily;
     if (actual === undefined || requested === undefined || actual === requested) continue;
-    // Same-provider model-id drift is the signal; a bare provider prefix
-    // match is not enough (claude-cli/opus vs claude-cli/claude-opus-5 is
-    // the CLI's canonical spelling of the same request, not a substitution).
+    // Same-provider model-id drift is the signal; claude-cli/opus vs
+    // claude-cli/claude-opus-5 is one request, not a substitution.
     if (sameModelId(actual, requested)) continue;
     out.push({
       kind: String(e.kind),
@@ -239,10 +215,9 @@ export function modelSubstitutions(
   return out;
 }
 
-/** Alias vs substitution. A CLI answers a short request name with its canonical
- *  spelling (`opus` -> `claude-opus-5`), the same model; a router serving
- *  `gpt-5-5-mini` for `gpt-5-6-pro` is not. Prefix containment after stripping
- *  provider and vendor keeps aliases quiet and every real swap loud. */
+/** Alias vs substitution: a CLI answering `opus` with `claude-opus-5` is the
+ *  same model, a router serving `gpt-5-5-mini` for `gpt-5-6-pro` is not. Prefix
+ *  containment after stripping provider and vendor keeps aliases quiet. */
 export function sameModelId(a: string, b: string): boolean {
   const canon = (label: string) =>
     label
@@ -255,14 +230,10 @@ export function sameModelId(a: string, b: string): boolean {
   return x.startsWith(y) || y.startsWith(x);
 }
 
-/**
- * Gate-verdict streak: consecutive idea gates that produced no IDEA PASS.
- * Nothing else reads closures TOGETHER — critics are minimal-context and cannot
- * notice recurrence, and the retry-novelty check is pairwise, so N routes
- * sharing one root each differ from their nearest neighbour and no test fires
- * (flushing-coin 2026-08-09: 26 of 45 verdicts FAIL on one mechanism family).
- * States the count; the reading stays the coordinator's.
- */
+/** Consecutive idea gates that produced no IDEA PASS. Nothing else reads closures
+ *  TOGETHER: critics are minimal-context and the retry-novelty check is pairwise,
+ *  so N routes sharing one root each differ from their neighbour and no test
+ *  fires (flushing-coin 2026-08-09: 26 of 45 verdicts FAIL on one family). */
 export function gateFailStreak(store: GateStore): { streak: number; mechanisms: string[] } {
   const verdicts = store.all().filter((e) => e.kind === "gate-verdict");
   const mechanisms: string[] = [];
@@ -275,11 +246,8 @@ export function gateFailStreak(store: GateStore): { streak: number; mechanisms: 
   return { streak, mechanisms: mechanisms.slice(0, 8) };
 }
 
-/**
- * The wake's bookkeeping digest: mechanical noticing the coordinator would
- * otherwise have to remember. Rendered as prompt text; deciding what to do about
- * any of it is the coordinator's judgment (contract).
- */
+/** The wake's bookkeeping digest: mechanical noticing the coordinator would
+ *  otherwise have to remember. What to do about any of it stays its judgment. */
 export function wakeBookkeeping(store: GateStore, dir: string): string {
   const dangling = danglingCitations(dir);
   const retractions = retractionClosure(store);

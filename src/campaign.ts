@@ -16,9 +16,9 @@ export function initCampaign(dir: string, statement: string): void {
   if (fs.existsSync(statementPath)) {
     throw new Error(`campaign already exists at ${dir}; use resume or status`);
   }
-  // A missing STATEMENT.md is not proof of an empty directory: if it was
-  // renamed or restored from a partial backup while the ledgers survived,
-  // writing the templates destroys every promotion and closed route.
+  // A missing STATEMENT.md is not proof of an empty directory: if the ledgers
+  // survived a partial restore, writing the templates destroys every promotion
+  // and closed route.
   const survivors = ["PROVED.md", "FAILED.md", "REGISTRY.md", "PROCESS_LESSONS.md", "CURRENT_FRONTIER.md"]
     .filter((f) => fs.existsSync(path.join(dir, f)));
   if (survivors.length > 0) {
@@ -75,12 +75,9 @@ export function readLedger(dir: string, name: string): string {
   return fs.readFileSync(path.join(dir, name), "utf-8");
 }
 
-/**
- * Reserve the next free append-only evidence path for a basename. Launcher:
- * "every semantic change is a new revision-suffixed filename, a cited
- * artifact is never edited in place." Never returns an existing path, so
- * overwriting is impossible by construction. Creates parent directories.
- */
+/** Reserve the next free append-only evidence path for a basename. Launcher:
+ *  "every semantic change is a new revision-suffixed filename, a cited artifact
+ *  is never edited in place." Never returns an existing path. */
 export function newEvidencePath(dir: string, base: string): string {
   const safe = base.replace(/[^A-Za-z0-9._/-]/g, "-").replace(/\.\.+/g, ".");
   for (let r = 1; ; r++) {
@@ -90,9 +87,8 @@ export function newEvidencePath(dir: string, base: string): string {
     }
     fs.mkdirSync(path.dirname(p), { recursive: true });
     try {
-      // O_EXCL, not existsSync-then-return: the caller writes later and two
-      // concurrent cadences on one revision compute the same slug, so reserving
-      // the name here is what makes "never overwritten" true by construction.
+      // O_EXCL, not existsSync-then-return: the caller writes later, and two
+      // concurrent cadences on one revision compute the same slug.
       fs.closeSync(fs.openSync(p, "wx"));
       return p;
     } catch (e) {
@@ -101,12 +97,9 @@ export function newEvidencePath(dir: string, base: string): string {
   }
 }
 
-/**
- * Evidence paths cited in the ledgers that do not exist on disk. Purely
- * mechanical: `EVIDENCE/...` tokens checked against the filesystem, never
- * reading content. A citation that is not there is a typo or a hallucination,
- * and both are invisible to a reader who trusts the ledger.
- */
+/** Evidence paths cited in the ledgers that do not exist on disk: `EVIDENCE/...`
+ *  tokens checked against the filesystem, never reading content. A missing
+ *  citation is a typo or a hallucination, both invisible to a trusting reader. */
 export function danglingCitations(dir: string): { ledger: string; citation: string }[] {
   const out: { ledger: string; citation: string }[] = [];
   for (const ledger of ["PROVED.md", "FAILED.md", "REGISTRY.md", "CURRENT_FRONTIER.md"]) {
@@ -119,8 +112,7 @@ export function danglingCitations(dir: string): { ledger: string; citation: stri
   return out;
 }
 
-/** The `EVIDENCE/...` citation tokens in a ledger text — the one definition of
- *  "cited" shared by citation lint and the trace metrics. */
+/** The one definition of "cited", shared by citation lint and trace metrics. */
 export function citedEvidencePaths(text: string): Set<string> {
   const out = new Set<string>();
   for (const m of text.matchAll(/EVIDENCE\/[A-Za-z0-9._\/-]+/g)) {
@@ -129,9 +121,9 @@ export function citedEvidencePaths(text: string): Set<string> {
   return out;
 }
 
-/** Read the campaign lock file; `held` is absent when missing or torn. The
- *  lock's location and {pid, startedAt} shape are owned here — `coverify stop`
- *  and the acquire path must agree on both. */
+/** Read the campaign lock file; `held` is absent when missing or torn. The lock
+ *  location and {pid, startedAt} shape are owned here: `coverify stop` and the
+ *  acquire path must agree on both. */
 export function readCampaignLock(dir: string): {
   lockPath: string;
   held?: { pid?: number; startedAt?: string };
@@ -144,14 +136,11 @@ export function readCampaignLock(dir: string): {
   }
 }
 
-/**
- * Exclusive access to a campaign for as long as the returned release lives.
- * Every mechanism here assumes one writer: handle ids come from a counter each
- * process computes once, GateStore snapshots its records at construction, and
- * evidence directories are handed out by name. Two runs mint the same `r001`,
- * share a directory between two agents, and each gate against a record set
- * missing the other's FAILs.
- */
+/** Exclusive access to a campaign for as long as the returned release lives.
+ *  Every mechanism here assumes ONE writer: handle ids come from a per-process
+ *  counter, GateStore snapshots its records at construction, and evidence
+ *  directories are handed out by name. Two runs mint the same `r001` and each
+ *  gates against a record set missing the other's FAILs. */
 export function acquireCampaignLock(dir: string): () => void {
   const lock = path.join(dir, JOURNAL_DIR, "lock.json");
   fs.mkdirSync(path.dirname(lock), { recursive: true });
@@ -178,7 +167,7 @@ export function acquireCampaignLock(dir: string): () => void {
           "stale records. Stop that run, or use 'coverify status'/'trace' to watch it.",
       );
     }
-    // The holder is gone (crash, kill): take over and say so.
+    // The holder is gone (crash, kill): take over.
     fs.rmSync(lock, { force: true });
     claim();
     appendJournal(dir, {
@@ -201,13 +190,12 @@ export function acquireCampaignLock(dir: string): () => void {
   return release;
 }
 
-/** The coverify checkout root (src/'s parent) — the one authority for locating
- *  the checkout and its node_modules; never re-derive per file. */
+/** The coverify checkout root (src/'s parent): the one authority for locating
+ *  the checkout and its node_modules. Never re-derive this per file. */
 export function repoRoot(): string {
   return path.dirname(path.dirname(new URL(import.meta.url).pathname));
 }
 
-/** Run a git command in the coverify checkout; undefined on any failure. */
 export function gitInRepo(cmd: string): string | undefined {
   try {
     return execSync(cmd, { cwd: repoRoot() }).toString().trim();
@@ -221,8 +209,7 @@ export function appendJournal(
   entry: { kind: JournalEntry["kind"] } & Record<string, unknown>,
 ): JournalEntry {
   const full: JournalEntry = { ts: new Date().toISOString(), ...entry };
-  // An adopted campaign (created by a skill session) has no .coverify/ yet,
-  // and the first thing every command does is journal.
+  // An adopted campaign has no .coverify/ yet, and every command journals first.
   fs.mkdirSync(path.join(dir, JOURNAL_DIR), { recursive: true });
   fs.appendFileSync(
     path.join(dir, JOURNAL_DIR, "journal.jsonl"),
@@ -241,9 +228,9 @@ export function readJournal(dir: string): JournalEntry[] {
     try {
       entries.push(JSON.parse(lines[i]) as JournalEntry);
     } catch {
-      // The journal is a write-only audit mirror gates never read, so a torn
-      // line costs observability at most; failing hard would take `status` and
-      // `trace` away exactly when they are most wanted.
+      // The journal is an audit mirror gates never read, so a torn line costs
+      // observability at most; failing hard would take `status` and `trace`
+      // away when they are most wanted.
       skipped++;
     }
   }
@@ -253,19 +240,16 @@ export function readJournal(dir: string): JournalEntry[] {
   return entries;
 }
 
-/** Unwrap the mirrored gate record from a journal entry ({kind:"note", gate})
- *  — the one tolerant reading of that wrapper shape, shared by every
- *  journal-side consumer (status, trace, adopt-rebuild). */
+/** Unwrap the mirrored gate record from a journal entry ({kind:"note", gate}):
+ *  the one reading of that shape, shared by status, trace, and adopt-rebuild. */
 export function gateOf(e: unknown): Record<string, unknown> | undefined {
   const g = (e as Record<string, unknown> | null)?.gate;
   return typeof g === "object" && g !== null ? (g as Record<string, unknown>) : undefined;
 }
 
-/**
- * User→coordinator message channel (`coverify say`). The inbox lives under
- * .coverify/, which every role's write scope denies, so a role cannot forge user
- * guidance. Transport is verbatim and adds no policy of its own.
- */
+/** User→coordinator message channel (`coverify say`). The inbox lives under
+ *  .coverify/, which every role's write scope denies, so a role cannot forge
+ *  user guidance. Transport is verbatim. */
 export function queueUserMessage(dir: string, message: string): void {
   fs.mkdirSync(path.join(dir, JOURNAL_DIR), { recursive: true });
   fs.appendFileSync(
@@ -291,7 +275,6 @@ function readInbox(dir: string): string[] {
   return out;
 }
 
-/** How many inbox entries the harness has already delivered. */
 function inboxCursor(dir: string): number {
   const p = path.join(dir, JOURNAL_DIR, "inbox.cursor");
   if (!fs.existsSync(p)) return 0;
@@ -299,23 +282,19 @@ function inboxCursor(dir: string): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
-/** Pending user messages, oldest first. */
 export function peekUserMessages(dir: string): string[] {
   return readInbox(dir).slice(inboxCursor(dir));
 }
 
-/**
- * Mark the first `count` pending messages delivered. The inbox is NEVER
- * rewritten: `coverify say` appends from another process whenever the user
- * types, so a read-modify-write here silently drops any message that landed in
- * between. A separate cursor makes the two writers independent.
- */
+/** Mark the first `count` pending messages delivered. The inbox is NEVER
+ *  rewritten: `coverify say` appends from another process, so a
+ *  read-modify-write here drops any message that landed in between. */
 export function consumeUserMessages(dir: string, count: number): void {
   if (count <= 0) return;
   const target = path.join(dir, JOURNAL_DIR, "inbox.cursor");
   const tmp = `${target}.${process.pid}.tmp`;
-  // Written atomically: a truncated cursor reads as 0, which would redeliver
-  // every message ever queued — days of contradictory guidance at once.
+  // Written atomically: a truncated cursor reads as 0 and redelivers every
+  // message ever queued.
   fs.writeFileSync(tmp, String(inboxCursor(dir) + count) + "\n");
   fs.renameSync(tmp, target);
 }
@@ -328,13 +307,9 @@ export function sha256File(p: string): string {
   return crypto.createHash("sha256").update(fs.readFileSync(p)).digest("hex");
 }
 
-/**
- * Statements-only projection of PROVED.md for prompt contexts: each entry is
- * cut at its provenance metadata (**Dependencies:** / **Audit artifacts:**),
- * keeping the heading, theorem statements, and scope. The ledger is untouched;
- * this only slims what rides into gate/audit/reconstruction prompts, since
- * provenance is dispute-time material. Mechanics.
- */
+/** Statements-only projection of PROVED.md for prompt contexts: each entry cut
+ *  at its provenance metadata (**Dependencies:** / **Audit artifacts:**), which
+ *  is dispute-time material. The ledger itself is untouched. Mechanics. */
 export function promotedStatementsView(dir: string): string {
   const full = readLedger(dir, "PROVED.md");
   return full
@@ -346,11 +321,9 @@ export function promotedStatementsView(dir: string): string {
     .join("\n\n");
 }
 
-/**
- * Minimal resume/wake bundle. Launcher: "After restart or context compaction,
- * reread the skill, STATEMENT.md, CURRENT_FRONTIER.md, actionable lessons,
- * the registry index, and every detailed claim actually reused."
- */
+/** Minimal resume/wake bundle. Launcher: "After restart or context compaction,
+ *  reread the skill, STATEMENT.md, CURRENT_FRONTIER.md, actionable lessons, the
+ *  registry index, and every detailed claim actually reused." */
 export function resumeBundle(dir: string): string {
   return [
     readLedger(dir, "STATEMENT.md"),

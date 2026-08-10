@@ -24,8 +24,8 @@ import {
 import { runCampaign } from "./harness.js";
 import { writeTrace } from "./view/trace.js";
 import { campaignTurns } from "./view/turns.js";
-// The whole measurement extension, imported only here. Delete src/telemetry/
-// and these four lines and the harness still proves theorems.
+// The whole measurement extension, imported only here: delete src/telemetry/
+// and these lines and the harness still proves theorems.
 import { campaignSpend, formatSpend } from "./telemetry/spend.js";
 import { campaignOutcomes, formatOutcomes } from "./telemetry/outcomes.js";
 import { corpusChecks, formatCorpusChecks } from "./telemetry/corpus.js";
@@ -78,22 +78,11 @@ ${knobUsage()}`);
   process.exit(2);
 }
 
-/**
- * Every flag this CLI accepts. Declared, because the hand-rolled parser this
- * replaces accepted ANY `--name value` into a map and nothing read unknown
- * keys — so `coverify resume --max-wake 40` (a typo for --max-wakes) ran
- * UNBOUNDED and silently. That is the same failure class optionalInt() below
- * was written to prevent; it guarded a bad VALUE and left a bad flag NAME
- * wide open.
- *
- * `strict: true` closes it: an unknown flag stops the run. Everything is a
- * string except the one boolean, so `--agent-limit 0` still reaches
- * agentLimit()'s unlimited sentinel unchanged.
- *
- * node:util.parseArgs is built into Bun — no dependency. commander (207 KB),
- * yargs-parser (86 KB) and mri (13 KB) were considered and rejected: a
- * built-in that already does strict validation is strictly better here.
- */
+/** Every flag this CLI accepts, declared so `strict: true` can stop the run on
+ *  an unknown one: a typo like `--max-wake 40` otherwise runs UNBOUNDED and
+ *  silently. Everything is a string except the one boolean, so `--agent-limit 0`
+ *  still reaches agentLimit()'s unlimited sentinel. node:util.parseArgs is built
+ *  into Bun; commander, yargs-parser and mri add nothing over it. */
 const FLAG_SPEC = {
   dir: { type: "string" },
   "agent-limit": { type: "string" },
@@ -113,10 +102,8 @@ function parseFlags(args: string[]): { flags: Map<string, string>; positional: s
       strict: true,
     });
     // A declared flag stranded AFTER `--` is silently positional, which for
-    // `prove` means initialising a campaign in the wrong directory and
-    // spending there. Refuse it: this is the same silent-budget class the
-    // strict parser was adopted to close, and a hint in an error message is
-    // not a check.
+    // `prove` means initialising a campaign in the wrong directory and spending
+    // there. Refuse it — a hint in an error message is not a check.
     const stranded = positionals.filter((p) => Object.keys(FLAG_SPEC).some((f) => p === `--${f}`));
     if (stranded.length > 0) {
       console.error(
@@ -134,16 +121,11 @@ function parseFlags(args: string[]): { flags: Map<string, string>; positional: s
       positional: positionals,
     };
   } catch (e) {
-    // A statement or message beginning with "-" is legitimate in this
-    // application ("-1 is not expressible as ..."), and strict mode rejects a
-    // positional that looks like a flag. Say how to pass it rather than
-    // printing the whole usage block over a quoting question.
-    //
-    // Flags BEFORE the separator, and the hint says so: parseArgs treats
-    // everything after `--` as positional, so the obvious reading of an
-    // earlier version of this message — `coverify prove -- "-1 is not X"
-    // --dir work` — silently dropped --dir and would have initialised a
-    // campaign in the wrong directory and spent there.
+    // A statement beginning with "-" is legitimate here, and strict mode
+    // rejects a positional that looks like a flag. The hint must put flags
+    // BEFORE the `--` separator: everything after it is positional, so
+    // `prove -- "-1 is not X" --dir work` drops --dir and spends in the wrong
+    // directory.
     const why = e instanceof Error ? e.message : String(e);
     console.error(
       `${why}\nIf an argument begins with "-", put every flag FIRST and the argument last, ` +
@@ -162,12 +144,9 @@ function optionalInt(name: string): number | undefined {
   const v = flags.get(name);
   if (v === undefined) return undefined;
   const n = Number(v);
-  // NaN would pass every `!== undefined` check and lose every comparison, so a
-  // typo'd limit silently meant *no* limit while the coordinator was still
-  // told one was in force. This is the user's only budget control; a bad value
-  // must stop the run, not disable itself. One documented exception routes
-  // around this guard: agentLimit() below treats the literal "0" as the
-  // unlimited sentinel before delegating here.
+  // NaN passes every `!== undefined` check and loses every comparison, so a
+  // typo'd limit means *no* limit while the coordinator is told one is in force.
+  // agentLimit() below is the one exception, taking "0" as unlimited.
   if (!Number.isInteger(n) || n < 1) {
     console.error(`--${name} must be a positive whole number (got: ${v})`);
     process.exit(2);
@@ -175,14 +154,10 @@ function optionalInt(name: string): number | undefined {
   return n;
 }
 
-/** Worker cap: default 6 per campaign — an explicit USER decision
- *  (Chao, 2026-08-08), not a harness-invented ceiling; the launcher's
- *  no-invented-limits rule is satisfied because the default's provenance is
- *  a recorded user policy, like the model defaults. `--agent-limit 0`
- *  explicitly requests unlimited — deliberately REVERSING 2853c9b, which
- *  rejected `0` when it meant "limit is zero, refuse every dispatch" (a
- *  silent footgun); the sentinel meaning is stated in the usage string,
- *  and every other non-positive value still hard-stops via optionalInt. */
+/** Worker cap: default 6 per campaign, an explicit user policy (2026-08-08), not
+ *  a harness-invented ceiling — that provenance is what satisfies the launcher's
+ *  no-invented-limits rule. `--agent-limit 0` requests unlimited; every other
+ *  non-positive value still hard-stops via optionalInt. */
 function agentLimit(): number | undefined {
   const v = flags.get("agent-limit");
   if (v === undefined) return 6;
@@ -199,25 +174,22 @@ function requireCampaign(): void {
 
 async function prove(resume: boolean): Promise<void> {
   // Before anything is spent. The per-call readers stay lenient on purpose —
-  // runTimeoutMs() runs while a tool is executing and a throw there would kill
-  // a live campaign — so the hard-fail happens here, where a bad value costs
-  // nothing to reject. Without this the registry documented a guarantee
-  // nothing provided.
+  // runTimeoutMs() runs while a tool executes and a throw there would kill a
+  // live campaign — so the hard-fail happens here.
   try {
     validateKnobs();
-
   } catch (e) {
     console.error(String(e instanceof Error ? e.message : e));
     process.exit(2);
   }
-  // Auth preflight: a provider is usable via an env API key or a stored
-  // OAuth subscription credential (coverify login <provider>).
+  // Auth preflight: a provider is usable via an env API key or a stored OAuth
+  // subscription credential (coverify login <provider>).
   const models = await buildModels();
   const missing = new Set<string>();
   for (const role of ROLE_NAMES) {
     const provider = roleModelSpec(role).provider;
-    // claude-bridge supports exactly one live session; concurrent sessions
-    // cross-contaminate (observed in testing). Coordinator only.
+    // claude-bridge supports exactly one live session; concurrent ones
+    // cross-contaminate. Coordinator only.
     if (provider === CLAUDE_BRIDGE_ID && role !== "coordinator") {
       console.error(
         `claude-bridge is coordinator-only (single concurrent session); re-point ${role} via COVERIFY_MODEL_* (e.g. claude-cli/opus)`,
@@ -247,11 +219,10 @@ async function prove(resume: boolean): Promise<void> {
     console.error(`no campaign at ${dir}`);
     process.exit(1);
   }
-  // Reasoning-only is a per-CAMPAIGN user policy (design.md rule 3), so a
-  // resume inherits it from the last run's stamp. Read from the GATE STORE,
-  // never the in-tree journal: the journal is role-adjacent, and on an
-  // instructed-only confinement platform a forged trailing runStart line
-  // could silently re-arm technicians (2026-08-09 architecture review).
+  // Reasoning-only is a per-CAMPAIGN user policy (design.md rule 3), so a resume
+  // inherits it from the last run's stamp. Read from the GATE STORE, never the
+  // role-adjacent in-tree journal, where a forged trailing runStart line could
+  // silently re-arm technicians.
   let noComputation = flags.get("no-computation") === "true";
   if (resume && !noComputation) {
     const last = new GateStore(dir).all().findLast((e) => e.runStart === true);
@@ -337,17 +308,15 @@ switch (command) {
     break;
   }
   case "stop": {
-    // Signal the lock-holding harness (issue #19: killing by hand-hunted PID
-    // is error-prone — first attempt hit the zsh wrapper). SIGTERM only; the
-    // reaper takes the CLI process groups down with it.
+    // Signal the lock-holding harness (issue #19: hand-hunted PIDs hit the zsh
+    // wrapper). SIGTERM only; the reaper takes the CLI process groups with it.
     const { lockPath, held } = readCampaignLock(dir);
     if (held === undefined || typeof held.pid !== "number") {
       console.error(`no running campaign at ${dir} (no readable lock at ${lockPath})`);
       process.exit(1);
     }
     // Pid-reuse guard: a lock left by a SIGKILLed harness can point at a
-    // recycled pid — verify the command line looks like a coverify harness
-    // before signaling an innocent process.
+    // recycled pid, so check the command line before signaling it.
     const { spawnSync } = await import("node:child_process");
     const cmdline = spawnSync("ps", ["-p", String(held.pid), "-o", "command="]).stdout?.toString() ?? "";
     if (!/coverify|cli\.ts/.test(cmdline)) {
@@ -372,10 +341,8 @@ switch (command) {
     console.log(readLedger(dir, "STATEMENT.md"));
     console.log(readLedger(dir, "CURRENT_FRONTIER.md"));
     const journal = readJournal(dir);
-    // Verdict-permission records beside the verdicts (skill-feedback
-    // 2026-08-09): a FAIL followed by a PASS on the same revision is only
-    // legible next to its recorded rebuttal — without this section the
-    // contract's legitimate rebuttal lane reads as verdict shopping.
+    // Verdict-permission records beside the verdicts: a FAIL followed by a PASS
+    // on the same revision reads as verdict shopping without its rebuttal.
     const rebuttals = journal.map(gateOf).filter((g) => g?.kind === "rebuttal");
     if (rebuttals.length > 0) {
       const shown = rebuttals.slice(-10);
@@ -418,8 +385,7 @@ switch (command) {
         resolvedKnobs(),
         // Per role, defensively: resolving a role THROWS on an invalid effort
         // (providers.ts effortOverride), and this command exists to DIAGNOSE a
-        // bad arm. Dying on the very thing it was run to find would be the
-        // worst possible behaviour for a pre-flight.
+        // bad arm — it must not die on the thing it was run to find.
         Object.fromEntries(
           ROLE_NAMES.map((r) => {
             try {
