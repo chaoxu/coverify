@@ -66,3 +66,38 @@ test("pi's nested cost block never reaches a record", () => {
   expect(JSON.stringify(s.turns[0])).not.toMatch(/cost/i);
 });
 
+
+test("both sides of the cross-check apply one accumulation rule", async () => {
+  // turns.ts rebuilds usage from pi's session JSONL while providers.ts builds
+  // it from the live message list, and their agreement was the 2026-08-09
+  // study's only genuine cross-check (0.2% on presented/output/reasoning; the
+  // one disagreement located a real defect). Two hand-synced copies of the
+  // rule would have turned that check into a comparison of one rule against a
+  // stale fork of itself (issue #43), so there is now one exported function
+  // and this pins the behaviour that used to differ: a NON-assistant message
+  // carrying usage is billed by neither side.
+  const { sumMessagesUsage } = await import("../src/providers.ts");
+  const dir = fs.mkdtempSync("/private/tmp/coverify-turns-drift-");
+  const sess = path.join(dir, ".coverify", "sessions", "--camp--");
+  fs.mkdirSync(sess, { recursive: true });
+  fs.writeFileSync(
+    path.join(sess, "2026-08-02T00-00-00_drift.jsonl"),
+    [
+      '{"type":"session","version":3,"id":"drift","timestamp":"t","cwd":"/x"}',
+      // A user message carrying usage: pi writes none today, but the two
+      // implementations disagreed about it, which is drift waiting to happen.
+      '{"type":"message","message":{"role":"user","content":"hi","timestamp":1000,' +
+        '"usage":{"input":999,"output":999,"cacheRead":999}}}',
+      '{"type":"message","message":{"role":"assistant","content":"a","timestamp":2000,' +
+        '"usage":{"input":10,"output":5,"cacheRead":1,"reasoning":4}}}',
+    ].join("\n") + "\n",
+  );
+  const fromTree = campaignTurns(dir)[0].usage;
+  const fromMessages = sumMessagesUsage([
+    { role: "user", usage: { input: 999, output: 999, cacheRead: 999 } },
+    { role: "assistant", usage: { input: 10, output: 5, cacheRead: 1, reasoning: 4 } },
+  ]);
+  expect(fromTree).toEqual(fromMessages);
+  expect(fromTree.input).toBe(10); // the user message's 999 is billed by neither
+  expect(fromTree.reasoning).toBe(4);
+});

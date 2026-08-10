@@ -206,6 +206,9 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
       literature: literature ? (packet as ReasonerPacket).literature : undefined,
       evidenceDir: path.relative(dir, evidenceDir),
       modelFamily: specLabel(spec),
+      // With @thinking, so a dispatch's reasoning effort is on its own record
+      // rather than only in the once-per-run stamp (#40).
+      modelSpec: specKey(spec),
     });
     const packetPrompt =
       `# Task\n\n${packet.task}\n\n# Deliverable\n\n${packet.deliverable}\n\n# Context\n\n${packet.context}` +

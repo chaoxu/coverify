@@ -29,6 +29,7 @@ import {
   roleModelSpec,
   type RoleUsage,
   runRole,
+  specKey,
   specLabel,
 } from "./providers.js";
 import { toolText } from "./sandbox.js";
@@ -326,6 +327,12 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           // Attested served model when the backend reports one (issue #20):
           // the requested spec label is testimony; the attestation is truth.
           modelFamily: servedModel ?? specLabel(spec),
+          // The requested spec INCLUDING thinking level. specLabel drops
+          // @thinking, which survived only in the once-per-run roleSpecs stamp
+          // — so reasoning effort, one of the perfectly confounded covariates
+          // rule 11 names, was unrecoverable per call and issue #31's effort
+          // A/B was unmeasurable as instrumented.
+          modelSpec: specKey(spec),
           // Self-reported model beside it (#21 P3) — journal-only, never a
           // refusal trigger; modelSubstitutions() surfaces disagreements.
           ...defined({ reportedModel }),
@@ -575,6 +582,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
               "fresh instance (enforced); candidate file withheld by harness (enforced — rendered prompt checked); keyIdeas coordinator-authored (instructed only — paraphrase risk not machine-checked)",
             toolVisibility: toolVisibilityOf(reconSpec.provider),
             modelFamily: servedModel ?? specLabel(reconSpec),
+            modelSpec: specKey(reconSpec),
             ...defined({ reportedModel }),
             usage,
             promptChars,

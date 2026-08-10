@@ -546,6 +546,11 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   let turnFailures = 0;
   let coordinator: RoleSession | undefined;
   let coordinatorEpoch = 0;
+  /** Unique per (run, rebuild). Used both as pi's session id — hence its
+   *  prompt cache key — and as the `sessionId` on every coordinator usage
+   *  record, so spend groups by an identity on the record instead of by a
+   *  reset inferred from a counter that went backwards. */
+  const coordinatorSessionId = () => `coordinator-${runId}-${coordinatorEpoch}`;
   // Baseline for the per-wake deltas. A rebuilt session starts a new cumulative
   // series, so this resets with it — the one place the epoch boundary is now
   // used, and it is known here rather than inferred at read time. One object so
@@ -560,7 +565,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     store.event({
       kind: "usage",
       role: "coordinator",
-      sessionId: `coordinator-${coordinatorEpoch}`,
+      sessionId: coordinatorSessionId(),
       wake: wakeCount,
       ...why,
       modelSpec: specKey(coordinatorSpec),
@@ -664,6 +669,8 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           kind: "note",
           note: `coordinator context cap (${COORDINATOR_CONTEXT_TOKENS} tok) reached; compacting (restart rule applies)`,
         });
+        const beforeTokens = coordinator.approxTokens();
+        const beforeUsage = coordinator.usage();
         try {
           await coordinator.compact(
             "The campaign ledgers (STATEMENT.md, CURRENT_FRONTIER.md, REGISTRY.md, FAILED.md, " +
@@ -673,6 +680,29 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
               "decisions not yet externalized, and open questions from the newest reports.",
           );
           justCompacted = true;
+          // The summarization call is a real, large provider request, and its
+          // tokens were being folded silently into the session total — so the
+          // first-order cost of the resident-coordinator design was
+          // unmeasurable, and no record said a compaction had happened at all
+          // (#37). A leaf like any other: the DELTA this call cost, plus the
+          // context it traded away.
+          const afterUsage = coordinator.usage();
+          if (afterUsage) {
+            store.append({
+              kind: "role-call",
+              role: "coordinator",
+              sessionId: coordinatorSessionId(),
+              wake: wakeCount,
+              compaction: true,
+              modelSpec: specKey(coordinatorSpec),
+              usage: subUsage(afterUsage, beforeUsage),
+              contextTokensBefore: beforeTokens,
+              contextTokensAfter: coordinator.approxTokens(),
+            });
+            // Baseline moves with it, so this wake's own leaf reports what the
+            // WAKE cost and the compaction is counted exactly once.
+            prevCoord = { ...prevCoord, usage: afterUsage };
+          }
         } catch (e) {
           // Compaction is a real LLM call and can fail (quota, provider);
           // the campaign must not die with workers live — fall back to the
@@ -716,9 +746,13 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           models,
         },
         {
-          // Epoch-numbered per rebuild; the JSONL filename adds a
-          // timestamp, so restarts never collide.
-          sessionId: `coordinator-${coordinatorEpoch}`,
+          // Epoch-numbered per rebuild AND scoped to this run. The filename's
+          // timestamp keeps rollout FILES from colliding, but the session id
+          // itself was `coordinator-1` in every process that ever ran, and pi
+          // derives prompt_cache_key from it — so two concurrent campaigns
+          // shared a cache key, and journal spend could only be split into
+          // epochs by inferring a reset from a decreasing counter.
+          sessionId: coordinatorSessionId(),
           sessionsRoot,
           cwd: dir,
         },
@@ -897,7 +931,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     store.event({
       kind: "usage",
       role: "coordinator",
-      sessionId: `coordinator-${coordinatorEpoch}`,
+      sessionId: coordinatorSessionId(),
       wake: wakeCount,
       modelSpec: specKey(coordinatorSpec),
       ...defined({ usage: spent, attempts, requests }),

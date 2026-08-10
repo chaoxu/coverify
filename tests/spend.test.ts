@@ -169,3 +169,14 @@ test("--run filters to one harness process", () => {
   // No filter sees both.
   expect(campaignSpend(dir).byLane[0].input).toBe(109);
 });
+
+test("thinking level survives on the per-call record, not just the run stamp", async () => {
+  // specLabel() returns provider/modelId and drops @thinking, which survived
+  // only in the once-per-run roleSpecs stamp — so reasoning effort, one of the
+  // perfectly confounded covariates rule 11 names, was unrecoverable per call
+  // and issue #31's effort A/B was unmeasurable as instrumented (#40).
+  const { specKey, specLabel } = await import("../src/providers.ts");
+  const spec = { provider: "openai-codex", modelId: "gpt-5.6-sol", thinking: "high" } as never;
+  expect(specLabel(spec)).not.toContain("high");
+  expect(specKey(spec)).toBe("openai-codex/gpt-5.6-sol@high");
+});

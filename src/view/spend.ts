@@ -84,7 +84,7 @@ const SPENDING_KINDS = new Set([
   "reconstruction", "comparison", "role-call", "usage",
 ]);
 
-function accumulate(into: LaneSpend, u: RoleUsage): void {
+export function accumulate(into: LaneSpend, u: RoleUsage): void {
   into.calls += 1;
   into.input += u.input;
   into.cacheRead += u.cacheRead;

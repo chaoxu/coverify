@@ -480,7 +480,15 @@ export function subUsage(a: RoleUsage, b?: RoleUsage): RoleUsage & { nonMonotone
   return d;
 }
 
-function sumMessagesUsage(messages: readonly unknown[]): RoleUsage {
+/** The one accumulation rule for pi-lane usage. Exported because view/turns.ts
+ *  rebuilds the same totals from pi's own session JSONL, and the agreement
+ *  between the two is the 2026-08-09 study's only genuine cross-check — journal
+ *  peaks against session trees agreed to 0.2%, and the one place they disagreed
+ *  (41% on fresh input) located a real defect. Two hand-synced copies of this
+ *  rule would have made that check a comparison of one rule against a stale
+ *  fork of itself (issue #43). A view may import from core; core may not import
+ *  from a view (scripts/conformance-check.ts). */
+export function sumMessagesUsage(messages: readonly unknown[]): RoleUsage {
   const total: RoleUsage = { input: 0, output: 0, cacheRead: 0, meter: "pi-session" };
   // cacheWrite is deliberately NOT initialised: pi's type requires the field
   // and always emits 0, but cache_write_input_tokens is absent upstream

@@ -5,7 +5,7 @@
 // every field is a pure function of the stored messages.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { RoleUsage } from "../providers.js";
+import { type RoleUsage, sumMessagesUsage } from "../providers.js";
 
 /** One message's telemetry: sizes + provider accounting, no content. For
  *  assistant messages `usage.input` is the uncached billed input of THAT
@@ -111,20 +111,16 @@ export function campaignTurns(campaignDir: string): SessionTelemetry[] {
   const root = path.join(campaignDir, ".coverify", "sessions");
   return walkJsonl(root).map((file) => {
     const messages: SessionMessage[] = [];
-    // `reasoning` is seeded absent, not zero: a session whose turns never
-    // reported the field must not claim it measured zero (same rule as
-    // addUsage).
-    // Reconstructed from pi's OWN session JSONL, so the provenance is known
-    // exactly as well as at the stamped site in providers.ts.
-    const usage: RoleUsage = { input: 0, output: 0, cacheRead: 0, meter: "pi-session" };
+    // Everything that spent tokens, shaped as the accumulator expects. A
+    // compaction is not a message but its usage is billed exactly like one, so
+    // it is wrapped as an assistant message here — the same wrapping
+    // providers.ts does when it sums compaction entries. Reconstructed from
+    // pi's OWN session JSONL, so the provenance is known exactly as well as at
+    // the stamped site in providers.ts.
+    const billed: { role: string; usage: RoleUsage }[] = [];
     const add = (raw: SessionUsage | undefined) => {
       if (!raw) return;
-      const u = toRoleUsage(raw);
-      usage.input += u.input ?? 0;
-      usage.output += u.output ?? 0;
-      usage.cacheRead += u.cacheRead ?? 0;
-      if (u.cacheWrite) usage.cacheWrite = (usage.cacheWrite ?? 0) + u.cacheWrite;
-      if (u.reasoning !== undefined) usage.reasoning = (usage.reasoning ?? 0) + u.reasoning;
+      billed.push({ role: "assistant", usage: toRoleUsage(raw) });
     };
     for (const line of fs.readFileSync(file, "utf8").split("\n")) {
       if (!line.trim()) continue;
@@ -136,7 +132,11 @@ export function campaignTurns(campaignDir: string): SessionTelemetry[] {
       }
       if (entry.type === "message" && entry.message) {
         messages.push(entry.message);
-        add(entry.message.usage);
+        // Only assistant messages are billed. The filter matters even though
+        // pi writes no usage on user messages today: without it the two sides
+        // of the cross-check would silently disagree the day one appeared,
+        // and a cross-check that can drift is not evidence.
+        if (entry.message.role === "assistant") add(entry.message.usage);
       } else if (entry.type === "compaction") {
         add(entry.usage);
       }
@@ -145,7 +145,7 @@ export function campaignTurns(campaignDir: string): SessionTelemetry[] {
       file: path.relative(root, file),
       id: path.basename(file, ".jsonl").split("_").at(-1) ?? path.basename(file, ".jsonl"),
       turns: messagesToTurns(messages),
-      usage,
+      usage: sumMessagesUsage(billed),
     };
   });
 }

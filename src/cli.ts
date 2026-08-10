@@ -23,6 +23,7 @@ import { runCampaign } from "./harness.js";
 import { writeTrace } from "./view/trace.js";
 import { campaignTurns } from "./view/turns.js";
 import { campaignSpend, formatSpend } from "./view/spend.js";
+import { campaignOutcomes, formatOutcomes } from "./view/outcomes.js";
 
 function usage(): never {
   console.error(`usage:
@@ -36,6 +37,9 @@ function usage(): never {
   coverify spend [--dir campaign] [--run <runId>]
                                     per-lane, per-role token totals from the journal;
                                     refuses cross-meter sums and roll-ups
+  coverify outcomes [--dir campaign] [--run <runId>]
+                                    what the spend bought: stage verdicts, repair-loop depth,
+                                    and spend split by whether the revision ever promoted
   coverify turns [--dir campaign] [--session substr]
                                     per-turn telemetry derived from the session trees (sizes/usage/
                                     gaps/stopReason, no content); without --session, one summary
@@ -321,6 +325,11 @@ switch (command) {
   case "spend": {
     requireCampaign();
     console.log(formatSpend(campaignSpend(dir, flags.get("run"))));
+    break;
+  }
+  case "outcomes": {
+    requireCampaign();
+    console.log(formatOutcomes(campaignOutcomes(dir, flags.get("run"))));
     break;
   }
   case "turns": {
