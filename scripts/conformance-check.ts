@@ -6,6 +6,7 @@
  * literal substring checks, never a parser of the spec.
  */
 import * as fs from "node:fs";
+import { KNOBS } from "../src/knobs.js";
 import * as path from "node:path";
 import { repoRoot } from "../src/campaign.js";
 import { loadLauncherContract } from "../src/launcher.js";
@@ -100,7 +101,50 @@ if (hidden.length > 0) {
   process.exit(1);
 }
 
+// Knob registry vs reality (#45). The registry is only worth having if it is
+// COMPLETE: its value is that the usage text, the run stamp and `coverify
+// config` all derive from one table, and a knob missing from the table is
+// silently missing from all three. The old hand-written list named 5 of 31,
+// which is exactly how that fails.
+const declared = new Set(KNOBS.map((k) => k.name));
+const seen = new Set<string>();
+for (const dir of ["src", "src/view"]) {
+  for (const f of fs.readdirSync(path.join(repoRoot(), dir))) {
+    if (!f.endsWith(".ts") || f === "knobs.ts") continue;
+    const text = fs.readFileSync(path.join(repoRoot(), dir, f), "utf-8");
+    // Only genuine reads and backend-table declarations, not prose mentions in
+    // comments or error strings.
+    for (const m of text.matchAll(/process\.env\.(COVERIFY_[A-Z_]+)|env:\s*"(COVERIFY_[A-Z_]+)"/g)) {
+      seen.add(m[1] ?? m[2]);
+    }
+  }
+}
+const undeclared = [...seen].filter((n) => !declared.has(n));
+if (undeclared.length > 0) {
+  console.error("UNDECLARED KNOB — read in src/ but missing from src/knobs.ts:");
+  for (const n of undeclared) console.error(`  ${n}`);
+  console.error(
+    "Add it to KNOBS. Undeclared means absent from `coverify config`, from the generated\n" +
+      "usage text, and from the run stamp — so a campaign cannot prove it was set.",
+  );
+  process.exit(1);
+}
+// The computed families (COVERIFY_MODEL_<ROLE>, COVERIFY_EFFORT_<ROLE>) are
+// built from a suffix list here and from ROLE_ENV in providers.ts. Pin that
+// they agree, or the registry quietly describes a role that does not exist.
+const roleEnvNames = [
+  ...fs
+    .readFileSync(path.join(repoRoot(), "src", "providers.ts"), "utf-8")
+    .matchAll(/"(COVERIFY_MODEL_[A-Z]+)"/g),
+].map((m) => m[1]);
+const missingRoles = roleEnvNames.filter((n) => !declared.has(n));
+if (missingRoles.length > 0) {
+  console.error(`KNOB REGISTRY DRIFT — providers.ts routes roles the registry does not declare:`);
+  for (const n of missingRoles) console.error(`  ${n}`);
+  process.exit(1);
+}
+
 console.log(
   `conformance ok: ${REQUIRED.length} launcher tokens present; view/ layer boundary intact; ` +
-    "no hidden home-path dependency",
+    `no hidden home-path dependency; ${KNOBS.length} knobs declared, none undeclared`,
 );

@@ -10,6 +10,7 @@
  * query that makes it actionable — an unread log is not an audit trail.
  */
 import * as fs from "node:fs";
+import { knobSnapshot } from "./knobs.js";
 import * as path from "node:path";
 import { danglingCitations, gitInRepo, readLedger, repoRoot, sha256File, sha256Text } from "./campaign.js";
 import {
@@ -98,6 +99,10 @@ export function recordRunConfig(
       "claude-cli": cliBackendCommand("claude-cli"),
       "codex-cli": cliBackendCommand("codex-cli"),
     },
+    // Every knob SET in this environment, so a campaign proves what governed
+    // it. Six were previously stamped nowhere (#45); this cannot go stale,
+    // because conformance-check fails on a knob missing from the registry.
+    knobs: knobSnapshot(),
     retry: retryPolicy(),
     transport: codexTransport(),
     sandbox: sandboxMode(),

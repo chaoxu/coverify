@@ -1,0 +1,273 @@
+// Every environment knob, declared once (issue #45).
+//
+// The problem was never the count — 31 knobs against 6 CLI flags is a lot but
+// not wrong. It was that the truth lived in three hand-synced places: the read
+// site in code, the usage string in cli.ts, and the run stamp in observe.ts.
+// The usage string named 5 of 31, and six knobs were stamped nowhere, so a
+// campaign could not prove what governed it. That is the same drift pattern as
+// issue #43, one layer up.
+//
+// Deliberately NOT a config file. Coverify just spent issue #44 removing an
+// ambient input that made runs unreproducible; a config file adds a new one —
+// "which config governed this run?" — for benefits available without it. One
+// source of truth per knob: the environment, with a declared default.
+//
+// Deliberately NOT a config LIBRARY either. envalid, znv, @t3-oss/env-core,
+// convict and nconf were surveyed: none provides provenance, generated help,
+// or a serializable snapshot — the three things actually needed — and all of
+// them parse eagerly and freeze, which breaks the lazy reads this codebase and
+// its tests depend on (tests set COVERIFY_FAMILY_* and COVERIFY_CODEX_CMD
+// mid-run and expect the next read to see it). typebox, already a dependency,
+// does the coercion and validation that was the only part they'd have covered.
+import { Type, type TSchema } from "typebox";
+import { Value } from "typebox/value";
+
+export interface Knob {
+  name: string;
+  /** Validated with typebox: a present-but-invalid value never falls back to
+   *  the default (envalid's one genuinely subtle rule, worth stealing). */
+  schema: TSchema;
+  /** Rendered in help and used when the variable is unset. `undefined` means
+   *  the effective default is computed elsewhere and named in `detail`. */
+  fallback?: string;
+  detail: string;
+  /** Which module reads it — so a reader can go straight to the enforcement. */
+  module: string;
+}
+
+const str = Type.String();
+const posInt = Type.Integer({ minimum: 1 });
+const nonNegInt = Type.Integer({ minimum: 0 });
+const flag = Type.Union([Type.Literal("1"), Type.Literal("true"), Type.Literal("yes")]);
+
+/** Role suffixes as spelled in the env names (NOT the RoleName union: the gate
+ *  critic's variable is CRITIC and the auditor's is AUDITOR). Imported from
+ *  providers.ts would be circular, so the conformance check pins that these
+ *  match the ROLE_ENV table rather than a comment asking you to remember. */
+export const ROLE_ENV_SUFFIXES = [
+  "COORDINATOR",
+  "REASONER",
+  "TECHNICIAN",
+  "CRITIC",
+  "AUDITOR",
+  "CERTIFIER",
+  "RECONSTRUCTOR",
+  "COMPARATOR",
+] as const;
+
+const FAMILIES = ["FABLE", "GEMINI", "PRO"] as const;
+
+export const KNOBS: readonly Knob[] = [
+  // Model routing.
+  ...ROLE_ENV_SUFFIXES.map((r) => ({
+    name: `COVERIFY_MODEL_${r}`,
+    schema: str,
+    detail: `${r.toLowerCase()} model as provider/model[@thinking]; default in ROLE_DEFAULTS`,
+    module: "providers.ts",
+  })),
+  {
+    name: "COVERIFY_EFFORT",
+    schema: Type.Union(
+      ["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((l) => Type.Literal(l)),
+    ),
+    detail: "reasoning effort for every role, leaving provider and model alone (#31's A/B knob)",
+    module: "providers.ts",
+  },
+  ...ROLE_ENV_SUFFIXES.map((r) => ({
+    name: `COVERIFY_EFFORT_${r}`,
+    schema: Type.Union(
+      ["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((l) => Type.Literal(l)),
+    ),
+    detail: `reasoning effort for ${r.toLowerCase()} alone; beats COVERIFY_EFFORT`,
+    module: "providers.ts",
+  })),
+  ...FAMILIES.map((f) => ({
+    name: `COVERIFY_FAMILY_${f}`,
+    schema: str,
+    detail: `ideation family "${f.toLowerCase()}" spec; default in FAMILY_SPECS`,
+    module: "providers.ts",
+  })),
+
+  // Backend transports. Templates, not resolved argv: {model} and {out} are
+  // substituted per call.
+  { name: "COVERIFY_CLAUDE_CMD", schema: str, detail: "claude-cli command template", module: "backends.ts" },
+  { name: "COVERIFY_CODEX_CMD", schema: str, detail: "codex-cli command template ({out})", module: "backends.ts" },
+  { name: "COVERIFY_CHATGPT_CMD", schema: str, detail: "chatgpt-cli oracle command template", module: "backends.ts" },
+  { name: "COVERIFY_AGY_CMD", schema: str, detail: "agy oracle command template ({repo}, {model})", module: "backends.ts" },
+  {
+    name: "COVERIFY_CODEX_TRANSPORT",
+    schema: str,
+    fallback: "responses",
+    detail: "openai-codex wire transport",
+    module: "providers.ts",
+  },
+  {
+    name: "COVERIFY_LITERATURE_CMD",
+    schema: str,
+    fallback: "agy --dangerously-skip-permissions --print-timeout 168h -p",
+    detail: "librarian CLI (external agent with live web search)",
+    module: "workspace.ts",
+  },
+  {
+    name: "COVERIFY_LITERATURE_STATE_DIRS",
+    schema: str,
+    detail: "colon-separated dirs the librarian may write (token refresh, cache)",
+    module: "workspace.ts",
+  },
+
+  // Limits. User-set only: the launcher forbids harness-invented ceilings, and
+  // these bound resources, never proof work.
+  { name: "COVERIFY_RUN_TIMEOUT_MS", schema: posInt, fallback: "600000", detail: "run_script batch wall limit", module: "sandbox.ts" },
+  { name: "COVERIFY_RUN_MEM_MB", schema: posInt, fallback: "4096", detail: "run_script batch combined RSS cap", module: "sandbox.ts" },
+  { name: "COVERIFY_RETRY_MAX", schema: nonNegInt, fallback: "5", detail: "provider retry attempts; 0 disables", module: "providers.ts" },
+  { name: "COVERIFY_RETRY_BASE_MS", schema: posInt, fallback: "1000", detail: "provider retry backoff base", module: "providers.ts" },
+  {
+    name: "COVERIFY_COORDINATOR_CONTEXT_TOKENS",
+    schema: posInt,
+    fallback: "300000",
+    detail: "coordinator context cap before in-place compaction",
+    module: "harness.ts",
+  },
+  {
+    name: "COVERIFY_WAKE_GROWTH_NOTE_TOKENS",
+    schema: posInt,
+    fallback: "40000",
+    detail: "per-wake context growth above which the harness notes it",
+    module: "harness.ts",
+  },
+
+  // Paths and state.
+  {
+    name: "COVERIFY_STATE_DIR",
+    schema: str,
+    fallback: "~/.local/state/coverify",
+    detail: "out-of-tree gate store root (the trust domain no role can write)",
+    module: "gates.ts",
+  },
+  {
+    name: "COVERIFY_LAUNCHER_PATH",
+    schema: str,
+    fallback: "contract/math-proof-search-launcher.md",
+    detail: "launcher contract override; set-but-missing hard-fails, never falls back",
+    module: "launcher.ts",
+  },
+
+  // Operations.
+  { name: "COVERIFY_WIRE_LOG", schema: str, detail: "path to append raw provider wire traffic", module: "providers.ts" },
+  {
+    name: "COVERIFY_ADOPT",
+    schema: flag,
+    detail: "allow rebuilding gate history from the lower-trust journal mirror",
+    module: "gates.ts",
+  },
+];
+
+const BY_NAME = new Map(KNOBS.map((k) => [k.name, k]));
+
+/**
+ * Read one knob, coercing and validating against its schema. A value that is
+ * PRESENT BUT INVALID throws — it never falls back to the default, because a
+ * silently-ignored setting is how an A/B ends up comparing an arm against
+ * itself, and how a typo'd limit reads as no limit at all.
+ *
+ * Reads live, on every call, deliberately: this codebase resolves specs and
+ * limits per call so a mid-campaign env change takes effect, and the tests
+ * depend on it. Every surveyed config library parses once and freezes.
+ */
+export function readKnob(name: string): string | undefined {
+  const knob = BY_NAME.get(name);
+  if (!knob) throw new Error(`unknown knob ${name} — declare it in src/knobs.ts`);
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return knob.fallback;
+  if (!Value.Check(knob.schema, Value.Convert(knob.schema, raw))) {
+    const why = [...Value.Errors(knob.schema, Value.Convert(knob.schema, raw))]
+      .map((e) => e.message)
+      .join("; ");
+    throw new Error(
+      `${name}="${raw}" is invalid (${why || "does not match its declared shape"}). ` +
+        "Refusing to fall back to the default: a silently ignored setting is worse than a stop.",
+    );
+  }
+  return raw;
+}
+
+export interface ResolvedKnob {
+  name: string;
+  value: string | undefined;
+  /** Where the value came from. The point of the whole exercise: an operator
+   *  can confirm an A/B arm is what they think BEFORE spending quota on it. */
+  source: "env" | "default" | "unset";
+  detail: string;
+  module: string;
+}
+
+export function resolvedKnobs(): ResolvedKnob[] {
+  return KNOBS.map((k) => {
+    const set = process.env[k.name] !== undefined && process.env[k.name] !== "";
+    return {
+      name: k.name,
+      value: set ? process.env[k.name] : k.fallback,
+      source: set ? "env" : k.fallback !== undefined ? "default" : "unset",
+      detail: k.detail,
+      module: k.module,
+    };
+  });
+}
+
+/** The run stamp's view: only what was actually SET, so the record says what
+ *  governed this run without 31 rows of "unset" on every campaign. */
+export function knobSnapshot(): Record<string, string> {
+  return Object.fromEntries(
+    resolvedKnobs()
+      .filter((r) => r.source === "env")
+      .map((r) => [r.name, r.value as string]),
+  );
+}
+
+/** The env section of `coverify --help`, generated so it cannot drift from the
+ *  table the way the hand-written list did. */
+export function knobUsage(): string {
+  const w = Math.max(...KNOBS.map((k) => k.name.length));
+  return KNOBS.map((k) => `  ${k.name.padEnd(w)}  ${k.detail}`).join("\n");
+}
+
+/**
+ * @param effective role -> the spec that will actually be used, resolved by
+ *        providers.ts. Passed in rather than imported so this module stays
+ *        dependency-free (the conformance check imports it). Without it the
+ *        model knobs render as "unset", which is true of the VARIABLE and
+ *        misleading about the run: their defaults live in ROLE_DEFAULTS, and
+ *        the effective spec is the thing an operator is actually checking
+ *        before spending quota on an A/B arm.
+ */
+export function formatResolvedKnobs(
+  rows: readonly ResolvedKnob[],
+  effective?: Record<string, string>,
+): string {
+  const out: string[] = [];
+  const set = rows.filter((r) => r.source === "env");
+  if (effective !== undefined) {
+    out.push("Effective role routing — model and reasoning effort as this run would use them.");
+    out.push("This is the A/B pre-flight: confirm the arm before spending quota on it.");
+    const rw = Math.max(...Object.keys(effective).map((k) => k.length));
+    for (const [role, spec] of Object.entries(effective)) out.push(`  ${role.padEnd(rw)}  ${spec}`);
+    out.push("");
+  }
+  out.push("Every knob. `env` = set in this process's environment; `default` = declared");
+  out.push("fallback; `unset` = no value and no declared default (the effective value, if");
+  out.push("any, is computed in the module named and shown above for role routing).");
+  out.push("");
+  const w = Math.max(...rows.map((r) => r.name.length));
+  for (const r of rows) {
+    out.push(`  ${r.source.padEnd(7)} ${r.name.padEnd(w)}  ${r.value ?? "—"}`);
+  }
+  out.push("");
+  out.push(
+    set.length === 0
+      ? "Nothing is set in this environment: every value above is a declared default."
+      : `${set.length} set in this environment: ${set.map((r) => r.name).join(", ")}.`,
+  );
+  out.push("Only the SET ones are stamped into a run record — that is what lets a campaign");
+  out.push("prove what governed it without 31 rows of `unset` on every run.");
+  return out.join("\n");
+}

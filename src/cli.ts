@@ -17,6 +17,7 @@ import {
   providerUsable,
   ROLE_NAMES,
   roleModelSpec,
+  specKey,
   specLabel,
 } from "./providers.js";
 import { runCampaign } from "./harness.js";
@@ -26,6 +27,7 @@ import { campaignSpend, formatSpend } from "./view/spend.js";
 import { campaignOutcomes, formatOutcomes } from "./view/outcomes.js";
 import { corpusChecks, formatCorpusChecks } from "./view/corpus.js";
 import { campaignLimits, formatLimits } from "./view/limits.js";
+import { formatResolvedKnobs, knobUsage, resolvedKnobs } from "./knobs.js";
 
 function usage(): never {
   console.error(`usage:
@@ -59,18 +61,16 @@ function usage(): never {
   coverify login <provider>         subscription OAuth (anthropic = Claude Pro/Max,
                                     openai-codex = ChatGPT; credential -> ~/.config/coverify/auth.json)
   coverify logout <provider>
+  coverify config                   resolved value of every knob, with provenance (env vs default)
 
 auth: defaults need 'coverify login openai-codex' (ChatGPT subscription) plus the 'codex' and
        'claude' binaries — OpenAI GPT-5.6 Sol everywhere except the hostile auditor, which
        stays on claude-cli/opus; API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY)
        only for api-provider role overrides
-env: per-role COVERIFY_MODEL_{COORDINATOR,REASONER,TECHNICIAN,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}
-       as "provider/model[@thinking]" specs (the only model override),
-     COVERIFY_EFFORT / COVERIFY_EFFORT_<ROLE> set reasoning effort ALONE
-       (off|minimal|low|medium|high|xhigh|max), leaving provider and model as they are —
-       per-role wins; an invalid value hard-stops rather than being ignored,
-     COVERIFY_LAUNCHER_PATH (default: contract/math-proof-search-launcher.md in this repo;
-       set it only to test an edited contract — a set-but-missing path hard-fails)`);
+env: every knob below is generated from src/knobs.ts, so this list cannot drift from
+     the code the way a hand-written one did. \`coverify config\` shows the resolved
+     value of each and whether it came from the environment or its default.
+${knobUsage()}`);
   process.exit(2);
 }
 
@@ -343,6 +343,15 @@ switch (command) {
   case "limits": {
     requireCampaign();
     console.log(formatLimits(campaignLimits(dir, flags.get("run"))));
+    break;
+  }
+  case "config": {
+    console.log(
+      formatResolvedKnobs(
+        resolvedKnobs(),
+        Object.fromEntries(ROLE_NAMES.map((r) => [r, specKey(roleModelSpec(r))])),
+      ),
+    );
     break;
   }
   case "corpus-check": {
