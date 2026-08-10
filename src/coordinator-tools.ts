@@ -201,7 +201,13 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
       deliverable: packet.deliverable,
       context: packet.context,
       failedCheck: packet.failedCheck,
-      ...(family !== undefined ? { family, model: specLabel(spec) } : {}),
+      // `family` only: `model` here carried specLabel(spec), which is the
+      // identical value `modelFamily` below already writes on the same record
+      // from the same expression, and nothing read it (trace's agent.model is
+      // populated from modelFamily). `family` stays because it is the one
+      // record of which ideation family was REQUESTED, as distinct from the
+      // spec that resolved.
+      ...(family !== undefined ? { family } : {}),
       computation: isTechnician ? (packet as TechnicianPacket).computation : undefined,
       literature: literature ? (packet as ReasonerPacket).literature : undefined,
       evidenceDir: path.relative(dir, evidenceDir),

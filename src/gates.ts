@@ -46,30 +46,21 @@ export interface GateRecord {
 }
 
 /**
- * Read-side views (issue #21 data layer). WRITES STAY OPEN — `store.append`
- * takes any `GateRecord`, and no schema is versioned — but readers state the
- * fields they expect through these types instead of hand-casting. Every
- * field is optional by design: a campaign recorded before a field existed
- * narrows to `undefined` rather than becoming an error, which is exactly why
- * this layer has no migrations.
+ * The one read-side view with a consumer: the four verification stage records
+ * share a shape, and modelSubstitutions() reads it (observe.ts).
+ *
+ * There were five of these — DispatchView, CompletionView, PromotionView,
+ * RefusalView — behind a generic `viewsOf<K>` map. None of the other four was
+ * ever instantiated: every other reader hand-casts at its own boundary
+ * (view/spend.ts, view/outcomes.ts, view/limits.ts, view/trace.ts), which is
+ * the honest thing to do when the write shape is deliberately open. A typed
+ * lookup table serving one caller is the abstraction-for-single-use the house
+ * style rejects.
+ *
+ * Every field stays optional by design: a campaign recorded before a field
+ * existed narrows to `undefined` rather than erroring, which is exactly why
+ * this layer needs no migrations.
  */
-export interface DispatchView {
-  id?: string;
-  role?: string;
-  mechanism?: string;
-  task?: string;
-  /** Ideation family + resolved model, when the dispatch was family-routed. */
-  family?: string;
-  model?: string;
-}
-export interface CompletionView {
-  id?: string;
-  report?: string;
-  reportSha256?: string;
-  failed?: string;
-  cancelled?: boolean;
-}
-/** audit | bundle-cert | reconstruction | comparison records. */
 export interface VerdictView {
   revision?: string;
   verdict?: string;
@@ -81,36 +72,11 @@ export interface VerdictView {
   /** The backend's own statement of what answered, when it makes one (#21 P3). */
   reportedModel?: string;
 }
-export interface PromotionView {
-  revision?: string;
-  entry?: string;
-}
-/** Refusal notes: `kind:"note"` carrying a `refusal` site. */
-export interface RefusalView {
-  refusal?: "dispatch" | "verification" | "promotion" | "gate" | "declaration";
-  reason?: string;
-  mechanism?: string;
-  revision?: string;
-  role?: string;
-}
 
-interface ViewByKind {
-  dispatch: DispatchView;
-  completion: CompletionView;
-  audit: VerdictView;
-  "bundle-cert": VerdictView;
-  reconstruction: VerdictView;
-  comparison: VerdictView;
-  promotion: PromotionView;
-}
-
-/** Records of one kind, as its read-side view. The cast is the single place
- *  the open write shape is narrowed, so queries below hold no casts. */
-export function viewsOf<K extends keyof ViewByKind>(
-  store: GateStore,
-  kind: K,
-): (ViewByKind[K] & GateRecord)[] {
-  return store.all().filter((e) => e.kind === kind) as (ViewByKind[K] & GateRecord)[];
+/** Stage records of one kind, as the verdict view. The cast is the single
+ *  place the open write shape is narrowed for this query. */
+export function verdictViews(store: GateStore, kind: string): (VerdictView & GateRecord)[] {
+  return store.all().filter((e) => e.kind === kind) as (VerdictView & GateRecord)[];
 }
 
 /**

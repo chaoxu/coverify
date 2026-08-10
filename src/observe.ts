@@ -16,7 +16,7 @@ import { danglingCitations, gitInRepo, readLedger, repoRoot, sha256File, sha256T
 import {
   GateStore,
   VERIFICATION_MECHANISM_PREFIX,
-  viewsOf,
+  verdictViews,
   normalizeMechanism,
   promotionsMissingFromProved,
   retractionClosure,
@@ -248,7 +248,7 @@ export function modelSubstitutions(
 ): { kind: string; revision: string; requested: string; actual: string }[] {
   const out: { kind: string; revision: string; requested: string; actual: string }[] = [];
   const stages = ["audit", "bundle-cert", "reconstruction", "comparison"] as const;
-  for (const e of stages.flatMap((k) => viewsOf(store, k))) {
+  for (const e of stages.flatMap((k) => verdictViews(store, k))) {
     const actual = e.reportedModel;
     const requested = e.modelFamily;
     if (actual === undefined || requested === undefined || actual === requested) continue;
