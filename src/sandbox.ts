@@ -42,6 +42,21 @@ export function installReaperHooks(): void {
       process.exit(sig === "SIGINT" ? 130 : 143);
     });
   }
+  // A crash is a way the harness dies too, and it was the one path that left
+  // compute running. The stated threat model is "a harness that dies takes its
+  // compute with it" — an unhandled throw or rejection is exactly that, and
+  // Node's default handler exits without running `exit` listeners for a
+  // rejection. Re-thrown after reaping so the failure is still loud and the
+  // exit code still says crash. (signal-exit does this too; two lines and no
+  // dependency in the security-critical module wins here.)
+  for (const fatal of ["uncaughtException", "unhandledRejection"] as const) {
+    process.on(fatal, (err: unknown) => {
+      reapAll();
+      console.error(`[coverify] ${fatal}; reaped live compute before exiting`);
+      console.error(err instanceof Error ? (err.stack ?? err.message) : String(err));
+      process.exit(1);
+    });
+  }
 }
 
 /** A malformed limit must not silently become NaN: setTimeout(fn, NaN) fires

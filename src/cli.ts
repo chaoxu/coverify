@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import * as path from "node:path";
+import { parseArgs, type ParseArgsConfig } from "node:util";
 import {
   campaignExists,
   initCampaign,
@@ -74,29 +75,57 @@ ${knobUsage()}`);
   process.exit(2);
 }
 
-/** Flags that take no value (presence = true). */
-const BOOLEAN_FLAGS = new Set(["no-computation"]);
+/**
+ * Every flag this CLI accepts. Declared, because the hand-rolled parser this
+ * replaces accepted ANY `--name value` into a map and nothing read unknown
+ * keys — so `coverify resume --max-wake 40` (a typo for --max-wakes) ran
+ * UNBOUNDED and silently. That is the same failure class optionalInt() below
+ * was written to prevent; it guarded a bad VALUE and left a bad flag NAME
+ * wide open.
+ *
+ * `strict: true` closes it: an unknown flag stops the run. Everything is a
+ * string except the one boolean, so `--agent-limit 0` still reaches
+ * agentLimit()'s unlimited sentinel unchanged.
+ *
+ * node:util.parseArgs is built into Bun — no dependency. commander (207 KB),
+ * yargs-parser (86 KB) and mri (13 KB) were considered and rejected: a
+ * built-in that already does strict validation is strictly better here.
+ */
+const FLAG_SPEC = {
+  dir: { type: "string" },
+  "agent-limit": { type: "string" },
+  "max-wakes": { type: "string" },
+  "no-computation": { type: "boolean" },
+  out: { type: "string" },
+  run: { type: "string" },
+  session: { type: "string" },
+} as const;
 
 function parseFlags(args: string[]): { flags: Map<string, string>; positional: string[] } {
-  const flags = new Map<string, string>();
-  const positional: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.startsWith("--")) {
-      const name = a.slice(2);
-      if (BOOLEAN_FLAGS.has(name)) {
-        flags.set(name, "true");
-        continue;
-      }
-      const value = args[i + 1];
-      if (value === undefined) usage();
-      flags.set(name, value);
-      i++;
-    } else {
-      positional.push(a);
-    }
+  try {
+    const { values, positionals } = parseArgs({
+      args,
+      options: FLAG_SPEC as unknown as ParseArgsConfig["options"],
+      allowPositionals: true,
+      strict: true,
+    });
+    return {
+      flags: new Map(
+        Object.entries(values)
+          .filter(([, v]) => v !== undefined)
+          .map(([k, v]) => [k, String(v)]),
+      ),
+      positional: positionals,
+    };
+  } catch (e) {
+    // A statement or message beginning with "-" is legitimate in this
+    // application ("-1 is not expressible as ..."), and strict mode rejects a
+    // positional that looks like a flag. Say how to pass it rather than
+    // printing the whole usage block over a quoting question.
+    const why = e instanceof Error ? e.message : String(e);
+    console.error(`${why}\nIf the argument begins with "-", pass it after --  (coverify say -- "-msg")`);
+    process.exit(2);
   }
-  return { flags, positional };
 }
 
 const [command, ...rest] = process.argv.slice(2);

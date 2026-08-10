@@ -193,7 +193,13 @@ export const VIEW = String.raw`
     return multiDay ? iso.slice(5, 16).replace("T", " ") + "Z" : iso.slice(11, 16) + "Z";
   };
   const fmtH = (h) => (h < 1 ? Math.round(h * 60) + "m" : h.toFixed(1) + "h");
-  const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+  // Quotes included, though every current interpolation lands in a text node
+  // where &<> would do. The content here is agent-authored (task, mechanism,
+  // report text) and this page is built by string concatenation into
+  // innerHTML, so the day someone interpolates into a quoted attribute the
+  // escape has to already be sufficient — that change would not look
+  // dangerous at review time.
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const STAGE = { audit: "hostile audit", "bundle-cert": "bundle certification", reconstruction: "blind reconstruction", comparison: "comparison" };
 
   // ---- summary tiles ----
