@@ -422,7 +422,19 @@ export type RoleUsage = Omit<PiUsage, "cost" | "totalTokens" | "cacheWrite" | "c
  *  unless some addend reported it: a measured 0 and "no backend reported this"
  *  are different records, and coercing the second into the first is how this
  *  journal used to claim things it did not know. */
-export function addUsage(a: RoleUsage, b: RoleUsage): RoleUsage {
+/** Sum two usages FROM THE SAME METER. The generic parameter is the whole
+ *  point: `M` is bound by the first argument's meter, so passing a
+ *  `codex-cli-jsonl` usage as `b` to a `pi-session` `a` is a type error at the
+ *  call site — the cross-meter sum is inexpressible rather than merely
+ *  discouraged (issue #32).
+ *
+ *  Type-level and not a runtime throw, deliberately, and the two are not
+ *  interchangeable: see the totality note in the body. A checked call site
+ *  costs nothing at runtime; a throw on the settle path costs the campaign. */
+export function addUsage<M extends Meter | undefined>(
+  a: RoleUsage & { meter?: M },
+  b: RoleUsage & { meter?: NoInfer<M> },
+): RoleUsage {
   const reported = (x?: number, y?: number) =>
     x === undefined && y === undefined ? undefined : (x ?? 0) + (y ?? 0);
   // Deliberately TOTAL: this runs inside persist()'s store.append argument on

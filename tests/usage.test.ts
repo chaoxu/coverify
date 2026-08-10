@@ -169,3 +169,50 @@ test("a retried call is distinguishable from one long call", async () => {
   expect(s.requests?.()).toBe(1);
   delete process.env.COVERIFY_CODEX_CMD;
 });
+
+test("summing two lanes is a TYPE error, not merely discouraged", async () => {
+  // Issue #32's headline goal: make cross-meter summing inexpressible. It is
+  // type-level and NOT a runtime throw — addUsage runs inside persist()'s
+  // store.append argument on the settle path, where a throw would orphan a
+  // report and take the campaign down with it. A checked call site costs
+  // nothing at runtime; a throw there costs the run.
+  //
+  // The naive generic does NOT work: with `b: {meter?: M}` TypeScript infers M
+  // as the UNION of both arguments and the constraint is vacuous. NoInfer<M>
+  // binds M to the first argument alone. This test exists because the vacuous
+  // version type-checked clean and looked like a guarantee.
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const dir = fs.mkdtempSync("/private/tmp/coverify-xmeter-");
+  const probe = path.join(dir, "xmeter-probe.ts");
+  fs.writeFileSync(
+    probe,
+    `import { addUsage, type RoleUsage } from "${path.resolve("src/providers.ts")}";\n` +
+      `const pi = { input: 1, output: 1, cacheRead: 0, meter: "pi-session" } as RoleUsage & { meter: "pi-session" };\n` +
+      `const codex = { input: 1, output: 1, cacheRead: 0, meter: "codex-cli-jsonl" } as RoleUsage & { meter: "codex-cli-jsonl" };\n` +
+      `export const bad = addUsage(pi, codex);\n`,
+  );
+  /** Errors tsc reports AGAINST THE PROBE, ignoring ambient node_modules
+   *  noise (@anthropic-ai/sdk's undici-types resolution fails under these
+   *  flags and would otherwise drown the signal in both directions). */
+  const probeErrors = (): string => {
+    const r = Bun.spawnSync([
+      "./node_modules/.bin/tsc", "--noEmit", "--strict", "--target", "es2022",
+      "--moduleResolution", "bundler", "--module", "esnext", "--allowImportingTsExtensions",
+      probe,
+    ]);
+    const all = new TextDecoder().decode(r.stdout) + new TextDecoder().decode(r.stderr);
+    return all
+      .split("\n")
+      .filter((l) => l.includes("xmeter-probe.ts"))
+      .join("\n");
+  };
+  expect(probeErrors()).toContain("is not assignable to parameter of type");
+
+  // Control: identical shape, SAME meter on both sides, must compile clean.
+  // Without it this test would pass on a probe tsc rejected for any unrelated
+  // reason — proving only that tsc dislikes the file, not that it refuses the
+  // cross-meter sum.
+  fs.writeFileSync(probe, fs.readFileSync(probe, "utf8").replaceAll("codex-cli-jsonl", "pi-session"));
+  expect(probeErrors()).toBe("");
+}, 60_000);

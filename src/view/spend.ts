@@ -368,5 +368,9 @@ export function formatSpend(s: CampaignSpend): string {
   }
   out.push("");
   out.push("No grand total, deliberately: summing across lanes is not a currency.");
+  out.push("Nor is any of this the binding constraint: subscription runs are metered by");
+  out.push("a rolling window, not by tokens or dollars, and a campaign that fits a");
+  out.push("month's spend can still die in an afternoon. Run `coverify limits` for the");
+  out.push("occupancy and burn rate that actually end campaigns.");
   return out.join("\n");
 }

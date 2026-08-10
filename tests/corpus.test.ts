@@ -96,3 +96,20 @@ test("check 2 declares itself inapplicable rather than answering", () => {
   expect(c.notApplicable).toBe(true);
   expect(formatCorpusChecks(corpusChecks(dir))).toContain("n/a");
 });
+
+test("burn rate is measured over a real span, not between adjacent samples", async () => {
+  // A campaign runs many rollouts CONCURRENTLY, so two consecutive samples are
+  // routinely milliseconds apart from different sessions. Dividing a 2-point
+  // rise by 1ms reported 7,200,000 points/hour on a live campaign. The
+  // quantity that matters is the sustained rate: Danus died at ~11.6
+  // points/hour (55% -> 100% in 3h52m).
+  const { campaignLimits } = await import("../src/view/limits.ts");
+  // No rollouts will match this fixture, so this pins the honest-empty path:
+  // an absent measurement must not render as a measurement of zero.
+  const dir = corpus("limits", { "2026-08-02T00-00-00_x.jsonl": [msg(1000, 10)] });
+  const r = campaignLimits(dir);
+  expect(r.attribution).toBe("none");
+  expect(r.fastestBurn).toBeUndefined();
+  const { formatLimits } = await import("../src/view/limits.ts");
+  expect(formatLimits(r)).toContain("not a measurement of zero");
+});
