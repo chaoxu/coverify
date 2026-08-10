@@ -100,7 +100,16 @@ function campaignIdentity(campaignDir: string, stateDir: string, readOnly = fals
   const idFile = campaignIdPath(campaignDir);
   if (fs.existsSync(idFile)) {
     const raw = fs.readFileSync(idFile, "utf-8").trim();
-    if (/^[0-9a-f]{16}$/.test(raw)) return raw;
+    // Case-insensitive: the same 64 bits either way, and an id copied by hand
+    // or written by another tool in uppercase names the same directory.
+    if (/^[0-9a-f]{16}$/i.test(raw)) return raw.toLowerCase();
+    // An EMPTY file is the likeliest real corruption, and on a campaign that
+    // never ran there is nothing to orphan — no journal means no gate history
+    // exists anywhere to lose. Self-heal there rather than hard-stopping a
+    // campaign whose id file an editor or an aborted init truncated.
+    if (raw === "" && !fs.existsSync(path.join(campaignDir, ".coverify", "journal.jsonl"))) {
+      // fall through and mint
+    } else {
     // Present but malformed. Falling through would MINT A NEW IDENTITY and
     // overwrite the file, orphaning an intact gate store one directory away
     // with no tool that names it — while the ADOPT guard then steers the
@@ -110,8 +119,9 @@ function campaignIdentity(campaignDir: string, stateDir: string, readOnly = fals
       `campaign id at ${idFile} is malformed (${JSON.stringify(raw.slice(0, 40))}); expected 16 hex ` +
         "characters. Its gate history is under the id this file used to hold. Restore the file from " +
         "backup or version control rather than deleting it — deleting mints a new identity and leaves " +
-        "the existing history unreachable.",
-    );
+          "the existing history unreachable.",
+      );
+    }
   }
   const legacy = sha256Text(campaignDir).slice(0, 16);
   // Adopt the legacy id when its store exists. Otherwise mint one — but
