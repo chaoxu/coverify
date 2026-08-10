@@ -22,6 +22,7 @@ import {
 import { runCampaign } from "./harness.js";
 import { writeTrace } from "./view/trace.js";
 import { campaignTurns } from "./view/turns.js";
+import { campaignSpend, formatSpend } from "./view/spend.js";
 
 function usage(): never {
   console.error(`usage:
@@ -32,6 +33,9 @@ function usage(): never {
   coverify status [--dir campaign]
   coverify trace [--dir campaign] [--out file]
                                     render the journal as a self-contained HTML timeline
+  coverify spend [--dir campaign]
+                                    per-lane, per-role token totals from the journal;
+                                    refuses cross-meter sums and roll-ups
   coverify turns [--dir campaign] [--session substr]
                                     per-turn telemetry derived from the session trees (sizes/usage/
                                     gaps/stopReason, no content); without --session, one summary
@@ -312,6 +316,11 @@ switch (command) {
     const out = writeTrace(dir, flags.get("out"));
     console.error(`[coverify] trace written: ${out}`);
     console.log(out);
+    break;
+  }
+  case "spend": {
+    requireCampaign();
+    console.log(formatSpend(campaignSpend(dir)));
     break;
   }
   case "turns": {
