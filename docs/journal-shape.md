@@ -63,6 +63,15 @@ show the per-provider split beside the total.
 
 ## 13. Record leaves, and every edge of the tree
 
+**One writer per billed call.** A payment is recorded once; every other record
+that references it carries the join key alone and no tokens. Two writers for
+one call is not a redundancy, it is a 2x error that no cross-check catches,
+because both sides agree about the payment they are each counting. In this
+harness the switch is `spendLeafed()`: with a telemetry sink installed the span
+leaf is the writer, without one the referencing record is. `tests/spend-invariant.test.ts`
+asserts the two configurations total identically, which is the only form of
+this rule that survives a refactor.
+
 A campaign is a tree: **campaign → run → wake → dispatch → stage record →
 provider request.** Spend happens at exactly one level — the provider request —
 but every level above it has a natural reason to state a cost, because whoever
@@ -89,7 +98,7 @@ attributed to the wake that ordered it. Every edge below is now stamped:
 | wake → dispatch | `wake` on every dispatch record |
 | dispatch → stage | `dispatchId` on audit, bundle-cert, reconstruction, comparison, gate-verdict, role-call |
 | dispatch → completion | the handle `id` (see the cancel caveat below) |
-| stage → provider request | `attempts` + `requests` on every usage-bearing record |
+| stage → provider request | `attempts` + `requests` on whichever record carries the payment |
 | unmeasurable spend | `role-call` with `unmetered: <lane>` — a record, not a silence |
 
 **A cancelled dispatch is the one place `id` does not identify a single

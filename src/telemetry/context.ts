@@ -1,8 +1,15 @@
 // The recording path for MEASUREMENT: deleting this folder must leave a
-// working harness, only one that stops counting tokens. Core never imports it —
-// cli.ts builds the context and hands it to runCampaign, core holds only the
-// runtime-erased `TelemetryContext` type and defaults to NOOP — so `rm -rf
-// src/telemetry` plus three lines in cli.ts is a clean removal. Keep it that way.
+// working harness. Core never imports it — cli.ts builds the context and hands
+// it to runCampaign, core holds only the runtime-erased `TelemetryContext`
+// type and defaults to NOOP — so `rm -rf src/telemetry`, its test files, and
+// the imports in cli.ts is a clean removal. Keep it that way.
+//
+// What deletion costs is ATTRIBUTION, not counting. `spendLeafed()` in
+// providers.ts keys on whether a sink is installed: with one, the span leaf is
+// the single writer and referencing records carry join keys alone; with none,
+// those records carry the tokens themselves. So a harness without this folder
+// still records what it spent — it loses the per-stage tree, and the readers
+// that would show it.
 import type {
   SpanAttributes,
   SpanOptions,

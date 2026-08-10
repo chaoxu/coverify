@@ -145,9 +145,10 @@ verification rounds per revision and a worst case of 12 — a revision going
 round twelve times is the kind of thing that changes how you set up the next
 campaign.
 
-These readers live in `src/telemetry/`. Delete that folder and the four
-lines in `src/cli.ts` that import it and the harness still proves theorems —
-it just stops counting. A check fails if anything else ever reaches into it.
+These readers live in `src/telemetry/`. Delete that folder and the lines in
+`src/cli.ts` that import it and the harness still proves theorems, still
+records what it spent, and loses these three commands along with the per-stage
+breakdown they read. A check fails if anything else ever reaches into it.
 
 ## Why it is built this way
 
