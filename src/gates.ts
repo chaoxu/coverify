@@ -107,8 +107,16 @@ function campaignIdentity(campaignDir: string, stateDir: string, readOnly = fals
     // never ran there is nothing to orphan — no journal means no gate history
     // exists anywhere to lose. Self-heal there rather than hard-stopping a
     // campaign whose id file an editor or an aborted init truncated.
-    if (raw === "" && !fs.existsSync(path.join(campaignDir, ".coverify", "journal.jsonl"))) {
-      // fall through and mint
+    // Empty carries no information about a previous id, so refusing gives the
+    // operator nothing to restore. Fall through when nothing can be lost: a
+    // campaign that never ran, or a legacy one whose store still sits at the
+    // path hash two lines below and would be adopted correctly.
+    const neverRan = !fs.existsSync(path.join(campaignDir, ".coverify", "journal.jsonl"));
+    const legacyStoreExists = fs.existsSync(
+      path.join(stateDir, sha256Text(campaignDir).slice(0, 16), "gates.jsonl"),
+    );
+    if (raw === "" && (neverRan || legacyStoreExists)) {
+      // fall through and mint (or adopt the legacy store)
     } else {
     // Present but malformed. Falling through would MINT A NEW IDENTITY and
     // overwrite the file, orphaning an intact gate store one directory away
@@ -276,7 +284,7 @@ export class GateStore {
         typeof other === "string" &&
         other !== this.campaignDir &&
         fs.existsSync(campaignIdPath(other)) &&
-        fs.readFileSync(campaignIdPath(other), "utf-8").trim() === id
+        fs.readFileSync(campaignIdPath(other), "utf-8").trim().toLowerCase() === id
       ) {
         const conflict =
           `campaign id ${id} is claimed by two directories:\n  ${other}\n  ${this.campaignDir}\n` +

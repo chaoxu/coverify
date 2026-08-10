@@ -26,6 +26,7 @@ import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-code
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import { cliBackendCommand, createCliRoleSession, isCliProvider, systemText } from "./backends.js";
 import { repoRoot } from "./campaign.js";
+import { Refusal } from "./refusal.js";
 import { fileCredentialStore } from "./credentials.js";
 import { CLAUDE_BRIDGE_ID, claudeBridgeProvider } from "./claude-bridge.js";
 import { envNumber, type WriteScope } from "./sandbox.js";
@@ -145,7 +146,9 @@ function parseModelSpec(spec: string): ModelSpec {
   const provider = slash < 0 ? "anthropic" : modelPart.slice(0, slash);
   const modelId = slash < 0 ? modelPart : modelPart.slice(slash + 1);
   if (!(PROVIDERS as readonly string[]).includes(provider)) {
-    throw new Error(
+    // A user-config refusal, not a bug: a typo in COVERIFY_MODEL_* reached the
+    // operator as six lines of source and a stack frame.
+    throw new Refusal(
       `unknown provider "${provider}" in model spec "${spec}" (valid: ${PROVIDERS.join(", ")})`,
     );
   }
@@ -319,7 +322,7 @@ export function specKey(spec: ModelSpec): string {
 function getModel(models: Models, spec: ModelSpec) {
   const model = models.getModel(spec.provider, spec.modelId);
   if (!model) {
-    throw new Error(
+    throw new Refusal(
       `unknown ${spec.provider} model id "${spec.modelId}"; check the COVERIFY_MODEL* spec ` +
         `(auth: ${{ anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", google: "GEMINI_API_KEY", "openai-codex": "coverify login openai-codex", "claude-bridge": "claude binary (Claude Code login)", "claude-cli": "claude binary", "codex-cli": "codex binary", "chatgpt-cli": "chatgpt-cli binary (daemon must be running)", agy: "agy binary (Antigravity login)" }[spec.provider]})`,
     );
