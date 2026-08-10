@@ -748,7 +748,14 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
         {
           contract,
           charge: CHARGES.coordinator,
-          workspace: { cwd: dir, scope: coordinatorScope },
+          // failedLedger: the coordinator is the role that AUTHORS the
+          // prior-route check — `failedCheck` on every dispatch packet, gated
+          // by checkDispatch — so it is the one that most needs the lookup,
+          // and its session is long-lived across wakes, which is where a 31 KB
+          // read is re-presented most (#28). Wiring it only to dispatched
+          // workers left ~32% of the FAILED.md traffic, in the lane where the
+          // clause actually bites, unhelped.
+          workspace: { cwd: dir, scope: coordinatorScope, failedLedger: path.join(dir, "FAILED.md") },
           extraTools: [
             dispatchReasoner,
             dispatchTechnician,

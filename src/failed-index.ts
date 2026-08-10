@@ -33,12 +33,23 @@ export function parseFailedEntries(md: string): FailedEntry[] {
   const out: FailedEntry[] = [];
   let heading: string | undefined;
   let lines: string[] = [];
+  let fenced = false;
   const flush = () => {
     if (heading !== undefined) out.push({ heading, text: [heading, ...lines].join("\n").trimEnd() });
     lines = [];
   };
-  for (const line of md.split("\n")) {
-    if (/^## /.test(line)) {
+  // CRLF-tolerant: a \r left glued to a heading is not verbatim, and the miss
+  // path prints headings.
+  for (const line of md.split(/\r?\n/)) {
+    // Fence-aware. A `## ` inside a fenced block is a code comment, not a
+    // heading, and treating it as one both invents a phantom entry AND
+    // detaches everything after it from the real entry — including the
+    // "what would make a retry materially new" line the launcher requires,
+    // which is precisely the text a lookup is asked about. Latent today (zero
+    // instances across the eight ledgers on disk), but technician output and
+    // counterexample transcripts are exactly what gets fenced into FAILED.md.
+    if (/^\s*```/.test(line)) fenced = !fenced;
+    if (!fenced && /^## /.test(line)) {
       flush();
       heading = line;
     } else if (heading !== undefined) {
@@ -49,12 +60,31 @@ export function parseFailedEntries(md: string): FailedEntry[] {
   return out;
 }
 
-/** Words worth matching on: drops punctuation and very short tokens, so a
- *  query like "M1 freeze LP-local blocks" matches on its content words rather
- *  than on "the". Case-insensitive throughout, because mechanism labels are
- *  written inconsistently across campaigns. */
+/** Words that carry no routing signal. Without this list a query written as a
+ *  sentence ranks on "the" and "not": an entry whose HEADING contains three
+ *  stopwords scored 6 and outranked the entry whose body held the actual close
+ *  route — the tool presenting noise first under a "best first" label, which
+ *  is the false-"no close prior route" failure this lookup exists to prevent. */
+const STOPWORDS = new Set([
+  "the", "and", "for", "not", "all", "any", "are", "but", "can", "did", "does", "from", "had", "has",
+  "have", "how", "into", "its", "may", "non", "one", "only", "our", "out", "per", "should", "since",
+  "some", "such", "than", "that", "them", "then", "there", "these", "they", "this", "those", "using",
+  "was", "were", "what", "when", "which", "while", "with", "would", "you", "your", "want", "try",
+]);
+
+/** Words worth matching on: drops punctuation, one-character tokens, and
+ *  stopwords, so a query written as a sentence matches on its content words.
+ *  Case-insensitive throughout, because mechanism labels are written
+ *  inconsistently across campaigns. */
 function terms(s: string): string[] {
-  return [...new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 1))];
+  return [
+    ...new Set(
+      s
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((t) => t.length > 1 && !STOPWORDS.has(t)),
+    ),
+  ];
 }
 
 export interface FailedMatch extends FailedEntry {

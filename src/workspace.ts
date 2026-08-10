@@ -436,17 +436,30 @@ function confineReads(tool: AgentTool, roots: string[], cwd: string): AgentTool 
  * prior route" is an assertion the reasoner has to be able to make honestly.
  * Headings are a few hundred bytes against ~31 KB for the file.
  */
+/** Payload bound for a match list, below the 50 KB read-tool cap so the lookup
+ *  is always cheaper than the read it replaces — the whole claim of the tool. */
+const FAILED_MATCH_LIMIT = 24_000;
+
+/** Heading plus its first non-empty body line: enough to judge closeness on a
+ *  miss without returning the file. */
+function summarize(e: { heading: string; text: string }): string {
+  const first = e.text
+    .split("\n")
+    .slice(1)
+    .find((l) => l.trim().length > 0);
+  return first === undefined ? e.heading : `${e.heading}\n    ${first.trim().slice(0, 200)}`;
+}
+
 function failedRoutesTool(failedLedger: string): AgentTool {
   return {
     name: "failed_routes",
     label: "Closed routes",
     description:
-      "Look up closed routes in FAILED.md by mechanism label or keywords — the check the contract " +
-      "requires before every route, materially changed retry, or variant. Returns the matching " +
-      "entries verbatim, or, when nothing matches, the full list of entry headings so you can say " +
-      "'no close prior route' on the evidence. Prefer this to reading FAILED.md whole: the file is " +
-      "append-only and grows all campaign, and a full read is re-presented on every later turn of " +
-      "this dispatch. Read the whole file when you need it; this is a lookup, not a restriction.",
+      "Look up closed routes in FAILED.md by mechanism label or keywords. Returns the matching " +
+      "entries verbatim, best first, bounded; on no match, every entry's heading and first line. " +
+      "Matching is lexical, so it can miss a route that is close in mechanism but differently " +
+      "worded — FAILED.md remains readable in full with the read tool, and this is a lookup over " +
+      "it, never a substitute for it or a restriction on it.",
     parameters: Type.Object({
       query: Type.String({
         description: "Mechanism label and/or keywords describing the route you are about to take",
@@ -465,20 +478,39 @@ function failedRoutesTool(failedLedger: string): AgentTool {
       }
       const matches = matchFailedEntries(entries, query);
       if (matches.length === 0) {
+        // Headings ALONE are not enough to judge "close prior route": the
+        // obstruction and the retry bar live in the body, and a miss is
+        // lexical, so a route close in mechanism but differently worded lands
+        // here. Each heading gets its first body line, which is where those
+        // ledgers put the obstruction — still a fraction of the file.
         return toolText(
-          `No entry in FAILED.md matched "${query}". All ${entries.length} entry heading(s), so you ` +
-            `can confirm this yourself:\n\n${entries.map((e) => e.heading).join("\n")}\n\n` +
-            "If none is a close prior route, record `no close prior route` per the contract.",
+          `No entry in FAILED.md matched "${query}". All ${entries.length} entries, heading and ` +
+            `first line, so the judgement is yours on the evidence rather than on this tool's ` +
+            `lexical miss — read FAILED.md in full if any looks close:\n\n` +
+            entries.map((e) => summarize(e)).join("\n"),
         );
       }
-      // Every nonzero match is returned. Truncating here would recreate, one
-      // layer down, the "you cannot see what you did not fetch" problem this
-      // tool exists to remove; capResultText already bounds the payload, and
-      // it says so when it bites.
-      return toolText(
-        `${matches.length} of ${entries.length} entr(y/ies) in FAILED.md matched "${query}", ` +
-          `best first.\n\n${matches.map((m) => m.text).join("\n\n")}`,
-      );
+      // Bounded, and it SAYS so when it bites. An unbounded result was a net
+      // regression: a query naming a revision id or a date matched every entry
+      // and returned the whole 86 KB ledger — more than the ordinary read tool,
+      // which caps at 50 KB and announces its offset. That re-opened the
+      // issue-#22 context overflow this layer exists to prevent.
+      const shown: string[] = [];
+      let used = 0;
+      for (const m of matches) {
+        if (used + m.text.length > FAILED_MATCH_LIMIT && shown.length > 0) break;
+        shown.push(m.text);
+        used += m.text.length;
+      }
+      const head =
+        `${matches.length} of ${entries.length} entries in FAILED.md matched "${query}", best first.`;
+      const cut =
+        shown.length < matches.length
+          ? `\n\nShowing ${shown.length} of ${matches.length} matches (${FAILED_MATCH_LIMIT}-char limit). ` +
+            `The rest are NOT below — narrow the query, or read FAILED.md directly, before concluding ` +
+            `there is no close prior route.`
+          : "";
+      return toolText(`${head}${cut}\n\n${shown.join("\n\n")}`);
     },
   } as AgentTool;
 }

@@ -136,7 +136,11 @@ STATEMENT.md (readRoots, workspace.ts; path normalization mirrors pi's own,
 bypass-pinned in tests/read-scope.test.ts); `.coverify/` is refused
 param-side and filtered result-side (harness state, and transcript reads
 would breach verification blindness); every read result is capped at the
-same 50k budget as run_script output. The read cap is a hard constant, not
+same 50k budget as run_script output, and `failed_routes` is bounded
+separately at 24k so a lookup always costs less than the read it stands in
+for — its first version relied on a cap that does not apply to it and could
+return an entire 86 KB ledger, which is more than the read tool it was meant
+to save. The read cap is a hard constant, not
 env-tunable — an asymmetry with the batch caps, accepted as context-capacity
 supervision, not a work timeout.
 Code is a gated role, not a default: a `dispatch_technician` packet's `computation` declaration (launcher: "Use computation only for a
@@ -226,7 +230,8 @@ campaign.ts      state layer: init, revisions, append-only evidence, resume bund
 launcher.ts      load + extract the fenced launcher contract (no fallback)
 roles.ts         role charges + LIBRARIAN_CHARGE (all coverify-authored role text; no re-exports)
 sandbox.ts       OS supervision + confinement mechanics: reaper, sandboxing, supervise() batch runner
-workspace.ts     the role tool surface: run_script, librarian, write rules, readRoots/confineReads
+workspace.ts     the role tool surface: run_script, librarian, failed_routes, write rules, readRoots/confineReads
+failed-index.ts  FAILED.md entry parsing + lexical ranking behind failed_routes
 backends.ts      subscription CLI transports (claude/codex/chatgpt/agy) + served-model attestation
 providers.ts     model providers, per-role specs + ideation families, runRole, harness sessions
 coordinator-tools.ts clause-mapped coordinator tool surface (coordinatorTools(deps) factory)
@@ -689,8 +694,13 @@ dependency ancestry); typed global-memory channels with search retrieval
 (Danus workers ran 2,175 `gm_search` calls, but only because
 fresh-per-round self-directed workers must rebuild context — coverify's
 resume bundle measured ~5k tokens, ~2% of peak coordinator context, zero
-strain; revisit only if FAILED.md passes ~150–200 entries, and then as
-indexed search over the existing ledgers, never as new channels);
+strain; revisited 2026-08-10 BELOW that threshold — largest ledger on disk is 77
+entries — because the deferral priced the read and not its replay: a 31 KB
+FAILED.md read sits in the session and is re-presented on every later turn,
+which measured 40.4M tokens presented in the reasoner lane, ~1.5% of credits.
+Landed exactly as the deferral specified it should be if ever done — indexed
+search over the existing ledger, no new channel, no new file, contract
+untouched: `failed_routes`, workspace.ts);
 self-directed always-on workers (6 of 7 Danus workers independently
 formalized the same 4-label encoding; workers contributing zero answer
 ancestry burned 48% of worker spend); glossary mechanics (Danus's project
