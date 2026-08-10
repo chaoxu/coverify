@@ -166,6 +166,13 @@ export const KNOBS: readonly Knob[] = [
   // Operations.
   { name: "COVERIFY_WIRE_LOG", schema: str, detail: "path to append raw provider wire traffic", module: "providers.ts" },
   {
+    name: "COVERIFY_TELEMETRY",
+    schema: Type.Union([Type.Literal("off"), Type.Literal("memory")]),
+    fallback: "off",
+    detail: "span recording (pi-telemetry); off emits nothing, memory records in-process",
+    module: "telemetry.ts",
+  },
+  {
     name: "COVERIFY_ADOPT",
     schema: flag,
     detail: "allow rebuilding gate history from the lower-trust journal mirror",

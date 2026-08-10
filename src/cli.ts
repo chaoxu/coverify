@@ -29,6 +29,7 @@ import { campaignOutcomes, formatOutcomes } from "./view/outcomes.js";
 import { corpusChecks, formatCorpusChecks } from "./view/corpus.js";
 import { campaignLimits, formatLimits } from "./view/limits.js";
 import { formatResolvedKnobs, knobUsage, resolvedKnobs, validateKnobs } from "./knobs.js";
+import { initTelemetry } from "./telemetry.js";
 
 function usage(): never {
   console.error(`usage:
@@ -202,6 +203,7 @@ async function prove(resume: boolean): Promise<void> {
   // nothing provided.
   try {
     validateKnobs();
+    initTelemetry(process.env.COVERIFY_TELEMETRY);
   } catch (e) {
     console.error(String(e instanceof Error ? e.message : e));
     process.exit(2);

@@ -32,6 +32,8 @@ import { fileCredentialStore } from "./credentials.js";
 import { CLAUDE_BRIDGE_ID, claudeBridgeProvider } from "./claude-bridge.js";
 import { envNumber, type WriteScope } from "./sandbox.js";
 import { workspaceTools } from "./workspace.js";
+import { recordProviderCall, telemetry } from "./telemetry.js";
+import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 
 export type Models = ReturnType<typeof createModels>;
 
@@ -322,6 +324,35 @@ export interface RoleRun {
  * versus instructed.
  */
 export async function runRole(
+  run: Omit<RoleRun, "workspace" | "extraTools">,
+  signal?: AbortSignal,
+  /** Parent span, when the caller has one. A TelemetrySpan IS a context, so
+   *  passing it makes this call a CHILD structurally instead of by copying a
+   *  dispatchId into a field and hoping every writer remembers. Omitted, the
+   *  span is a root under the process context — which is NOOP unless an
+   *  exporter is attached, so nothing is emitted and nothing changes. */
+  parent?: TelemetryContext,
+): Promise<RoleResult> {
+  return (parent ?? telemetry()).startSpan(
+    {
+      name: "coverify.provider_call",
+      attributes: { "coverify.model_spec": specKey(run.spec) },
+    },
+    async (span) => {
+      const result = await runRoleInner(run, signal);
+      span.setAttributes({ "coverify.meter": result.usage?.meter });
+      if (result.usage) {
+        recordProviderCall(span, result.usage, {
+          attempts: result.attempts,
+          requests: result.requests,
+        });
+      }
+      return result;
+    },
+  );
+}
+
+async function runRoleInner(
   run: Omit<RoleRun, "workspace" | "extraTools">,
   signal?: AbortSignal,
 ): Promise<RoleResult> {
