@@ -51,7 +51,13 @@ export interface CampaignSpend {
 /** Which role a usage-bearing record belongs to. The journal names it three
  *  ways depending on the record kind, none of which is wrong — `role` on
  *  coordinator events, the stage kind on verification records, and the handle
- *  id's prefix on completions. */
+ *  id's prefix on completions.
+ *
+ *  DRIFT HAZARD: the id prefixes below are minted elsewhere (coordinator-tools
+ *  writes `${isTechnician ? "t" : "r"}NNN`), and nothing couples the two ends —
+ *  a new prefix silently lands every record of that role in "other" instead of
+ *  failing. Read-only view, so the cost is a mislabelled row, never a wrong
+ *  campaign decision. */
 function roleOf(r: Record<string, unknown>): string {
   if (typeof r.role === "string") return r.role;
   const kind = String(r.kind);
@@ -210,7 +216,7 @@ export function formatSpend(s: CampaignSpend): string {
   const M = (n: number) => `${(n / 1e6).toFixed(2)}M`;
   const W = 34;
   const lane = (s: string) => (s.length > W ? `${s.slice(0, W - 1)}…` : s).padEnd(W);
-  const opt = (n?: number) => (n === undefined ? "     —" : M(n).padStart(6));
+  const opt = (n?: number) => (n === undefined ? "—" : M(n));
   const out: string[] = [];
   out.push("by lane — lanes bill to different provider accounts, so they are never summed.");
   out.push("`fresh in` is the uncached part EXCEPT on rows marked (nested?), where the");

@@ -13,6 +13,16 @@ import { repoRoot } from "./campaign.js";
 import { installReaperHooks, liveReapers } from "./sandbox.js";
 import type { RoleRun, RoleSession, RoleUsage } from "./providers.js";
 
+/** A CLI failure that still cost money: the provider was paid before it exited
+ *  nonzero, so the rejection carries the spend and its join keys instead of
+ *  discarding them. One shape for the writer here and the reader in cadence.ts,
+ *  so a leafed failure can't quietly drop a field neither side names. */
+export interface BilledFailure extends Error {
+  usage?: RoleUsage;
+  providerSessionId?: string;
+  backendCwd?: string;
+}
+
 /**
  * A spawned official CLI as a degenerate RoleSession: it answers exactly
  * once, can be stopped (kill) but not steered, holds no transcript, and
@@ -35,6 +45,7 @@ export function createCliRoleSession(
   let reportedModel: string | undefined;
   let providerSessionId: string | undefined;
   let backendCwd: string | undefined;
+  let requests: number | undefined;
   let sentChars = 0;
   let asked = false;
   return {
@@ -50,6 +61,7 @@ export function createCliRoleSession(
       reportedModel = r.reportedModel;
       providerSessionId = r.providerSessionId;
       backendCwd = r.backendCwd;
+      requests = r.requests;
       return r.text;
     },
     approxTokens: () => 0,
@@ -66,10 +78,12 @@ export function createCliRoleSession(
       CLI_BACKENDS[provider].unmetered && asked
         ? [{ lane: provider, detail: `${provider} reports no usage payload` }]
         : [],
-    // A CLI oracle answers exactly once and keeps no transcript, so both
-    // counts are exact rather than derived.
+    // A CLI oracle answers exactly once and keeps no transcript, so attempts
+    // is exact. Requests is NOT: a codex tool loop is several requests inside
+    // that one answer, so the count derived from the stream wins wherever the
+    // transport could produce one (runCliRole's `requests`).
     attempts: () => (asked ? 1 : 0),
-    requests: () => (asked ? 1 : 0),
+    requests: () => requests ?? (asked ? 1 : 0),
     /** Join keys into the provider's own rollout (codex lane), where the
      *  rate-limit trajectory lives. Recorded, never interpreted here. */
     providerSessionId: () => providerSessionId,
@@ -229,17 +243,21 @@ function codexJsonlUsage(stdout: string): RoleUsage | undefined {
     : undefined;
 }
 
-/** The rollout id codex writes for this call. `codex exec --json` emits
- *  {"type":"thread.started","thread_id":...} as its first line, and that id is
- *  verbatim the `session_id` of the rollout under ~/.codex/sessions/ — which
- *  carries `rate_limits.primary.used_percent`, the meter that actually ends
- *  campaigns and that nothing in this journal could previously join to. */
+/** Provider requests this call made. codexJsonlUsage SUMS every
+ *  turn.completed, so a tool loop records N turns of tokens; stamping
+ *  requests:1 beside that would report four turns of spend against one
+ *  claimed request. Same event, counted rather than summed. */
 export function codexTurns(stdout: string): number {
   let n = 0;
   for (const line of stdout.split("\n")) if (line.includes('"turn.completed"')) n++;
   return n;
 }
 
+/** The rollout id codex writes for this call. `codex exec --json` emits
+ *  {"type":"thread.started","thread_id":...} as its first line, and that id is
+ *  verbatim the `session_id` of the rollout under ~/.codex/sessions/ — which
+ *  carries `rate_limits.primary.used_percent`, the meter that actually ends
+ *  campaigns and that nothing in this journal could previously join to. */
 export function codexThreadId(stdout: string): string | undefined {
   for (const line of stdout.split("\n")) {
     if (!line.includes('"thread.started"')) continue;
@@ -386,16 +404,12 @@ function runCliRole(
         // The provider was paid before it failed — for codex, stdout already
         // holds turn.completed usage. Rejecting before parsing threw away a
         // measured number, which is the one thing this journal must not do.
+        const failure: BilledFailure = new Error(`${provider} exited ${code}: ${detail}`);
         const spent = backend.usage?.(out);
-        const err2 = new Error(`${provider} exited ${code}: ${detail}`) as Error & {
-          usage?: RoleUsage;
-          providerSessionId?: string;
-          backendCwd?: string;
-        };
-        if (spent) err2.usage = spent;
-        err2.providerSessionId = codexThreadId(out);
-        err2.backendCwd = cwd;
-        return reject(err2);
+        if (spent) failure.usage = spent;
+        failure.providerSessionId = codexThreadId(out);
+        failure.backendCwd = cwd;
+        return reject(failure);
       }
       if (backend.output === "claude-json") {
         try {
@@ -452,8 +466,10 @@ function runCliRole(
           backendCwd: cwd,
           // Provider requests in this call: codex runs a tool loop and emits
           // one turn.completed per request, so this is derived from the
-          // stream rather than assumed to be 1.
-          requests: codexTurns(out),
+          // stream rather than assumed to be 1. Undefined when the stream said
+          // nothing — a call that happened is never 0 requests, so the session
+          // falls back to its floor of 1 rather than reporting "no call".
+          requests: codexTurns(out) || undefined,
         });
       }
       resolve({ text: out.trim() });

@@ -262,7 +262,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           kind: "completion",
           id: handle.id,
           failed,
-          ...(partial !== undefined ? { partial } : {}),
+          ...defined({ partial }),
           usage: handle.usage?.(),
         });
         if (live) settledQueue.push({ h: handle, failed });
@@ -491,11 +491,27 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   let turnFailures = 0;
   let coordinator: RoleSession | undefined;
   let coordinatorEpoch = 0;
-  // Baseline for the per-wake delta. A rebuilt session starts a new cumulative
+  // Baseline for the per-wake deltas. A rebuilt session starts a new cumulative
   // series, so this resets with it — the one place the epoch boundary is now
-  // used, and it is known here rather than inferred at read time.
-  let prevCoordUsage: RoleUsage | undefined;
-  let prevCoordAttempts = 0;
+  // used, and it is known here rather than inferred at read time. One object so
+  // the two counters cannot be reset in different places and drift.
+  let prevCoord: { usage?: RoleUsage; attempts: number } = { attempts: 0 };
+  /** Both discard paths (compaction failure, failed turn) throw the session
+   *  away, and the call that failed was already billed. This is the last
+   *  chance to journal what it cost — as a leaf, like every ordinary wake. */
+  const leafDiscardedCoordSpend = (why: { compactionFailed: true } | { turnFailed: true }) => {
+    const total = coordinator?.usage();
+    if (!total) return;
+    store.event({
+      kind: "usage",
+      role: "coordinator",
+      sessionId: `coordinator-${coordinatorEpoch}`,
+      wake: wakeCount,
+      ...why,
+      modelSpec: specKey(coordinatorSpec),
+      usage: subUsage(total, prevCoord.usage),
+    });
+  };
   // Per-wake context growth, surfaced when large (issue #17): the measured
   // campaign grew 29–55k tokens per wake, ~90% of it the coordinator's own
   // reads and output, invisible to the coordinator itself. Telemetry plus a
@@ -597,20 +613,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           // Compaction is a real LLM call and can fail (quota, provider);
           // the campaign must not die with workers live — fall back to the
           // infallible restart-rule rebuild (review 2026-08-02).
-          // The failed summarization call was already billed, and the session
-          // holding its cost is about to be discarded. Leaf it first.
-          const preRebuild = coordinator?.usage();
-          if (preRebuild) {
-            store.event({
-              kind: "usage",
-              role: "coordinator",
-              sessionId: `coordinator-${coordinatorEpoch}`,
-              wake: wakeCount,
-              compactionFailed: true,
-              modelSpec: specKey(coordinatorSpec),
-              usage: subUsage(preRebuild, prevCoordUsage),
-            });
-          }
+          leafDiscardedCoordSpend({ compactionFailed: true });
           store.event({
             kind: "note",
             note: `compaction failed (${String(e).slice(0, 200)}); rebuilding via restart rule`,
@@ -629,8 +632,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     if (coordinator === undefined) {
       fresh = true;
       coordinatorEpoch++;
-      prevCoordUsage = undefined;
-      prevCoordAttempts = 0;
+      prevCoord = { attempts: 0 };
       coordinator = await createHarnessRoleSession(
         {
           contract,
@@ -768,21 +770,9 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       // retryAssistantCall attempt. Journal them before the session is
       // discarded, or "coordinator records sum like every other role's" holds
       // only for wakes that happened to succeed.
-      const failedTotal = coordinator?.usage();
-      if (failedTotal) {
-        store.event({
-          kind: "usage",
-          role: "coordinator",
-          sessionId: `coordinator-${coordinatorEpoch}`,
-          wake: wakeCount,
-          turnFailed: true,
-          modelSpec: specKey(coordinatorSpec),
-          usage: subUsage(failedTotal, prevCoordUsage),
-        });
-      }
+      leafDiscardedCoordSpend({ turnFailed: true });
       coordinator = undefined;
-      prevCoordUsage = undefined; // the next turn rebuilds; a new series starts
-      prevCoordAttempts = 0;
+      prevCoord = { attempts: 0 }; // the next turn rebuilds; a new series starts
       wakeCount--; // a failed turn is not a wake the user asked to spend
       if (turnFailures >= TURN_FAILURE_LIMIT) {
         store.event({
@@ -820,13 +810,13 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     // against 15 real sessions and overstated its fresh input by 16.7M tokens.
     // Deltas sum; snapshots have to be un-inferred first.
     const sessionTotal = coordinator.usage();
-    const spent = sessionTotal && subUsage(sessionTotal, prevCoordUsage);
-    prevCoordUsage = sessionTotal;
-    // Cumulative per session, exactly like usage, so it is journalled as a
-    // delta too. This is the lane where retryAssistantCall actually fires.
+    const spent = sessionTotal && subUsage(sessionTotal, prevCoord.usage);
+    // Attempts are cumulative per session exactly like usage, so they are
+    // journalled as a delta too. This is the lane where retryAssistantCall
+    // actually fires.
     const attemptsNow = coordinator.attempts?.() ?? 0;
-    const attempts = attemptsNow - prevCoordAttempts;
-    prevCoordAttempts = attemptsNow;
+    const attempts = attemptsNow - prevCoord.attempts;
+    prevCoord = { usage: sessionTotal, attempts: attemptsNow };
     store.event({
       kind: "usage",
       role: "coordinator",
@@ -835,7 +825,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       modelSpec: specKey(coordinatorSpec),
       ...defined({ usage: spent, attempts, requests: coordinator.requests?.() }),
       approxContextTokens: contextNow,
-      ...(growth !== undefined ? { contextGrowthTokens: growth } : {}),
+      ...defined({ contextGrowthTokens: growth }),
     });
     lostNote = "";
 

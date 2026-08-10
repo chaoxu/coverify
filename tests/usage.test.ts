@@ -162,7 +162,9 @@ test("a retried call is distinguishable from one long call", async () => {
   });
   expect(s.attempts?.()).toBe(0);
   await s.ask("q");
-  // A CLI oracle answers exactly once, so both counts are exact, not derived.
+  // A CLI oracle answers exactly once, so attempts is exact. This stub emits
+  // no turn.completed stream to derive requests from, so the floor of 1 holds
+  // (codexTurns drives it when the stream is there — see cli-backend.test.ts).
   expect(s.attempts?.()).toBe(1);
   expect(s.requests?.()).toBe(1);
   delete process.env.COVERIFY_CODEX_CMD;

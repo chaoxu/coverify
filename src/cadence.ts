@@ -16,13 +16,14 @@ import {
   VERIFICATION_MECHANISM_PREFIX,
   assertCandidateWithheld,
   checkPromotion,
+  defined,
   parseFirstLineVerdict,
   priorReusableRecord,
   sameRevision,
   statementHash,
 } from "./gates.js";
 import { CHARGES } from "./roles.js";
-import { isCliProvider } from "./backends.js";
+import { type BilledFailure, isCliProvider } from "./backends.js";
 import {
   type Models,
   roleModelSpec,
@@ -208,9 +209,18 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
        *  the provider had already been paid (backends.ts attaches `usage` to
        *  the rejection). Leafed like any other unrecorded spend. */
       const flushErrorSpend = (e: unknown, why: string) => {
-        const u = (e as { usage?: RoleUsage }).usage;
-        if (!u) return;
-        store.append({ kind: "role-call", dispatchId: id, revision: rel, orphaned: why, usage: u });
+        const { usage, providerSessionId, backendCwd } = e as BilledFailure;
+        if (!usage) return;
+        store.append({
+          kind: "role-call",
+          dispatchId: id,
+          revision: rel,
+          orphaned: why,
+          usage,
+          // The failed call still has a rollout; without its join keys this
+          // leaf is the one spend record nobody can trace back to a provider.
+          ...defined({ providerSessionId, backendCwd }),
+        });
       };
       /** The provider was paid for a stage whose record was never written.
        *  Emit that spend as its own leaf so it is on file rather than lost.
@@ -299,8 +309,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           statementHash: stmtHash,
           // Join keys into the provider's own rollout, where the rate-limit
           // trajectory lives (see RoleSession.providerSessionId).
-          ...(providerSessionId !== undefined ? { providerSessionId } : {}),
-          ...(backendCwd !== undefined ? { backendCwd } : {}),
+          ...defined({ providerSessionId, backendCwd }),
           ...stage.extra,
           dispatchId: id,
           artifact,
@@ -315,13 +324,12 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           modelFamily: servedModel ?? specLabel(spec),
           // Self-reported model beside it (#21 P3) — journal-only, never a
           // refusal trigger; modelSubstitutions() surfaces disagreements.
-          ...(reportedModel !== undefined ? { reportedModel } : {}),
+          ...defined({ reportedModel }),
           usage,
           promptChars,
           durationMs,
           // stage -> provider request, the tree's last edge.
-          ...(attempts !== undefined ? { attempts } : {}),
-          ...(requests !== undefined ? { requests } : {}),
+          ...defined({ attempts, requests }),
         });
         } finally {
           // The stage record now carries this spend. Cleared in a finally so a
@@ -528,16 +536,8 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           // names and attributes tool visibility to.
           const reconSpec = roleModelSpec("reconstructor");
           const {
-            text,
-            usage: reconTextUsage,
-            promptChars: reconPromptChars,
-            durationMs: reconDurationMs,
-            servedModel: reconServedModel,
-            reportedModel: reconReportedModel,
-            providerSessionId: reconProviderSessionId,
-            backendCwd: reconBackendCwd,
-            attempts: reconAttempts,
-            requests: reconRequests,
+            text, usage, promptChars, durationMs, servedModel, reportedModel,
+            providerSessionId, backendCwd, attempts, requests,
           } = await runRole({
             contract,
             charge: CHARGES.reconstructor,
@@ -545,7 +545,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             spec: reconSpec,
             models,
           });
-          unrecordedSpend = reconTextUsage;
+          unrecordedSpend = usage;
           abortIfCancelled();
           reconText = text;
           const reconEvidence = newEvidencePath(dir, `audits/${slug}.reconstruction`);
@@ -570,19 +570,14 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             blindness:
               "fresh instance (enforced); candidate file withheld by harness (enforced — rendered prompt checked); keyIdeas coordinator-authored (instructed only — paraphrase risk not machine-checked)",
             toolVisibility: toolVisibilityOf(reconSpec.provider),
-            modelFamily: reconServedModel ?? specLabel(reconSpec),
-            ...(reconReportedModel !== undefined ? { reportedModel: reconReportedModel } : {}),
-            usage: reconTextUsage,
-            promptChars: reconPromptChars,
-            durationMs: reconDurationMs,
+            modelFamily: servedModel ?? specLabel(reconSpec),
+            ...defined({ reportedModel }),
+            usage,
+            promptChars,
+            durationMs,
             // The most expensive stage in the cadence, and until now the only
             // one still unjoinable to the provider's rate-limit trajectory.
-            ...(reconProviderSessionId !== undefined
-              ? { providerSessionId: reconProviderSessionId }
-              : {}),
-            ...(reconBackendCwd !== undefined ? { backendCwd: reconBackendCwd } : {}),
-            ...(reconAttempts !== undefined ? { attempts: reconAttempts } : {}),
-            ...(reconRequests !== undefined ? { requests: reconRequests } : {}),
+            ...defined({ providerSessionId, backendCwd, attempts, requests }),
           });
           } finally {
             unrecordedSpend = undefined;
