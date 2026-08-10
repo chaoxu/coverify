@@ -1,12 +1,27 @@
 // Enforcement-layer tests: workspace tool surface, grants, caps, ledger
 // append-only. These lock in the hardening added after the 2026-08-01 saturn
 // panic (see docs/design.md "Workspace tools and confinement").
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+// Module-scope env, restored afterwards. `bun test` runs every file in ONE
+// process, so a variable set here and never unset is still set for whatever
+// file runs next — which made an unrelated assertion about a shipped default
+// pass alone and fail under the full suite. That is the shape of flake that
+// gets labelled "unrelated" and skipped.
+const PRIOR = {
+  COVERIFY_RUN_MEM_MB: process.env.COVERIFY_RUN_MEM_MB,
+  COVERIFY_LITERATURE_CMD: process.env.COVERIFY_LITERATURE_CMD,
+};
 process.env.COVERIFY_RUN_MEM_MB = "200";
 process.env.COVERIFY_LITERATURE_CMD = "/bin/echo";
+afterAll(() => {
+  for (const [k, v] of Object.entries(PRIOR)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+});
 const { workspaceTools, runScriptTool } = await import("../src/workspace.ts");
 const { checkDispatch } = await import("../src/gates.ts");
 

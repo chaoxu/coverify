@@ -197,8 +197,12 @@ test("usage text carries the allowed values, read off the schema", () => {
   const text = knobUsage();
   expect(text).toContain("off|minimal|low|medium|high|xhigh|max");
   expect(text).toContain("sse|websocket|websocket-cached|auto");
-  // A secret's default is never printed either.
-  expect(text).not.toContain("dangerously-skip-permissions");
+  // A SHIPPED DEFAULT is printed, even on a knob marked secret: it carries no
+  // secret and it is the fact this help exists to convey. Redacting it
+  // rendered the incoherent "(default: <set>)" and hid the built-in librarian
+  // command from the only place it was documented. Only an ENV-supplied value
+  // can be a secret, and that redaction is asserted separately.
+  expect(text).toContain("dangerously-skip-permissions");
 });
 
 test("no run-stamp field carries a command template verbatim when it was overridden", async () => {
@@ -220,4 +224,62 @@ test("no run-stamp field carries a command template verbatim when it was overrid
   // A built-in default carries no secret and IS the reproducibility fact, so
   // it is recorded verbatim.
   expect(cliBackendCommandForRecord("codex-cli")).toBe(cliBackendCommand("codex-cli"));
+});
+
+test("a free-form string knob accepts surrounding whitespace", () => {
+  // Regression: the re-serialization guard that defeats typebox Convert's
+  // leniency on NUMBERS was applied to strings too, where Convert is the
+  // identity and Check always passes — so it could only ever reject. It
+  // rejected any command template with a trailing newline (a heredoc, a .env
+  // loader) and, since validateKnobs() is the first statement of prove(),
+  // refused to start the campaign, with an empty reason.
+  try {
+    process.env.COVERIFY_CLAUDE_CMD = " claude -p \n";
+    expect(() => validateKnobs()).not.toThrow();
+    process.env.COVERIFY_MODEL_REASONER = " openai-codex/gpt-5.6-sol@max ";
+    expect(() => validateKnobs()).not.toThrow();
+  } finally {
+    delete process.env.COVERIFY_CLAUDE_CMD;
+    delete process.env.COVERIFY_MODEL_REASONER;
+  }
+});
+
+test("no error message is ever empty about why", () => {
+  // The whitespace bug produced "is invalid." with no reason, because a valid
+  // string yields no Value.Errors and the knob has no choices. An operator
+  // cannot act on that.
+  for (const [name, bad] of [
+    ["COVERIFY_RETRY_MAX", "true"],
+    ["COVERIFY_EFFORT", "maximum"],
+    ["COVERIFY_RUN_MEM_MB", "lots"],
+  ] as const) {
+    try {
+      process.env[name] = bad;
+      const msg = (() => {
+        try {
+          validateKnobs();
+          return "";
+        } catch (e) {
+          return (e as Error).message;
+        }
+      })();
+      expect(msg).toContain(name);
+      expect(msg).toMatch(/expected|must be/);
+    } finally {
+      delete process.env[name];
+    }
+  }
+});
+
+test("an env-supplied secret is redacted where a shipped default is not", () => {
+  const plain = formatResolvedKnobs(resolvedKnobs());
+  expect(plain).toContain("dangerously-skip-permissions"); // the built-in
+  try {
+    process.env.COVERIFY_LITERATURE_CMD = "librarian --api-key sk-SECRET";
+    const set = formatResolvedKnobs(resolvedKnobs());
+    expect(set).not.toContain("sk-SECRET");
+    expect(set).toContain("<set>");
+  } finally {
+    delete process.env.COVERIFY_LITERATURE_CMD;
+  }
 });

@@ -50,21 +50,17 @@ export function installReaperHooks(): void {
       process.exit(sig === "SIGINT" ? 130 : 143);
     });
   }
-  // A crash is a way the harness dies too, and it was the one path that left
-  // compute running. The stated threat model is "a harness that dies takes its
-  // compute with it" — an unhandled throw or rejection is exactly that, and
-  // Node's default handler exits without running `exit` listeners for a
-  // rejection. Re-thrown after reaping so the failure is still loud and the
-  // exit code still says crash. (signal-exit does this too; two lines and no
-  // dependency in the security-critical module wins here.)
-  for (const fatal of ["uncaughtException", "unhandledRejection"] as const) {
-    process.on(fatal, (err: unknown) => {
-      reapAll();
-      console.error(`[coverify] ${fatal}; reaped live compute before exiting`);
-      console.error(err instanceof Error ? (err.stack ?? err.message) : String(err));
-      process.exit(1);
-    });
-  }
+  // NO uncaughtException/unhandledRejection handlers, deliberately, and this
+  // is a REVERSAL worth recording: they were added on the belief that a crash
+  // was the one death that left compute running. On Bun it is not — an
+  // unhandled rejection and an uncaught throw both run `exit` listeners, so
+  // the hook above already reaps. Measured both ways before removing them.
+  //
+  // Adding them cost two things and bought nothing: Bun's default crash output
+  // is source-mapped to the offending line, and a handler replaces it with a
+  // bare stack (or "[object Object]" for a non-Error rejection value); and
+  // installing them created a double-reap, because process.exit() inside a
+  // handler fires the `exit` listener too.
 }
 
 /** A malformed limit must not silently become NaN: setTimeout(fn, NaN) fires

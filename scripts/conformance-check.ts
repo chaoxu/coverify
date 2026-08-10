@@ -6,6 +6,7 @@
  * literal substring checks, never a parser of the spec.
  */
 import * as fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { KNOBS } from "../src/knobs.js";
 import * as path from "node:path";
 import { repoRoot } from "../src/campaign.js";
@@ -147,7 +148,10 @@ for (const root of ["src", "scripts", "bin"]) {
 let dynamicReads = 0;
 for (const root of ["src", "scripts", "bin"]) {
   for (const p of tsFiles(path.join(repoRoot(), root))) {
-    if (path.basename(p) === "knobs.ts") continue;
+    // Skip this file: it MENTIONS the pattern in comments and in its own
+    // regexes, and counting those made 3 of the 7 reported sites prose — a
+    // blind-spot metric that was itself mostly noise.
+    if (path.basename(p) === "knobs.ts" || p === fileURLToPath(import.meta.url)) continue;
     const text = fs.readFileSync(p, "utf-8");
     dynamicReads += [...text.matchAll(/process\.env\[\s*(?!")/g)].length;
   }

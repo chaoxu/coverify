@@ -109,6 +109,19 @@ function parseFlags(args: string[]): { flags: Map<string, string>; positional: s
       allowPositionals: true,
       strict: true,
     });
+    // A declared flag stranded AFTER `--` is silently positional, which for
+    // `prove` means initialising a campaign in the wrong directory and
+    // spending there. Refuse it: this is the same silent-budget class the
+    // strict parser was adopted to close, and a hint in an error message is
+    // not a check.
+    const stranded = positionals.filter((p) => Object.keys(FLAG_SPEC).some((f) => p === `--${f}`));
+    if (stranded.length > 0) {
+      console.error(
+        `${stranded.join(", ")} appears after -- and would be read as text, not as a flag.\n` +
+          "Put every flag before the -- separator.",
+      );
+      process.exit(2);
+    }
     return {
       flags: new Map(
         Object.entries(values)
@@ -122,8 +135,17 @@ function parseFlags(args: string[]): { flags: Map<string, string>; positional: s
     // application ("-1 is not expressible as ..."), and strict mode rejects a
     // positional that looks like a flag. Say how to pass it rather than
     // printing the whole usage block over a quoting question.
+    //
+    // Flags BEFORE the separator, and the hint says so: parseArgs treats
+    // everything after `--` as positional, so the obvious reading of an
+    // earlier version of this message — `coverify prove -- "-1 is not X"
+    // --dir work` — silently dropped --dir and would have initialised a
+    // campaign in the wrong directory and spent there.
     const why = e instanceof Error ? e.message : String(e);
-    console.error(`${why}\nIf the argument begins with "-", pass it after --  (coverify say -- "-msg")`);
+    console.error(
+      `${why}\nIf an argument begins with "-", put every flag FIRST and the argument last, ` +
+        `after --:\n  coverify prove --dir work -- "-1 is not expressible as ..."`,
+    );
     process.exit(2);
   }
 }

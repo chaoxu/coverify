@@ -213,13 +213,35 @@ function knobChoices(knob: Knob): string[] | undefined {
 
 function knobError(knob: Knob, raw: string): string | undefined {
   const converted = Value.Convert(knob.schema, raw);
-  if (Value.Check(knob.schema, converted) && String(converted) === raw.trim()) return undefined;
-  const detail = [...Value.Errors(knob.schema, converted)].map((e) => e.message).join("; ");
   const choices = knobChoices(knob);
+  if (!Value.Check(knob.schema, converted)) {
+    const detail = [...Value.Errors(knob.schema, converted)].map((e) => e.message).join("; ");
+    return (
+      `${knob.name}="${raw}" is invalid` +
+      (choices ? ` (expected one of: ${choices.join(", ")})` : detail ? ` (${detail})` : "") +
+      ". Refusing to fall back to the default: a silently ignored setting is worse than a stop."
+    );
+  }
+  // Re-serialization check, for NUMERIC and enum knobs only. It defeats
+  // typebox Convert's leniency — "true", "0x10" and "1e3" all satisfy
+  // Integer, and the real readers then Number() them into NaN or a silently
+  // different value.
+  //
+  // NOT applied to free-form strings, and that exclusion is the bug fix: for a
+  // plain Type.String() Convert is the identity and Check always passes, so
+  // the comparison could only ever REJECT. It rejected any value with
+  // surrounding whitespace — ` claude -p `, or a template set from a heredoc
+  // with a trailing newline — and since validateKnobs() is the first statement
+  // of prove(), that refused to start the campaign, with an empty reason
+  // because a valid string produces no Value.Errors. 20 of the knobs are
+  // plain strings, including every model spec and every command template.
+  const freeForm = (knob.schema as { type?: string }).type === "string" && choices === undefined;
+  if (freeForm || String(converted) === raw.trim()) return undefined;
   return (
-    `${knob.name}="${raw}" is invalid` +
-    (choices?.length ? ` (expected one of: ${choices.join(", ")})` : detail ? ` (${detail})` : "") +
-    ". Refusing to fall back to the default: a silently ignored setting is worse than a stop."
+    `${knob.name}="${raw}" is invalid (expected exactly ` +
+    `${(knob.schema as { type?: string }).type ?? "a declared value"}, not a form that silently ` +
+    `coerces to ${String(converted)}). Refusing to fall back to the default: a silently ignored ` +
+    "setting is worse than a stop."
   );
 }
 
@@ -303,7 +325,7 @@ export function knobUsage(): string {
     const suffix = choices
       ? ` (${choices.join("|")})`
       : k.fallback !== undefined
-        ? ` (default: ${k.secret ? "<set>" : k.fallback})`
+        ? ` (default: ${k.fallback})`
         : "";
     return `  ${k.name.padEnd(w)}  ${k.detail}${suffix}`;
   }).join("\n");
@@ -337,7 +359,11 @@ export function formatResolvedKnobs(
   out.push("");
   const w = Math.max(...rows.map((r) => r.name.length));
   for (const r of rows) {
-    const shown = r.value === undefined ? "—" : KNOBS.find((k) => k.name === r.name)?.secret ? "<set>" : r.value;
+    // Redacted only when the ENVIRONMENT supplied it. A shipped default
+    // carries no secret and IS the fact this command exists to show; printing
+    // `default: <set>` was incoherent and hid the built-in from the reader.
+    const secret = KNOBS.find((k) => k.name === r.name)?.secret === true;
+    const shown = r.value === undefined ? "—" : secret && r.source === "env" ? "<set>" : r.value;
     out.push(`  ${(r.invalid ? "INVALID" : r.source).padEnd(7)} ${r.name.padEnd(w)}  ${shown}`);
   }
   out.push("");
