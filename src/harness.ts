@@ -18,6 +18,7 @@ import {
   GateStore,
   statementHash,
 } from "./gates.js";
+import { type BilledFailure } from "./backends.js";
 import { requestVerificationTool } from "./cadence.js";
 import { coordinatorTools } from "./coordinator-tools.js";
 import { archiveLedgerHistory, recordRunConfig, wakeBookkeeping } from "./observe.js";
@@ -239,7 +240,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     // Failure is classified here too — a rejected call or empty final text is
     // an infrastructure failure — so `failed` is the single source of truth
     // and `failed` set ⟺ no report artifact exists.
-    const persist = (report: string, failed?: string, partialText?: string) => {
+    const persist = (report: string, failed?: string, partialText?: string, billed?: RoleUsage) => {
       const live = handles.has(handle.id);
       // The tree's last edge for this dispatch: `usage` when the handle
       // measured something, and the two request counts beside it so a reader
@@ -249,10 +250,15 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       // session's CUMULATIVE total, so repeating it here counted the whole
       // worker twice. That is the double count six commits went into
       // deleting, re-entering through the failure branch.
+      // `billed` is the fallback for a call the provider was PAID for before
+      // it failed: a CLI that exits nonzero after emitting turn.completed
+      // carries its spend on the rejection (backends' BilledFailure), and the
+      // gate and worker lanes register no usage() of their own, so without
+      // this their billed failures record nothing at all.
       const spend = () =>
         live
           ? defined({
-              usage: handle.usage?.(),
+              usage: handle.usage?.() ?? billed,
               attempts: handle.attempts?.(),
               requests: handle.requests?.(),
             })
@@ -334,7 +340,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
             "accumulated reads and reasoning, not packet size. Packet-splitting will not help. " +
             "Redispatch with a tighter exploration scope: name the exact files to read.]";
         }
-        persist("", failure, (err as { partialText?: string })?.partialText);
+        persist("", failure, (err as { partialText?: string })?.partialText, (err as BilledFailure).usage);
       },
     );
     activityThisWake++;
