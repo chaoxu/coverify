@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import { stateHome } from "./userdirs.js";
 import * as path from "node:path";
-import { appendJournal, gateOf, readLedger, sha256File, sha256Text } from "./campaign.js";
+import { appendJournal, gateOf, readLedger, Refusal, sha256File, sha256Text } from "./campaign.js";
 import { spendFields, type RoleUsage } from "./providers.js";
 
 /**
@@ -249,12 +249,15 @@ export class GateStore {
         fs.existsSync(campaignIdPath(other)) &&
         fs.readFileSync(campaignIdPath(other), "utf-8").trim() === id
       ) {
-        throw new Error(
-        `campaign id ${id} is claimed by two directories:\n  ${other}\n  ${this.campaignDir}\n` +
+        const conflict =
+          `campaign id ${id} is claimed by two directories:\n  ${other}\n  ${this.campaignDir}\n` +
           "They share one authoritative gate store, so work in either corrupts the other. This is\n" +
           "what copying a campaign directory does. Keep one, and give the other a new identity by\n" +
-          `deleting its .coverify/campaign-id (it then starts with no gate history).`,
-        );
+          "deleting its .coverify/campaign-id (it then starts with no gate history).";
+        // A reader cannot corrupt the store, and refusing to let anyone LOOK at
+        // a copied campaign's history is what makes the copy hard to diagnose.
+        if (opts?.readOnly !== true) throw new Refusal(conflict);
+        console.error(`[coverify] WARNING: ${conflict}\nReading anyway; this command does not write.`);
       }
     }
 
@@ -266,7 +269,12 @@ export class GateStore {
       // Skip identical rewrites so read-only commands (status, outcomes) stay
       // write-free on an unchanged campaign.
       if (opts?.readOnly !== true && (!fs.existsSync(meta) || fs.readFileSync(meta, "utf-8") !== next)) {
-        fs.writeFileSync(meta, next);
+        // tmp + rename: a non-atomic write could tear, and a torn meta reads as
+        // absent — which let whichever directory ran during that window take
+        // the claim and leave the legitimate one refused forever.
+        const tmp = `${meta}.${process.pid}.tmp`;
+        fs.writeFileSync(tmp, next);
+        fs.renameSync(tmp, meta);
       }
     } catch {
       /* fresh campaign without a statement yet */

@@ -11,6 +11,7 @@ import {
   readJournal,
   readLedgerOrNote,
 } from "./campaign.js";
+import { Refusal } from "./campaign.js";
 import { CLAUDE_BRIDGE_ID } from "./claude-bridge.js";
 import { GateStore, acceptedStatementHash, recordStatement, statementHash } from "./gates.js";
 import {
@@ -136,8 +137,11 @@ function parseFlags(args: string[]): { flags: Map<string, string>; positional: s
 // exactly the moments they are already worried something is wrong. An
 // unexpected error still shows its stack, because that one is a bug report.
 process.on("uncaughtException", (e) => {
-  const known = e instanceof Error && e.message.length > 0 && !("code" in e && e.code === "ERR_ASSERTION");
-  if (known) console.error(e.message);
+  // Only a marked Refusal loses its stack. The first version tested "is an
+  // Error with a nonempty message", which is nearly every bug — a TypeError six
+  // hours into a run printed one line with no file, no frame, and sandbox.ts
+  // declines to install handlers for exactly that reason.
+  if (e instanceof Refusal) console.error(e.message);
   else console.error(e);
   process.exit(1);
 });

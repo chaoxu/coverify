@@ -67,6 +67,14 @@ export function initCampaign(dir: string, statement: string): void {
   );
 }
 
+/** A deliberate refusal, as opposed to a bug. The CLI prints these as a
+ *  message and swallows the stack; anything else keeps its stack, because that
+ *  one is a bug report. Marking the intent at the throw site is the only way to
+ *  tell them apart — "is an Error with a message" describes nearly every bug. */
+export class Refusal extends Error {
+  readonly refusal = true;
+}
+
 export function campaignExists(dir: string): boolean {
   return fs.existsSync(path.join(dir, "STATEMENT.md"));
 }

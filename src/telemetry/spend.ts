@@ -153,6 +153,12 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
   const leafed = new Set<string>();
   for (const r of records) {
     if (r.kind !== "role-call" || !r.usage) continue;
+    // A librarian leaf is a call made INSIDE the role's turn, not the
+    // dispatch's own payment, so it must not vouch for the dispatch. Counting
+    // it made one literature search suppress the worker's own usage-less
+    // record, turning a real measurement gap into silence — the same rule-10
+    // inversion the unmetered branch had, on what is now the default path.
+    if (r.role === "librarian") continue;
     if (typeof r.dispatchId === "string") leafed.add(`d:${r.dispatchId}`);
     if (typeof r.role === "string" && typeof r.wake === "number") leafed.add(`w:${r.role}:${r.wake}`);
   }

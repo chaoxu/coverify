@@ -55,6 +55,15 @@ export function campaignLimits(campaignDir: string, run?: string): LimitsReport 
   const times = records.map((r) => Date.parse(String(r.ts))).filter((n) => Number.isFinite(n) && n > 0);
   if (times.length === 0) return { attribution: "none", rollouts: 0, samples: [], creditsEverUsed: false };
 
+  // A campaign that made no provider call has no window to report. Its record
+  // timestamps collapse to an instant, and the +-1 day widening below then
+  // pools in every rollout on the machine from that window — a campaign holding
+  // one note reported "peak 95.0% occupancy", which is someone else's number
+  // wearing this campaign's name.
+  if (!records.some((r) => r.usage !== undefined || typeof r.unmetered === "string")) {
+    return { attribution: "none", rollouts: 0, samples: [], creditsEverUsed: false };
+  }
+
   const sessionIds = new Set(
     records.map((r) => r.providerSessionId).filter((v): v is string => typeof v === "string"),
   );
@@ -173,8 +182,9 @@ export function formatLimits(r: LimitsReport): string {
       : `  ${r.rollouts} rollout(s), attributed by coverify's temp-dir signature within the`,
   );
   if (r.attribution !== "exact") {
-    out.push("  campaign's time span. That is an INFERENCE, not a join: a concurrent");
-    out.push("  campaign on this machine would be pooled in. Records written since the");
+    out.push("  campaign's time span WIDENED BY A DAY EITHER SIDE. That is an INFERENCE,");
+    out.push("  not a join: any other campaign run on this machine within that window is");
+    out.push("  pooled in. Records written since the");
     out.push("  join key landed (#35) join exactly instead.");
   }
   const w = r.samples[0]?.windowMinutes ?? 0;
