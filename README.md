@@ -59,6 +59,10 @@ bun run src/cli.ts spend --dir campaign         # per-lane/role/model tokens; re
 bun run src/cli.ts outcomes --dir campaign      # what the spend bought: verdicts, repair loops, promotions
 bun run src/cli.ts limits --dir campaign        # rate-limit occupancy and burn rate — what actually binds
 bun run src/cli.ts corpus-check --dir campaign  # is this session corpus summable at all?
+
+# what is this process actually configured to do? (A/B pre-flight: confirm the
+# arm before spending quota, rather than reading it out of the journal after)
+bun run src/cli.ts config
 ```
 
 `trace` writes `campaign/.coverify/trace.html` (override with `--out`): agent

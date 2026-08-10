@@ -231,6 +231,7 @@ launcher.ts      load + extract the fenced launcher contract (no fallback)
 roles.ts         role charges + LIBRARIAN_CHARGE (all coverify-authored role text; no re-exports)
 sandbox.ts       OS supervision + confinement mechanics: reaper, sandboxing, supervise() batch runner
 workspace.ts     the role tool surface: run_script, librarian, failed_routes, write rules, readRoots/confineReads
+knobs.ts         every env knob declared once; feeds the reader, the generated usage text, and the run stamp
 failed-index.ts  FAILED.md entry parsing + lexical ranking behind failed_routes
 backends.ts      subscription CLI transports (claude/codex/chatgpt/agy) + served-model attestation
 providers.ts     model providers, per-role specs + ideation families, runRole, harness sessions
