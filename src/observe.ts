@@ -87,9 +87,12 @@ export function recordRunConfig(
     ...extra,
     gitDirty: gitStatus === undefined ? "unknown" : gitStatus !== "",
     bunVersion: process.versions.bun,
-    // Every direct @earendil-works dependency, not just the two the harness
+    // Every @earendil-works package in the tree, not just the two the harness
     // imports most: pi-coding-agent supplies the file tools and its exports
     // map shapes what we can reuse, so its version is part of run identity.
+    // pi-tui is transitive (via pi-coding-agent) rather than declared — it is
+    // never imported here, but it renders what those tools show, so its
+    // version still belongs to run identity.
     piVersions: Object.fromEntries(
       ["pi-agent-core", "pi-ai", "pi-coding-agent", "pi-tui"].map((p) => [p, piVersion(p)]),
     ),
