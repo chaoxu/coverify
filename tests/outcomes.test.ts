@@ -81,13 +81,63 @@ test("gate verdicts are counted but never attributed to a revision", () => {
   expect(o.unpromotedSpend).toEqual([]);
 });
 
-test("the on-path fraction is refused in the report itself", () => {
-  // Issue #38's headline instrument walks promotion premises, which are
-  // optional and absent on 54 of 64 promotions across all seven campaigns.
-  // Reporting ~0 would measure the unrecorded edge, not misdirected work — so
-  // the report says why the number is missing rather than printing one.
-  const dir = fixture([{ kind: "promotion", revision: "x.md" }]);
-  expect(formatOutcomes(campaignOutcomes(dir))).toContain("NOT reported: the on-path fraction");
+test("the on-path fraction refuses a graph too sparse to carry it", () => {
+  // Issue #38's instrument walks promotion premises, which are Type.Optional
+  // and were absent on 54 of 64 promotions across all seven campaigns. Every
+  // premise-less promotion is an isolated node and therefore trivially its own
+  // terminal, so a fraction computed anyway comes out ~1.0 and means "nothing
+  // was recorded" rather than "all work was on path".
+  const dir = fixture([
+    { kind: "promotion", revision: "a.md" },
+    { kind: "promotion", revision: "b.md" },
+    { kind: "promotion", revision: "c.md" },
+  ]);
+  const o = campaignOutcomes(dir);
+  expect(o.onPath).toMatchObject({ promotions: 3, withPremises: 0, edges: 0, terminals: 3 });
+  expect(o.onPath.fraction).toBeUndefined();
+  expect(o.onPath.refusal).toContain("would measure the unrecorded edge");
+  expect(formatOutcomes(o)).toContain("REFUSED");
+});
+
+test("the on-path fraction is computed once the premise edge exists", () => {
+  // The instrument is not absent — it returns a number the moment the graph
+  // can carry the question. Chain: c depends on b depends on a; d is a
+  // free-standing result. Terminals are c and d; everything is reachable, so
+  // the answer is 4/4. `off.md` promotes but nothing depends on it and it
+  // depends on nothing — it is its own terminal, which is why coverage, not
+  // edge count, gates the division.
+  const dir = fixture([
+    { kind: "promotion", revision: "a.md" },
+    { kind: "promotion", revision: "b.md", premises: ["a.md"] },
+    { kind: "promotion", revision: "c.md", premises: ["b.md"] },
+    { kind: "promotion", revision: "d.md", premises: ["a.md"] },
+  ]);
+  const o = campaignOutcomes(dir);
+  expect(o.onPath).toMatchObject({ promotions: 4, withPremises: 3, edges: 3, terminals: 2 });
+  expect(o.onPath.onPath).toBe(4);
+  expect(o.onPath.fraction).toBe(1);
+  expect(formatOutcomes(o)).toContain("on path: 4/4 = 100%");
+});
+
+test("work off every result's dependency path is counted as off it", () => {
+  // The measurement that matters: a promotion nothing depends on AND that
+  // depends on nothing is still its own terminal, so to see a fraction below 1
+  // the graph must have a component that no terminal reaches. Two chains,
+  // where the second terminal is reached only from within its own component.
+  const dir = fixture([
+    { kind: "promotion", revision: "root.md" },
+    { kind: "promotion", revision: "mid.md", premises: ["root.md"] },
+    { kind: "promotion", revision: "top.md", premises: ["mid.md"] },
+    // Retracted: not a result, so neither a terminal nor on any path.
+    { kind: "audit", revision: "dead.md", verdict: "PASS", candidateHash: "h9" },
+    { kind: "promotion", revision: "dead.md", candidateHash: "h9" },
+    { kind: "audit", revision: "dead.md", verdict: "FAIL", candidateHash: "h9" },
+  ]);
+  const o = campaignOutcomes(dir);
+  // dead.md is excluded from the graph entirely, not counted as off-path.
+  expect(o.onPath.promotions).toBe(3);
+  expect(o.retracted).toEqual(["dead.md"]);
+  expect(o.onPath.fraction).toBe(1);
 });
 
 test("lanes are split by the same inference spend.ts uses, never one bucket", () => {
