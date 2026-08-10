@@ -144,7 +144,7 @@ export const COVERIFY_TELEMETRY_SCHEMA = defineTelemetrySchema({
           type: "string",
           description: "Which accounting lane billed this. Lanes are never summed together.",
           required: true,
-          values: ["pi-session", "codex-cli-jsonl", "claude-cli-json"],
+          values: ["pi-session", "codex-cli-jsonl", "claude-cli-json", "agy-json"],
           cardinality: "low",
         },
       },

@@ -29,7 +29,7 @@ import { repoRoot } from "./campaign.js";
 import { fileCredentialStore } from "./credentials.js";
 import { CLAUDE_BRIDGE_ID, claudeBridgeProvider } from "./claude-bridge.js";
 import { envNumber, type WriteScope } from "./sandbox.js";
-import { workspaceTools } from "./workspace.js";
+import { librarianSpec, workspaceTools } from "./workspace.js";
 import {
   NOOP_TELEMETRY_CONTEXT,
   type TelemetryContext,
@@ -403,6 +403,27 @@ function recordProviderCall(
   });
 }
 
+/** Leaf a call this process did not make: the librarian is a whole external
+ *  agent spawned inside a role's tool, so its tokens belong to no role's
+ *  session and would otherwise be recorded as an unmeasurable gap. It carries
+ *  its own `role`, so `coverify spend` bills it to `librarian` rather than to
+ *  the reasoner that asked the question — the reasoner did not spend it. */
+export function leafDelegatedCall(
+  parent: TelemetryContext | undefined,
+  attrs: { role: string; modelSpec: string },
+  usage: RoleUsage,
+): void {
+  void (parent ?? sink).startSpan(
+    {
+      name: "coverify.provider_call",
+      attributes: { "coverify.model_spec": attrs.modelSpec, "coverify.role": attrs.role },
+    },
+    (span) => {
+      recordProviderCall(span, usage, { requests: 1 });
+    },
+  );
+}
+
 async function runRoleInner(
   run: Omit<RoleRun, "workspace" | "extraTools">,
   signal?: AbortSignal,
@@ -515,7 +536,7 @@ function wireLogPayload(wirePath: string) {
 /** Which parser produced a usage record. NOT a convention discriminator — all
  *  three normalize `input` to the uncached part. It is provenance: which
  *  adapter to go fix when a number looks wrong. */
-export type Meter = "pi-session" | "codex-cli-jsonl" | "claude-cli-json";
+export type Meter = "pi-session" | "codex-cli-jsonl" | "claude-cli-json" | "agy-json";
 
 /** Coverify's usage record: pi's `Usage` minus what only pi can compute, plus
  *  provenance. Derived from pi's type rather than paralleling it, because
@@ -694,6 +715,8 @@ export async function createHarnessRoleSession(
         literature: run.workspace.literature,
         failedLedger: run.workspace.failedLedger,
         onUnmetered: (lane, detail) => unmetered.push({ lane, detail }),
+        onLibrarianSpend: (usage) =>
+          leafDelegatedCall(opts.parent, { role: "librarian", modelSpec: librarianSpec() }, usage),
       })
     : [];
   if (run.extraTools) tools.push(...run.extraTools);

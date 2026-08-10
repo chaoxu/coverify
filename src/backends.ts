@@ -8,6 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { repoRoot } from "./campaign.js";
+import { claudeJsonUsage, codexJsonlUsage } from "./cli-usage.js";
 import { installReaperHooks, liveReapers } from "./sandbox.js";
 import type { RoleRun, RoleSession, RoleUsage } from "./providers.js";
 
@@ -186,61 +187,6 @@ interface ClaudeJsonResult {
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
   };
-}
-
-/** Sum token usage from codex --json JSONL events ({type:"turn.completed"}). */
-function codexJsonlUsage(stdout: string): RoleUsage | undefined {
-  let found = false;
-  let input = 0;
-  let output = 0;
-  let cacheRead = 0;
-  let cacheWrite = 0;
-  let sawCacheWrite = false;
-  // Absent unless an event carried it (absent ≠ zero; see RoleUsage).
-  let reasoning: number | undefined;
-  for (const line of stdout.split("\n")) {
-    if (!line.includes('"turn.completed"')) continue;
-    let event: {
-      type?: string;
-      usage?: {
-        input_tokens?: number;
-        cached_input_tokens?: number;
-        cache_write_input_tokens?: number;
-        output_tokens?: number;
-        reasoning_output_tokens?: number;
-      };
-    };
-    try {
-      event = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (event.type !== "turn.completed" || !event.usage) continue;
-    found = true;
-    // `input` is the UNCACHED part, disjoint from cacheRead/cacheWrite, matching
-    // every other lane. Codex nests them: input_tokens includes
-    // cached_input_tokens and cache_write_input_tokens (verified over 50,152
-    // records). Copying it through unsubtracted overstated fresh input by 30% in
-    // the 2026-08-09 cost study. Journals predating this fix carry the nested
-    // convention; see docs/journal-shape.md rule 1.
-    const cr = event.usage.cached_input_tokens ?? 0;
-    const cw = event.usage.cache_write_input_tokens ?? 0;
-    if (event.usage.cache_write_input_tokens !== undefined) sawCacheWrite = true;
-    input += Math.max(0, (event.usage.input_tokens ?? 0) - cr - cw);
-    output += event.usage.output_tokens ?? 0;
-    cacheRead += cr;
-    cacheWrite += cw;
-    if (event.usage.reasoning_output_tokens !== undefined)
-      reasoning = (reasoning ?? 0) + event.usage.reasoning_output_tokens;
-  }
-  return found
-    ? {
-        input, output, cacheRead, reasoning, meter: "codex-cli-jsonl" as const,
-        // Observed per record, never read off a lane table: the day codex
-        // #32479 lands, this records the real number.
-        ...(sawCacheWrite ? { cacheWrite } : {}),
-      }
-    : undefined;
 }
 
 /** Provider requests this call made. codexJsonlUsage SUMS every turn.completed,
@@ -427,19 +373,11 @@ function runCliRole(
             // snapshot (anthropics/claude-code #27361) and must not be summed.
             providerSessionId: payload.session_id,
             backendCwd: cwd,
-            usage: u && {
-              input: u.input_tokens ?? 0,
-              output: u.output_tokens ?? 0,
-              cacheRead: u.cache_read_input_tokens ?? 0,
-              // This lane genuinely measures cache creation, unlike codex and
-              // pi; observed per record rather than assumed.
-              ...(u.cache_creation_input_tokens !== undefined
-                ? { cacheWrite: u.cache_creation_input_tokens }
-                : {}),
-              meter: "claude-cli-json" as const,
-              // `reasoning` stays absent: the result JSON has no thinking-token
-              // field at all (absent ≠ zero; see RoleUsage).
-            },
+            // This lane genuinely measures cache creation, unlike codex and
+            // pi; observed per record rather than assumed. `reasoning` stays
+            // absent: the result JSON has no thinking-token field at all
+            // (absent ≠ zero; see RoleUsage).
+            usage: u && claudeJsonUsage(u),
           });
         } catch {
           // Env-overridden template without --output-format json: plain text.

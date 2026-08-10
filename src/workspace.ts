@@ -11,6 +11,8 @@ import * as fs from "node:fs";
 import { type AgentTool } from "@earendil-works/pi-agent-core";
 import { campaignExists } from "./campaign.js";
 import { matchFailedEntries, parseFailedEntries } from "./failed-index.js";
+import { agyReply } from "./cli-usage.js";
+import type { RoleUsage } from "./providers.js";
 import { LIBRARIAN_CHARGE } from "./roles.js";
 import {
   OUTPUT_LIMIT,
@@ -143,10 +145,16 @@ const APPEND_ONLY_LEDGERS = new Set(["failed.md"]);
  * network itself. Space-split argv; the librarian prompt is appended as the
  * final argument.
  */
+/** Provenance label for the librarian's leaf: the CLI's own name, since the
+ *  daemon picks the model and the command is the only thing we know we ran. */
+export const librarianSpec = () => `${literatureCmd()[0]}/librarian`;
+
 const literatureCmd = () =>
-  (process.env.COVERIFY_LITERATURE_CMD ?? "agy --dangerously-skip-permissions --print-timeout 168h -p").split(
-    /\s+/,
-  );
+  (
+    process.env.COVERIFY_LITERATURE_CMD ??
+    "agy --dangerously-skip-permissions --print-timeout 168h --output-format json -p"
+  ).split(/\s+/);
+
 
 /**
  * State directories the librarian CLI may write (token refresh, cache).
@@ -169,6 +177,7 @@ function literatureSearchTool(
   cwd: string,
   scope: WriteScope,
   onUnmetered?: (lane: string, detail: string) => void,
+  onLibrarianSpend?: (usage: RoleUsage) => void,
 ): AgentTool {
   return {
     name: "literature_search",
@@ -203,14 +212,21 @@ function literatureSearchTool(
         timeoutMs: 7 * 24 * 3_600_000,
       });
       // Real spend, no measurement: agy's -p mode emits no usage payload.
-      // Recorded as a gap whether it succeeded or failed — a failed librarian
-      // was still billed for whatever it searched.
-      onUnmetered?.(
-        "librarian",
-        `literature_search via \`${literatureCmd()[0]}\` — external agent, no machine-readable usage`,
-      );
       const { stdout, stderr, failure } = outs[0];
-      if (fate || failure || !stdout.trim()) {
+      const { report, usage } = agyReply(stdout);
+      // Measured when the librarian reports usage, a named gap when it does
+      // not. A failed librarian was still billed for whatever it searched, so
+      // the gap is recorded on the failure path too — but a call that DID
+      // report usage is spend, not a gap, and counting it both ways would be
+      // the second writer journal-shape rule 13 forbids.
+      if (usage) onLibrarianSpend?.(usage);
+      else {
+        onUnmetered?.(
+          "librarian",
+          `literature_search via \`${literatureCmd()[0]}\` — external agent, no machine-readable usage`,
+        );
+      }
+      if (fate || failure || !report.trim()) {
         const detail = fate ?? failure ?? "produced no report";
         return toolText(`[error: librarian ${detail}]${stderr ? `\n${stderr.slice(0, 2000)}` : ""}`);
       }
@@ -220,9 +236,9 @@ function literatureSearchTool(
       const artifact = path.join(cwd, `literature-${n}.md`);
       fs.writeFileSync(
         artifact,
-        `# Literature search ${n}\n\nLibrarian: \`${literatureCmd().join(" ")}\` (self-attested provenance)\n\n## Question\n\n${question}\n\n## Report\n\n${stdout}\n`,
+        `# Literature search ${n}\n\nLibrarian: \`${literatureCmd().join(" ")}\` (self-attested provenance)\n\n## Question\n\n${question}\n\n## Report\n\n${report}\n`,
       );
-      let out = stdout;
+      let out = report;
       if (out.length > OUTPUT_LIMIT) out = out.slice(0, OUTPUT_LIMIT) + "\n[truncated; full report in artifact]";
       return toolText(`[archived: ${artifact}]\n\n${out}`);
     },
@@ -486,6 +502,7 @@ export function workspaceTools(
      *  measure (the librarian). Recording the GAP is required by
      *  docs/journal-shape.md rule 10: a silent omission reads as "cost nothing". */
     onUnmetered?: (lane: string, detail: string) => void;
+    onLibrarianSpend?: (usage: RoleUsage) => void;
   },
 ): AgentTool[] {
   const code = opts?.code === true;
@@ -534,7 +551,9 @@ export function workspaceTools(
     scopedWrite,
   ] as AgentTool[];
   if (code) tools.push(runScriptTool(cwd, scope, { exclusiveDir: true }));
-  if (opts?.literature === true) tools.push(literatureSearchTool(cwd, scope, opts.onUnmetered));
+  if (opts?.literature === true) {
+    tools.push(literatureSearchTool(cwd, scope, opts.onUnmetered, opts.onLibrarianSpend));
+  }
   if (opts?.failedLedger !== undefined) tools.push(failedRoutesTool(opts.failedLedger));
   return tools;
 }
