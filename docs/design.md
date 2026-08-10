@@ -529,7 +529,7 @@ and leaves the judgment to the coordinator (rule 3).
 
 
 
-Three readers make the journal's measurement fields answerable rather than
+Four readers make the journal's measurement fields answerable rather than
 merely written. `coverify spend` reports per-lane and per-role token totals
 and refuses, by construction, the three errors the 2026-08-09 study made:
 it never cross-sums meters (different provider accounts are not one
@@ -542,12 +542,21 @@ ratio rather than read as zero.
 `coverify outcomes` is the other half of that ledger, and the reason the
 cost tables mean anything: stage verdicts, repair-loop depth per revision,
 and spend split by whether the revision ever promoted. Rules 7 and 8 say a
-cost number alone is non-diagnostic; this is what it divides by. It
-deliberately does not report the on-path fraction of issue #38 — that
-instrument walks promotion premises, which are optional and absent on 54 of
-64 promotions across all seven campaigns, so the number would measure the
-unrecorded edge rather than the misdirected work, and the report says so
-where the number would be.
+cost number alone is non-diagnostic; this is what it divides by. It computes issue #38's on-path fraction — the share of standing promotions
+on a terminal result's transitive premise path — but REFUSES to divide below
+50% premise coverage. Premises are optional and absent on 54 of 64 promotions
+across the seven campaigns, and a premise-less promotion is trivially its own
+terminal, so a fraction computed there measures the unrecorded edge rather
+than the misdirected work. The report says which, and why.
+
+`coverify limits` reports the constraint that actually ends campaigns.
+Subscription runs are not metered in dollars — credits are purchasable
+overage and this account consumed none — so what binds is a rolling window.
+It joins the journal to codex's own rollouts, exactly on the recorded
+providerSessionId/backendCwd where those exist and otherwise by coverify's
+temp-dir signature within the campaign span, reported as the inference it is.
+On bet-transversal: peak 94% of a 7-day window, 16.0 points/hour at the
+fastest sustained burn, ~0.4h of headroom left.
 
 `coverify corpus-check` is `docs/measurement-protocol.md` rule 3b made
 executable: is this session corpus summable at all? Two of its four checks
