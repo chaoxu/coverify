@@ -1,7 +1,9 @@
 # Skill feedback ledger
 
-Candidate improvements to the canonical `math-proof-search` skill
-(`~/kb/notes/agents/skills/math-proof-search/` + the launcher contract).
+Candidate improvements to the launcher contract, which is canonical in this
+repository at `contract/math-proof-search-launcher.md`. Evidence lands here
+first; a contract change is then its own commit, together with any coupled
+enforcement.
 **Policy: correctness fixes land immediately (four rounds already have:
 2026-07-31 — PROCESS_LESSONS rename; adapter/launcher consolidation; stage-2
 certification/comparison rewrite; anti-verdict-shopping; 2026-08-01 —

@@ -29,9 +29,9 @@ three-way cross-check, and records why a token count is not a cost.
 
 ## The skill is the spec
 
-Coverify enforces the `math-proof-search` launcher contract
-(`~/kb/notes/agents/prompts/prompt-math-proof-search-launcher.md`). Before
-changing harness behavior, read that contract. Three rules govern all code
+Coverify enforces the `math-proof-search` launcher contract, which lives in
+this repository at `contract/math-proof-search-launcher.md` — coverify is
+canonical for it. Before changing harness behavior, read that contract. Three rules govern all code
 here:
 
 1. Every enforcement must trace to a launcher clause; keep the conformance
@@ -48,10 +48,11 @@ remembered version.
 
 ## Do not edit the canonical skill casually
 
-Candidate skill improvements go in `docs/skill-feedback.md`, not into
-`~/kb/notes/agents/skills/math-proof-search/`. The canonical skill is only
-updated after live campaign evidence, and that edit happens in `~/kb` with
-its own review.
+Candidate contract changes go in `docs/skill-feedback.md` first, never
+straight into `contract/`. The contract is only changed after live campaign
+evidence, and the change lands as its own commit — `contract/` together with
+any coupled enforcement — so `bun run check` fails in the commit that broke
+the coupling rather than silently later.
 
 ## Keep campaigns out of this repo
 

@@ -99,10 +99,13 @@ are the defaults. `prove`/`resume` preflight that every configured role's
 provider has usable auth. `COVERIFY_CLAUDE_CMD`/`COVERIFY_CODEX_CMD`
 override the CLI templates ({model}/{out} substituted).
 
-The launcher contract is read at runtime from
-`~/kb/notes/agents/prompts/prompt-math-proof-search-launcher.md`
-(`COVERIFY_LAUNCHER_PATH` to override). If it is missing, coverify stops —
-it never falls back to a remembered version of the contract.
+The launcher contract ships in this repository at
+`contract/math-proof-search-launcher.md`, and coverify is canonical for it —
+a clean clone runs with no external file. `COVERIFY_LAUNCHER_PATH` overrides
+it for testing an edited contract, and hard-fails when set but missing, so you
+can never silently get the shipped text while believing you are testing yours.
+If the contract is missing, coverify stops — it never falls back to a
+remembered version.
 
 Invocation from another harness is the same CLI: a Codex or Claude Code
 session treats `coverify` as an ordinary tool and reads the campaign files.

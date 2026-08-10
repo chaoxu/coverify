@@ -2,8 +2,8 @@
 
 Coverify is a mechanical referee for the `math-proof-search` skill. The
 skill's launcher contract
-(`~/kb/notes/agents/prompts/prompt-math-proof-search-launcher.md`) is the
-spec; this harness adds **zero mathematical policy of its own**. A perfectly
+(`contract/math-proof-search-launcher.md`, canonical in this repository) is
+the spec; this harness adds **zero mathematical policy of its own**. A perfectly
 obedient harness-agent session running the skill and a coverify run should be
 semantically interchangeable — coverify's edge is that the rules which matter
 cannot be skipped, forgotten after compaction, or drifted away from.
@@ -12,9 +12,12 @@ Three implementation rules follow:
 
 1. **Every enforcement traces to a launcher clause** (conformance table
    below). Role prompts embed the launcher's fenced contract verbatim — never
-   a paraphrase. The launcher is read at runtime from `~/kb` (override:
-   `COVERIFY_LAUNCHER_PATH`); if it is missing, coverify says so and stops —
-   no silent fallback to a remembered version, mirroring SKILL.md.
+   a paraphrase. The launcher is read from `contract/` in this repository
+   (override: `COVERIFY_LAUNCHER_PATH`, which hard-fails when set-but-missing);
+   if it is missing, coverify says so and stops — no silent fallback to a
+   remembered version, mirroring SKILL.md. Because the contract is versioned
+   beside the code that enforces it, `git show <commit>:contract/…` reproduces
+   exactly the text a run's `launcherSha256` names.
 2. **Unmapped code is semantics-invisible mechanics** (scheduler, handle
    table, wake building, journal). Any such mechanism must be removable
    without changing campaign behavior.
@@ -1102,7 +1105,9 @@ Protocol:
 
 1. **Same frozen statement**, byte-identical, in two arms: (a) coverify
    campaign; (b) a plain Codex session running the canonical
-   `math-proof-search` skill from `~/kb`, no harness.
+   `math-proof-search` skill, whose SKILL.md points at this repository's
+   `contract/` file, no harness. One copy of the contract in existence is what
+   makes this comparison valid: a pinned second copy would reintroduce drift.
 2. **One shared budget B** of billable tokens: fresh input + output +
    reasoning, summed over every model call the arm makes. Cache reads are
    metered separately and reported, not charged (they are the mechanism,
