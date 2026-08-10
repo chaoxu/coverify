@@ -1,10 +1,7 @@
-// Role semantics: the charges — the only text of coverify's own that any
-// role is ever told (everything else they see is the launcher contract
-// verbatim plus coordinator-authored packet content). Mechanics live in
-// sandbox.ts / workspace.ts (confinement) and providers.ts (model
-// invocation); import
-// them from their defining modules — the old `export *` barrel made
-// transport symbols read as role semantics and misled reviewers.
+// The charges: the only text of coverify's own that any role is ever told
+// (everything else is the launcher contract verbatim plus coordinator-authored
+// packet content). Do not re-export mechanics through here — confinement lives
+// in sandbox.ts / workspace.ts, model invocation in providers.ts.
 
 /** Role charges. Each states only the role's scope; policy comes from the contract above it. */
 export const CHARGES = {
@@ -38,9 +35,8 @@ failing implication with evidence. Status reports and vague optimism are not del
 read/grep tools when
 your task needs depth — the packet is curated context, not the limit of what you may consult.`,
 
-  /** The reasoner charge for family-routed single-shot consults (fable /
-   *  gemini / pro): same deliverable discipline, honest about having no
-   *  tools — the packet is everything. */
+  /** Reasoner charge for family-routed single-shot consults: same deliverable
+   *  discipline, but no tools — the packet is everything. */
   reasonerToolless: `You are one exploration reasoner running as a single-shot consult. You receive
 one packet with one finite mathematical deliverable. Work only that packet. You have NO tools in
 this run: the packet inlines everything you may consult, and your one reply is your entire output.
@@ -96,8 +92,8 @@ VERDICT: PASS or VERDICT: FAIL; then the mapping (on PASS) or the concrete misma
 } as const;
 
 /** The delegated librarian's charge (external web-searching CLI agent; the
- *  scope limit quotes the requester's contract). Lives here with the other
- *  role text — roles.ts is the only module holding coverify-authored prompts. */
+ *  scope limit quotes the requester's contract). Keep it here: roles.ts is the
+ *  only module holding coverify-authored prompts. */
 export const LIBRARIAN_CHARGE =
   "You are a mathematical literature librarian. Web-search the question below and compile a " +
   "report: for every claim give the exact bibliographic citation (authors, title, venue, year) " +

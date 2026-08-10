@@ -1,16 +1,12 @@
 /**
- * claude-bridge provider: registers pi-claude-bridge (Eli Dickinson's Claude
- * Code inference provider, npm `pi-claude-bridge`) as a plain pi-ai provider,
- * so tool-loop roles — the coordinator — can run on the Claude subscription
- * through the Agent SDK, like the claude-cli verdict roles do for single-shot
- * calls. The bridge runs Claude Code with `tools: []` + strict MCP config:
- * the model sees only the pi-supplied tools, so coverify's tool surface and
- * write confinement are unchanged. Mechanics only (billing transport); no
- * campaign semantics live here.
+ * Registers npm `pi-claude-bridge` as a plain pi-ai provider so tool-loop
+ * roles can run on the Claude subscription. The bridge runs Claude Code with
+ * `tools: []` + strict MCP config, so the model sees only pi-supplied tools
+ * and coverify's write confinement is unchanged. Billing transport only; no
+ * campaign semantics here.
  *
- * The package ships as a pi TUI extension (default export taking an
- * ExtensionAPI), so we activate it against a stub that captures the
- * registerProvider() call and adapt the captured def to pi-ai's Provider.
+ * The package ships as a pi TUI extension, so we activate it against a stub
+ * that captures registerProvider() and adapt the def to pi-ai's Provider.
  */
 import { spawnSync } from "node:child_process";
 
@@ -41,8 +37,8 @@ export async function claudeBridgeProvider(): Promise<AnyProvider> {
   const mod = (await import(BRIDGE_MODULE)) as { default: (pi: unknown) => void };
   let capturedId: string | undefined;
   let capturedDef: any;
-  // Stub ExtensionAPI: the extension only calls on/registerProvider/
-  // registerTool at activation; session events never fire outside the pi TUI.
+  // The extension only calls on/registerProvider/registerTool at activation;
+  // session events never fire outside the pi TUI.
   mod.default({
     on() {},
     registerTool() {},
@@ -68,8 +64,8 @@ export async function claudeBridgeProvider(): Promise<AnyProvider> {
     id,
     name: "Claude Code bridge (subscription)",
     baseUrl: def.baseUrl ?? id,
-    // Ambient auth: configured iff the official `claude` CLI is on PATH and
-    // logged in — the same condition the claude-cli verdict backend uses.
+    // Ambient auth: configured iff `claude` is on PATH and logged in, the
+    // same condition the claude-cli verdict backend uses.
     auth: {
       apiKey: {
         name: "claude binary (Claude Code login)",

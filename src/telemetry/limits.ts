@@ -1,13 +1,11 @@
-// The constraint that actually stops campaigns (issue #30). Subscription runs
-// are not metered in dollars — credits are overage currency and this account
-// carries balance=0 on every sample — so what binds is a rolling window. Danus
-// died on it: 55% -> 100% of a weekly allowance in 3h52m. A campaign that fits a
-// month's spend can still die in an afternoon, which makes --agent-limit a
+// The constraint that actually stops campaigns (issue #30): subscription runs
+// are not metered in dollars, so what binds is a rolling window. Danus died on
+// it, 55% -> 100% of a weekly allowance in 3h52m, which makes --agent-limit a
 // burst-rate control and not only a concurrency knob.
 //
-// `codex exec --json` stdout carries no rate-limit event at all (verified
-// against 0.145.0), which is why #35 records a join key instead. The numbers
-// live in codex's own rollout under ~/.codex/sessions/, joined here.
+// `codex exec --json` stdout carries no rate-limit event (verified against
+// 0.145.0), so #35 records a join key and the numbers are read from codex's own
+// rollouts under ~/.codex/sessions/.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -21,25 +19,22 @@ export interface LimitSample {
 }
 
 export interface LimitsReport {
-  /** How the rollouts were attributed to this campaign. `exact` means every
-   *  rollout matched a recorded providerSessionId or backendCwd; `time-window`
-   *  means they were matched by coverify's temp-dir signature within the
-   *  campaign's span, which is an INFERENCE and is labelled as one. */
+  /** `exact` = every rollout matched a recorded providerSessionId or
+   *  backendCwd; `time-window` = matched by coverify's temp-dir signature
+   *  within the campaign's span, an INFERENCE, and labelled as one. */
   attribution: "exact" | "time-window" | "none";
   rollouts: number;
   samples: LimitSample[];
-  /** Steepest sustained rise seen, in percentage points per hour, with the
-   *  span it was measured over. This is the burn rate a dollar figure cannot
-   *  see. */
+  /** Steepest sustained rise, in percentage points per hour, with its span. */
   fastestBurn?: { pointsPerHour: number; from: LimitSample; to: LimitSample };
-  /** Credits are overage currency; a nonzero balance would mean the included
+  /** Credits are overage currency: a nonzero balance means the included
    *  allowance was exhausted and real money started. */
   creditsEverUsed: boolean;
 }
 
 const rolloutDirs = (root: string, fromMs: number, toMs: number): string[] => {
-  // ~/.codex/sessions/YYYY/MM/DD. Walking only the day directories the
-  // campaign spans keeps this off the other ~10k rollouts on this disk.
+  // ~/.codex/sessions/YYYY/MM/DD. Walk only the days the campaign spans; the
+  // disk holds ~10k other rollouts.
   const out: string[] = [];
   const day = 86_400_000;
   for (let t = fromMs - day; t <= toMs + day; t += day) {
@@ -57,9 +52,8 @@ const rolloutDirs = (root: string, fromMs: number, toMs: number): string[] => {
 
 export function campaignLimits(campaignDir: string, run?: string): LimitsReport {
   const { records } = runRecords(campaignDir, run);
-  // `ts` is an ISO-8601 STRING on every record, not epoch millis: Number() on it
-  // yields NaN, which filtered every record out and reported "no rollout
-  // attributed" for a campaign with 1,916 records.
+  // `ts` is an ISO-8601 STRING on every record, not epoch millis. Number() on it
+  // yields NaN, which reports "no rollout attributed" for a full campaign.
   const times = records.map((r) => Date.parse(String(r.ts))).filter((n) => Number.isFinite(n) && n > 0);
   if (times.length === 0) return { attribution: "none", rollouts: 0, samples: [], creditsEverUsed: false };
 
@@ -98,8 +92,7 @@ export function campaignLimits(campaignDir: string, run?: string): LimitsReport 
         (meta?.session_id !== undefined && sessionIds.has(meta.session_id)) ||
         (meta?.cwd !== undefined && cwds.has(meta.cwd));
       // Every CLI role gets its own temp workdir, so the cwd is this harness's
-      // signature even on records predating the join key. Reported as an
-      // inference.
+      // signature even on records predating the join key. Reported as inference.
       const inferred = !exact && (meta?.cwd ?? "").includes("coverify-cli-");
       if (!exact && !inferred) continue;
 
@@ -137,10 +130,9 @@ export function campaignLimits(campaignDir: string, run?: string): LimitsReport 
 
   samples.sort((a, b) => a.ts - b.ts);
   // Steepest rise over a span of at least BURN_SPAN_MS, never between adjacent
-  // samples: a campaign runs many rollouts CONCURRENTLY, so two consecutive
-  // samples are routinely milliseconds apart and dividing a 2-point rise by 1ms
-  // reports millions of points per hour. The rate that matters is sustained
-  // (Danus died at roughly 11.6 points/hour).
+  // samples: concurrent rollouts put consecutive samples milliseconds apart, and
+  // a 2-point rise over 1ms reads as millions of points/hour. The sustained rate
+  // is the one that matters (Danus died at roughly 11.6 points/hour).
   const BURN_SPAN_MS = 30 * 60_000;
   let fastestBurn: LimitsReport["fastestBurn"];
   let lo_i = 0;
@@ -149,8 +141,7 @@ export function campaignLimits(campaignDir: string, run?: string): LimitsReport 
     const a = samples[lo_i];
     const b = samples[j];
     if (b.ts - a.ts < BURN_SPAN_MS) continue;
-    // A fall is a window RESET, not negative spend; skipped rather than
-    // averaged through.
+    // A fall is a window RESET, not negative spend; skip rather than average.
     if (b.usedPercent <= a.usedPercent) continue;
     const rate = (b.usedPercent - a.usedPercent) / ((b.ts - a.ts) / 3_600_000);
     if (fastestBurn === undefined || rate > fastestBurn.pointsPerHour) {
@@ -195,9 +186,9 @@ export function formatLimits(r: LimitsReport): string {
       (windows.size > 1 ? ` — CHANGED mid-campaign, saw ${[...windows].join(", ")}` : ""),
   );
   const hi = Math.max(...r.samples.map((s) => s.usedPercent));
-  // Falls in the series. NOT called resets: used_percent is account-wide and
-  // rollouts run concurrently, so a fall is equally well explained by a stale
-  // sample. This reader cannot tell them apart, so it reports the count.
+  // NOT called resets: used_percent is account-wide and rollouts run
+  // concurrently, so a stale sample explains a fall equally well. Report the
+  // count rather than claim a reset.
   let falls = 0;
   for (let i = 1; i < r.samples.length; i++) {
     if (r.samples[i].usedPercent < r.samples[i - 1].usedPercent - 1) falls++;

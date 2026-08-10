@@ -1,12 +1,8 @@
-// The recording path for MEASUREMENT. Deleting this whole folder must leave a
-// working harness that proves theorems and records verdicts — it only stops
-// counting tokens. That is the test for whether anything in here belongs.
-//
-// Core never imports this folder. cli.ts (the composition root) builds a
-// context and hands it to runCampaign; core holds only the `TelemetryContext`
-// TYPE from the pi-telemetry package, which erases at runtime, and defaults to
-// NOOP. So `rm -rf src/telemetry` plus three lines in cli.ts is a clean
-// removal, not a surgery.
+// The recording path for MEASUREMENT: deleting this folder must leave a
+// working harness, only one that stops counting tokens. Core never imports it —
+// cli.ts builds the context and hands it to runCampaign, core holds only the
+// runtime-erased `TelemetryContext` type and defaults to NOOP — so `rm -rf
+// src/telemetry` plus three lines in cli.ts is a clean removal. Keep it that way.
 import type {
   SpanAttributes,
   SpanOptions,
@@ -23,10 +19,9 @@ interface SpanState {
   parent?: SpanState;
 }
 
-/** The attribute that identifies a span's dispatch, searched up the ancestry.
- *  This is the point of the whole exercise: `dispatchId`, `wake` and `runId`
- *  used to be copied onto each record by hand, and three reviews found gaps in
- *  the copying. Here the edge is the tree. */
+/** Span attributes are inherited up the ancestry rather than copied onto each
+ *  record by hand: the edge is the tree, so `dispatchId`/`wake`/`runId` cannot
+ *  go missing on a record. */
 function inherited(s: SpanState | undefined, key: string): unknown {
   for (let n = s; n !== undefined; n = n.parent) {
     const v = n.attributes[key];
@@ -37,11 +32,9 @@ function inherited(s: SpanState | undefined, key: string): unknown {
 
 /**
  * Writes one `role-call` leaf per billed provider call, with its parent edges
- * read off the span tree.
- *
- * Only provider_call spans persist. The others exist to carry the edges and to
- * give an exporter its shape; writing a record for a wake or a dispatch here
- * would duplicate what the harness already records as campaign state.
+ * read off the span tree. Only provider_call spans persist — the others carry
+ * edges; persisting a wake or dispatch span would duplicate campaign state the
+ * harness already records.
  */
 export class JournalTelemetryContext implements TelemetryContext {
   constructor(
@@ -74,9 +67,8 @@ export class JournalTelemetryContext implements TelemetryContext {
     })();
   }
 
-  /** Span attributes -> the journal's record shape. The names differ because
-   *  the journal's are older and every reader and every campaign on disk uses
-   *  them; translating here keeps one vocabulary at each end. */
+  /** Span attributes -> the journal's record shape. The names differ; every
+   *  reader and every campaign on disk uses the journal's, so translate here. */
   private write(state: SpanState, extra?: SpanAttributes): void {
     const a = { ...state.attributes, ...extra };
     const num = (k: string) => (typeof a[k] === "number" ? (a[k] as number) : undefined);
@@ -88,8 +80,8 @@ export class JournalTelemetryContext implements TelemetryContext {
       reasoning: num("coverify.tokens.reasoning"),
       meter: typeof a["coverify.meter"] === "string" ? (a["coverify.meter"] as string) : undefined,
     };
-    // A call that reported nothing still happened; recording it as a leaf with
-    // no usage is what lets a reader tell an unmetered lane from a lost one.
+    // A call that reported nothing still happened: the usage-less leaf is what
+    // distinguishes absent from measured zero (see `RoleUsage` in providers.ts).
     this.store.append({
       kind: "role-call",
       ...defined({

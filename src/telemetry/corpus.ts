@@ -1,12 +1,9 @@
 // docs/measurement-protocol.md rule 3b, executable. Run before quoting a number
-// off the session trees: a corpus can look summable and not be — three
-// defensible methods on the raw-skill corpus gave 150,503M / 15,779M / 5,560M
-// presented input, a 27x spread, and the honest outcome was to withdraw the arm.
-//
-// Two of the four checks assume a CUMULATIVE per-event counter (codex rollouts).
-// pi's session JSONL logs a per-message DELTA, so those two are restated for
-// this corpus rather than silently answered — a check that cannot apply must say
-// so (rule 10).
+// off the session trees: three defensible methods on the raw-skill corpus gave
+// 150,503M / 15,779M / 5,560M presented input, a 27x spread, and that arm was
+// withdrawn. The protocol's checks assume a CUMULATIVE per-event counter (codex
+// rollouts); pi logs a per-message DELTA, so a check that cannot apply must
+// declare itself inapplicable rather than answer silently (rule 10).
 import { median } from "../view/shared.js";
 import { campaignTurns } from "../view/turns.js";
 
@@ -25,8 +22,8 @@ export function corpusChecks(campaignDir: string): CorpusCheck[] {
   const sessions = campaignTurns(campaignDir);
   const out: CorpusCheck[] = [];
 
-  // 1. Count distinct ids, not files. On the raw corpus 64 ids owned 635 files
-  //    replaying a shared prefix, and summing files counted that prefix 64×.
+  // 1. Count distinct ids, not files: on the raw corpus 64 ids owned 635 files
+  //    replaying a shared prefix, so summing files counted that prefix 64x.
   const ids = new Map<string, number>();
   for (const s of sessions) ids.set(s.id, (ids.get(s.id) ?? 0) + 1);
   const multi = [...ids].filter(([, n]) => n > 1);
@@ -41,10 +38,9 @@ export function corpusChecks(campaignDir: string): CorpusCheck[] {
           `(worst: ${multi.sort((a, b) => b[1] - a[1])[0][1]} files). Characterize the relationship before summing.`,
   });
 
-  // 2. First cumulative near zero (independent) or high (inherited). pi logs a
-  //    delta per message, so "inherited" cannot present as a large first value
-  //    the way it does in a cumulative log. The reachable question is whether
-  //    the first BILLED message looks like a whole inherited context.
+  // 2. First cumulative near zero (independent) or high (inherited) — not
+  //    reachable on a delta-logged corpus, so this check declares itself
+  //    inapplicable and reports the first billed input instead.
   const firstInputs = sessions
     .map((s) => s.turns.find((t) => t.usage !== undefined)?.usage?.input)
     .filter((v): v is number => v !== undefined);
@@ -60,10 +56,9 @@ export function corpusChecks(campaignDir: string): CorpusCheck[] {
       `${firstInputs.length} session(s).`,
   });
 
-  // 3. Many events sharing one timestamp is the signature of replay. Counted
-  //    over BILLED turns only: a parallel tool batch legitimately lands three or
-  //    more toolResults on one millisecond, and counting those failed this check
-  //    on every healthy campaign on disk.
+  // 3. Many events sharing one timestamp is the signature of replay. BILLED
+  //    turns only: a parallel tool batch lands three or more toolResults on one
+  //    millisecond, which failed this check on every healthy campaign on disk.
   let worstShared = 0;
   let worstFile = "";
   for (const s of sessions) {
@@ -90,13 +85,10 @@ export function corpusChecks(campaignDir: string): CorpusCheck[] {
         : `${worstShared} events share one timestamp in ${worstFile} — replay signature; do not sum.`,
   });
 
-  // 4. Does the accumulated total equal the sum of the per-turn deltas? A
-  //    mismatch means the accumulator and the turn view disagree.
-  //    Compaction spend belongs to no turn, so it is added back explicitly: a
-  //    compacted session is EXPECTED to differ by exactly that amount.
-  //    Assistant turns only, matching what the session total bills — summing
-  //    every turn would fail this check the day a non-assistant message carries
-  //    usage, i.e. on turns.ts's filter working as designed.
+  // 4. Accumulated total vs the sum of per-turn deltas. Compaction spend belongs
+  //    to no turn, so it is added back: a compacted session is EXPECTED to differ
+  //    by exactly that amount. Assistant turns only, matching what the session
+  //    total bills (see turns.ts's assistant-only filter).
   const mismatched = sessions.filter((s) => {
     const summed =
       s.turns.reduce((n, t) => n + (t.role === "assistant" ? (t.usage?.input ?? 0) : 0), 0) +

@@ -29,6 +29,7 @@ import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import {
   buildModels,
   setTelemetrySink,
+  telemetrySink,
   createHarnessRoleSession,
   roleModelSpec,
   specKey,
@@ -109,23 +110,40 @@ export async function runCampaign(opts: CampaignOptions): Promise<string> {
   // included; leaving this to each return statement lost reports three times.
   const release = acquireCampaignLock(dir);
   try {
-    return await runLockedCampaign(opts, dir);
+    // The store and run id are minted here so the measurement sink exists
+    // before any work does, and the run span can wrap the whole campaign
+    // without touching the event loop's control flow.
+    const store = new GateStore(dir);
+    const runId = randomUUID().slice(0, 8);
+    store.setRunId(runId);
+    if (opts.telemetry !== undefined) setTelemetrySink(opts.telemetry(store));
+    return await telemetrySink().startSpan(
+      {
+        name: "coverify.run",
+        attributes: {
+          "coverify.run_id": runId,
+          "coverify.harness_rev": gitInRepo("git rev-parse HEAD") ?? undefined,
+        },
+      },
+      () => runLockedCampaign(opts, dir, store, runId),
+    );
   } finally {
     release();
   }
 }
 
-async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<string> {
+async function runLockedCampaign(
+  opts: CampaignOptions,
+  dir: string,
+  // Both minted by runCampaign, so the sink and the run span exist before any
+  // work does. runId is set on the store before ANY record is written: the
+  // reading rule "no runId means the record predates 2026-08-09" breaks if a
+  // present-day writer emits unstamped.
+  store: GateStore,
+  runId: string,
+): Promise<string> {
   const contract = loadLauncherContract();
   const models = await buildModels();
-  const store = new GateStore(dir);
-  // Set before ANY record is written: the reading rule "no runId means the
-  // record predates 2026-08-09" breaks if a present-day writer emits unstamped.
-  const runId = randomUUID().slice(0, 8);
-  store.setRunId(runId);
-  // The measurement extension, if one was supplied. Core never imports it: the
-  // factory comes from cli.ts, so deleting src/telemetry/ leaves this a no-op.
-  if (opts.telemetry !== undefined) setTelemetrySink(opts.telemetry(store));
 
   // One-time import: guidance recorded before the event-log unification
   // (2026-08-07) lives only in the in-tree journal. The marker keeps the
