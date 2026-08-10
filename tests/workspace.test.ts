@@ -144,6 +144,10 @@ describe("run_script", () => {
     );
     const out = text(await t.run_script.execute("t", { runs: [{ path: "forker.py" }] }));
     const bgPid = Number(out.match(/BG (\d+)/)?.[1]);
+    // Without this the test degenerates: no stdout gives NaN, process.kill(NaN)
+    // throws, the catch sets alive=false, and "the survivor was reaped" passes
+    // having reaped nothing. Its two sibling reap tests already guard this.
+    expect(Number.isFinite(bgPid)).toBe(true);
     await new Promise((r) => setTimeout(r, 400));
     let alive = true;
     try {

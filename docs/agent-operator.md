@@ -91,9 +91,15 @@ reconstruct what happened. One JSON object per line.
 
 ## Rules that will bite you
 
-**Never edit a campaign's files directly.** Verification records are bound to
-content hashes. Editing an artifact does not invalidate a verdict loudly — it
-makes the record unverifiable. If you want a statement changed, use `amend`.
+**Never edit a campaign's files directly** — with exactly one exception, below.
+Verification records are bound to content hashes. Editing an artifact does not
+invalidate a verdict loudly; it makes the record unverifiable.
+
+The exception is `STATEMENT.md`, and it is a two-step workflow rather than a
+command: **edit `STATEMENT.md`, then run `amend`.** `amend` takes no statement
+argument — it accepts whatever the file now says, records a new statement
+revision, and re-freezes. Running it without editing refuses and exits 1, so a
+successful `amend` always means the target really moved.
 `PROVED.md` has exactly one legitimate writer (`record_promotion`, inside the
 harness). The coordinator's own write tool refuses it via an in-process scope
 check; a technician's `run_script` is refused by the OS sandbox.

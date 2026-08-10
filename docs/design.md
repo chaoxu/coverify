@@ -93,9 +93,12 @@ its PASS is no longer verifier-backed, and a statement edit without
 on it, and NOTHING that runs a campaign may import them.
 `scripts/conformance-check.ts` guards exactly that one edge — core must not
 import `src/telemetry/`, and `cli.ts` is the single module allowed to — so
-`rm -rf src/telemetry` plus its cli lines leaves a harness that still proves
-theorems and records verdicts, and stops counting tokens (2026-08-09, Chao:
-"observation should be pure consumer").
+`rm -rf src/telemetry`, its test files, its cli lines, and its one
+`HOME_PATH_ALLOWED` entry leaves a harness that still proves theorems and
+records verdicts (2026-08-09, Chao: "observation should be pure consumer").
+What it loses is attribution rather than counting: worker and gate lanes still
+record spend on their referencing records, verification-stage spend does not
+(see `docs/journal-shape.md` rule 13).
 
 The distinction that decides membership is WHO the noticing is for.
 `observe.ts` stays in core because its queries feed the coordinator's wake
@@ -103,7 +106,9 @@ digest — noticing that changes what the campaign does next is operational.
 `telemetry/` is noticing for humans, after the fact, with no path back into a
 decision.
 
-Current sizes: core 7,017 lines (5,240 code), telemetry 1,298 lines (1,013 code).
+Roughly: the harness is about six times the size of the readers. Exact counts
+are deliberately not written here — they drift silently and mislead the next
+reader (`wc -l src/*.ts src/telemetry/*.ts`).
 
 ## Threat model
 
@@ -256,7 +261,7 @@ telemetry/       THE MEASUREMENT EXTENSION — deletable. Core imports none of i
                  src/telemetry` plus its cli lines leaves a harness that still
                  proves theorems and records verdicts, and stops counting
                  tokens. Verified, not assumed: doing exactly that typechecks
-                 clean and passes 185/185 tests.
+                 clean and passes its full suite.
   schema.ts      the span contract: run -> wake -> dispatch -> stage -> provider_call
   context.ts     JournalTelemetryContext: spans -> role-call leaves, with the
                  parent edges read off the ancestry rather than copied per record

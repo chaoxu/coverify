@@ -212,7 +212,7 @@ export class GateStore {
       const firstLine = stmt.split("\n").find((l) => l.trim() && !l.startsWith("#")) ?? "";
       const meta = path.join(dir, "meta.json");
       const next = JSON.stringify({ campaignDir: this.campaignDir, statement: firstLine.slice(0, 200) }) + "\n";
-      // Skip identical rewrites so read-only commands (status, trace) stay
+      // Skip identical rewrites so read-only commands (status, outcomes) stay
       // write-free on an unchanged campaign.
       if (!fs.existsSync(meta) || fs.readFileSync(meta, "utf-8") !== next) fs.writeFileSync(meta, next);
     } catch {
@@ -310,7 +310,7 @@ export class GateStore {
 
   /**
    * A campaign event: same authoritative out-of-tree log as gate records,
-   * mirrored VERBATIM into the in-tree journal so trace and status keep their
+   * mirrored VERBATIM into the in-tree journal so status keeps its
    * input shape. The only sanctioned way to record an event the harness may
    * later read back, because the in-tree journal is role-adjacent (a script
    * could append to it) and nothing behavioral may be read from there.

@@ -292,14 +292,36 @@ describe("delivery is durable, not one-shot", () => {
   });
 
   test("a cancelled agent is not re-offered as an undelivered report", () => {
+    // Calls the real function. The previous version re-implemented the filter
+    // over records it had just appended, so deleting the `cancelled` guard in
+    // gates.ts left the whole suite green — and its completion carried no
+    // `report`, so it would have been dropped for the wrong reason anyway.
     const { dir, store } = campaign("delivery-cancel");
+    const report = path.join(dir, "EVIDENCE", "r002.md");
+    fs.mkdirSync(path.dirname(report), { recursive: true });
+    fs.writeFileSync(report, "# a real report\n");
     store.append({ kind: "dispatch", id: "r002", role: "reasoner", mechanism: "m", task: "t" });
-    store.append({ kind: "completion", id: "r002", cancelled: true, reason: "struggle" });
-    const pending = store
-      .all()
-      .filter((e) => e.kind === "completion" && !e.cancelled)
-      .map((e) => e.id as string);
-    expect(pending).toEqual([]);
+    store.append({
+      kind: "completion",
+      id: "r002",
+      cancelled: true,
+      reason: "struggle",
+      report: path.relative(dir, report),
+      reportHash: sha256File(report),
+    });
+    expect(undeliveredCompletions(store, dir)).toEqual([]);
+
+    // Control: the identical completion WITHOUT the cancel flag is offered, so
+    // the assertion above is about `cancelled` and not about a fixture that
+    // fails to produce any pending report at all.
+    store.append({ kind: "dispatch", id: "r003", role: "reasoner", mechanism: "m", task: "t" });
+    store.append({
+      kind: "completion",
+      id: "r003",
+      report: path.relative(dir, report),
+      reportHash: sha256File(report),
+    });
+    expect(undeliveredCompletions(store, dir).map((c) => c.id)).toEqual(["r003"]);
   });
 });
 

@@ -17,7 +17,7 @@ import type {
   TelemetryContext,
   TelemetrySpan,
 } from "@earendil-works/pi-telemetry";
-import type { GateStore } from "../gates.js";
+import { type GateStore, defined } from "../gates.js";
 
 /** What a span carries that becomes a record field. */
 interface SpanState {
@@ -122,6 +122,3 @@ export class JournalTelemetryContext implements TelemetryContext {
   }
 }
 
-function defined<T extends object>(fields: T): Partial<T> {
-  return Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined)) as Partial<T>;
-}

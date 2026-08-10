@@ -112,7 +112,7 @@ export function danglingCitations(dir: string): { ledger: string; citation: stri
   return out;
 }
 
-/** The one definition of "cited", shared by citation lint and trace metrics. */
+/** The one definition of "cited", shared by citation lint and the readers. */
 export function citedEvidencePaths(text: string): Set<string> {
   const out = new Set<string>();
   for (const m of text.matchAll(/EVIDENCE\/[A-Za-z0-9._\/-]+/g)) {
@@ -164,7 +164,7 @@ export function acquireCampaignLock(dir: string): () => void {
       throw new Error(
         `campaign at ${dir} is already running (pid ${held.pid}, started ${held.startedAt}). Two runs ` +
           "would mint the same agent ids, share evidence directories, and gate against each other's " +
-          "stale records. Stop that run, or use 'coverify status'/'trace' to watch it.",
+          "stale records. Stop that run, or use 'coverify status' to watch it.",
       );
     }
     // The holder is gone (crash, kill): take over.
@@ -229,7 +229,7 @@ export function readJournal(dir: string): JournalEntry[] {
       entries.push(JSON.parse(lines[i]) as JournalEntry);
     } catch {
       // The journal is an audit mirror gates never read, so a torn line costs
-      // observability at most; failing hard would take `status` and `trace`
+      // observability at most; failing hard would take `status` and the readers
       // away when they are most wanted.
       skipped++;
     }
@@ -241,7 +241,7 @@ export function readJournal(dir: string): JournalEntry[] {
 }
 
 /** Unwrap the mirrored gate record from a journal entry ({kind:"note", gate}):
- *  the one reading of that shape, shared by status, trace, and adopt-rebuild. */
+ *  the one reading of that shape, shared by status and adopt-rebuild. */
 export function gateOf(e: unknown): Record<string, unknown> | undefined {
   const g = (e as Record<string, unknown> | null)?.gate;
   return typeof g === "object" && g !== null ? (g as Record<string, unknown>) : undefined;

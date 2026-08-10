@@ -1,9 +1,8 @@
 {
   "name": "coverify",
   "version": "2.0.0",
-  "description": "Math proof-search agent: the math-proof-search campaign contract compiled onto pi",
+  "description": "Adversarial proof-search harness: one frozen mathematical statement, verified by models that cannot see each other's work.",
   "type": "module",
-  "private": true,
   "bin": {
     "coverify": "src/cli.ts"
   },
@@ -26,5 +25,6 @@
   },
   "patchedDependencies": {
     "@earendil-works/pi-ai@0.83.0": "patches/@earendil-works%2Fpi-ai@0.83.0.patch"
-  }
+  },
+  "license": "MIT"
 }

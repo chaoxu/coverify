@@ -70,26 +70,41 @@ degrades to instructed-only confinement and says so on stderr.
 
 ## Running one
 
-You need [Bun](https://bun.sh). The default setup wants **two** subscriptions
-— ChatGPT and Claude — because the hostile audit deliberately runs on a
-different vendor's model from the one that wrote the candidate. You can point
-every role at one provider (see `docs/models.md`), and you lose the
-cross-family check by doing so.
+You need four things:
+
+- **[Bun](https://bun.sh)** — the only runtime.
+- **The `codex` CLI**, logged in to a ChatGPT subscription.
+- **The `claude` CLI**, logged in to a Claude subscription. The hostile audit
+  runs on a different vendor's model from the one that wrote the candidate, so
+  the defaults span both. You can point every role at one provider (see
+  `docs/models.md`) and lose the cross-family check by doing so.
+- **`coverify login openai-codex`** — OAuth for the API-transport roles, stored
+  in `~/.config/coverify/auth.json`.
 
 ```bash
 bun install
-bun run src/cli.ts login openai-codex        # ChatGPT subscription
+bun link                                     # puts `coverify` on your PATH
+coverify login openai-codex
 
-bun run src/cli.ts prove "Every 3-connected planar graph has a ..." --dir campaign
+coverify prove "Every 3-connected planar graph has a ..." --dir campaign
 ```
 
-That creates `campaign/` and starts working. It will run for hours. Ctrl-C is
-always safe — state is on disk, and any compute it spawned is killed with it.
+Without `bun link`, every command below is `bun run src/cli.ts <verb>` instead.
+
+`prove` refuses before spending anything if a role's provider has no usable
+auth, and names which role and which provider.
+
+That creates `campaign/` and starts working, and it will run for hours.
+Ctrl-C is always safe — state is on disk, and any compute it spawned is killed
+with it.
+
+**Start with `--max-wakes 5`.** A campaign does not stop on its own, and the
+first thing worth knowing is what yours costs before you let one run unattended.
 
 ```bash
-bun run src/cli.ts status --dir campaign     # where it is now
-bun run src/cli.ts resume --dir campaign     # continue after a stop
-bun run src/cli.ts say "the LP relaxation route is a dead end" --dir campaign
+coverify status --dir campaign     # where it is now
+coverify resume --dir campaign     # continue after a stop
+coverify say "the LP relaxation route is a dead end" --dir campaign
 ```
 
 `say` reaches the coordinator inside its current turn, usually within a
@@ -133,10 +148,29 @@ Runs bill against your model subscriptions, not a metered API account, so the
 constraint you hit is a rate-limit window rather than a bill.
 
 ```bash
-bun run src/cli.ts limits --dir campaign     # how much of the window is left
-bun run src/cli.ts spend --dir campaign      # where the tokens went
-bun run src/cli.ts outcomes --dir campaign   # what the tokens bought
+coverify limits --dir campaign     # how much of the window is left
+coverify spend --dir campaign      # where the tokens went
+coverify outcomes --dir campaign   # what the tokens bought
 ```
+
+For scale, a 5-wake campaign that proved a textbook theorem (every tournament
+has a Hamiltonian path) end to end — 8 dispatches, one full 4-stage
+verification, one promotion — cost:
+
+```
+pi-session         6 calls   0.10M fresh in   0.56M cached   0.03M out
+codex-cli-jsonl    6 calls   0.11M fresh in   0.06M cached   0.00M out
+claude-cli-json    3 calls   0.00M fresh in   0.04M cached   0.02M out
+```
+
+Those rows are deliberately not added together: each lane bills a different
+provider account, and one lane's "fresh in" excludes cached tokens where
+another's includes them, so a single total would not be a currency. Note how
+much of it is cache — the coordinator re-reads its own context every wake.
+
+A campaign against a genuine open problem runs far longer than five wakes and
+is bounded by your rate-limit window rather than by any token figure. `limits`
+is what tells you how close you are to that wall.
 
 `limits` is the one to watch during a campaign. The others are for working out
 whether the search is spending well. On one recent campaign `outcomes`
@@ -145,10 +179,14 @@ verification rounds per revision and a worst case of 12 — a revision going
 round twelve times is the kind of thing that changes how you set up the next
 campaign.
 
-These readers live in `src/telemetry/`. Delete that folder and the lines in
-`src/cli.ts` that import it and the harness still proves theorems, still
-records what it spent, and loses these three commands along with the per-stage
-breakdown they read. A check fails if anything else ever reaches into it.
+These four readers live in `src/telemetry/`, which is severable. Removing it
+means: delete the folder, its five test files, the imports and four `case`
+blocks in `src/cli.ts`, and the one `src/telemetry/limits.ts` line in
+`HOME_PATH_ALLOWED` in `scripts/conformance-check.ts`. What is left still
+proves theorems and still records spend on worker and gate lanes; it loses
+these four commands, the per-stage attribution, and verification-stage token
+counts (see `docs/journal-shape.md`). A conformance check fails if anything
+outside that folder ever imports it, which is what keeps the seam real.
 
 ## Why it is built this way
 

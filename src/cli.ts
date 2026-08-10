@@ -12,7 +12,7 @@ import {
   readLedger,
 } from "./campaign.js";
 import { CLAUDE_BRIDGE_ID } from "./claude-bridge.js";
-import { GateStore, recordStatement } from "./gates.js";
+import { GateStore, acceptedStatementHash, recordStatement, statementHash } from "./gates.js";
 import {
   buildModels,
   providerUsable,
@@ -81,7 +81,6 @@ const FLAG_SPEC = {
   "agent-limit": { type: "string" },
   "max-wakes": { type: "string" },
   "no-computation": { type: "boolean" },
-  out: { type: "string" },
   run: { type: "string" },
   session: { type: "string" },
 } as const;
@@ -304,7 +303,20 @@ switch (command) {
     break;
   case "amend": {
     requireCampaign();
-    recordStatement(new GateStore(dir), dir, "explicit user amendment");
+    // `amend` accepts whatever STATEMENT.md now says — you edit the file, then
+    // run this. Recording a "new revision" when the bytes did not change is a
+    // lie that also invalidates nothing, so refuse: an operator who ran amend
+    // without editing needs to know the edit did not happen.
+    const store = new GateStore(dir);
+    const current = statementHash(dir);
+    if (acceptedStatementHash(store) === current) {
+      console.error(
+        `STATEMENT.md is unchanged (sha256 ${current.slice(0, 12)}); nothing to amend.\n` +
+          "Edit STATEMENT.md first, then run amend to accept the new text and re-freeze it.",
+      );
+      process.exit(1);
+    }
+    recordStatement(store, dir, "explicit user amendment");
     console.error(
       "[coverify] amendment accepted: new statement revision recorded; earlier completion evidence " +
         "is invalidated per the contract (verifications are hash-bound and will not carry over).",

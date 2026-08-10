@@ -147,10 +147,13 @@ test("the in-memory reference adapter still works for exporter authors", async (
   expect(call.status.status).toBe("ok");
 });
 
-test("the SESSION lane emits too — the coordinator and workers, not just single-shot", async () => {
-  // Before this, only runRole emitted, which is the single-shot verdict lane:
-  // ~7% of presented tokens. The coordinator and every dispatched worker go
-  // through createHarnessRoleSession and recorded nothing.
+test("a session accepts a telemetry parent, and refuses a CLI provider outright", async () => {
+  // NOT a test that the session lane emits. Driving a real pi session needs a
+  // real model, so the lane that carries the coordinator and every dispatched
+  // worker is covered by the cadence and librarian suites and by smoke runs,
+  // not here. What this pins is narrower and still worth pinning: the `parent`
+  // option exists and is typed, so a call site can pass its span; and a CLI
+  // provider is rejected for sessions rather than silently degrading.
   const dir = recordFixture("telemetry-session", []);
   const store = new GateStore(dir);
   const recorder = new InMemoryTelemetryContext();
@@ -167,12 +170,12 @@ test("the SESSION lane emits too — the coordinator and workers, not just singl
     { sessionId: "probe", ephemeral: true, parent: recorder },
   ).catch((e) => e as Error);
 
-  // A CLI provider is rejected for sessions by design; what this pins is that
-  // the option EXISTS and is typed, so the coordinator/worker call sites can
-  // pass their span. The lane's emission is covered by the journal test above.
   expect(session).toBeInstanceOf(Error);
   expect(String(session)).toContain("single-shot verdict roles only");
+  // A refused session bought nothing, so it must record nothing — on either
+  // the journal or the span recorder it was handed.
   expect(store.all()).toHaveLength(0);
+  expect(recorder.getSpans()).toHaveLength(0);
 });
 
 test("with telemetry on, the same cadence's spend lands on leaves under that dispatch", async () => {

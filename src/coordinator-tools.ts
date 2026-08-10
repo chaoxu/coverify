@@ -489,9 +489,9 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
           promptChars,
           durationMs,
           dispatchId: id,
-          // specLabel like every other modelFamily writer: trace.ts compares
-          // this against reportedModel, so the spelling must match across
-          // record kinds. Thinking level rides in its own field.
+          // specLabel like every other modelFamily writer: observe.ts's
+          // modelSubstitutions compares this against reportedModel, so the
+          // spelling must match across record kinds. Thinking rides its own field.
           modelFamily: servedModel ?? specLabel(gateSpec),
           modelSpec: specKey(gateSpec),
           ...defined({ reportedModel, providerSessionId, backendCwd, attempts, requests }),

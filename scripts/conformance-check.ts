@@ -151,7 +151,7 @@ if (delegatedCalls.length === 0 || badDelegated.length > 0) {
 // each default lives at its one read site — and it is only worth having if that
 // name list is COMPLETE: the usage text and the run stamp both derive from it,
 // so a knob read but not declared is silently absent from both, and a campaign
-// cannot prove it was set. The old hand-written list named 5 of 31, which is
+// cannot prove it was set. The old hand-written list named a small fraction, which is
 // exactly how that fails.
 const declared = new Set(KNOBS.map((k) => k.name));
 const seen = new Set<string>();

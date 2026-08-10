@@ -67,7 +67,7 @@ export function recordRunConfig(
   store.event({
     kind: "note",
     note: "run-start",
-    // Structural marker: trace epoch-caps open dispatches on this, so it must
+    // Structural marker: cli.ts epoch-caps open dispatches on this, so it must
     // not depend on the prose note's exact wording.
     runStart: true,
     ...extra,

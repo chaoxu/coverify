@@ -12,14 +12,3 @@ export function recordFixture(label: string, records: Record<string, unknown>[])
   for (const r of records) store.append(r as { kind: "note" } & Record<string, unknown>);
   return dir;
 }
-
-/** A campaign whose session tree contains the given files. */
-export function sessionFixture(label: string, files: Record<string, string[]>): string {
-  const dir = fs.mkdtempSync(`/private/tmp/coverify-${label}-`);
-  const sess = path.join(dir, ".coverify", "sessions", "--camp--");
-  fs.mkdirSync(sess, { recursive: true });
-  for (const [name, lines] of Object.entries(files)) {
-    fs.writeFileSync(path.join(sess, name), lines.join("\n") + "\n");
-  }
-  return dir;
-}
