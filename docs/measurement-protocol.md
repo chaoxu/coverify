@@ -391,7 +391,41 @@ this harness already prevents. Whether **diverse** fan-out beats serial
 exploration of the same routes at equal budget is untested and is not what
 those papers measured.
 
-## 13. What must be recorded
+## 13. Record leaves, and every edge of the tree
+
+A campaign is a tree: **campaign → run → wake → dispatch → stage record →
+provider request.** Spend happens at exactly one level — the provider request —
+but every level above it has a natural reason to state a cost, because whoever
+reads that record wants to know what it cost. That is how the same tokens end
+up recorded three times.
+
+The rule that follows: **record at the leaves, and record every parent edge.**
+Given the edges, any aggregate is a `GROUP BY`; without them, a stored
+aggregate is the only way to answer a question, and stored aggregates in an
+append-only log double-count. This is not specific to tokens — a log cannot
+tell a fact from a summary of facts, so the discipline has to come from the
+shape of what you write.
+
+Leaf-only is necessary but **not sufficient**: an aggregate is only derivable
+if the edge it groups on is on file. Measured on a pre-2026-08-09 campaign,
+`dispatch` records carried `id` and nothing else, so the majority of spend —
+dispatched workers, the reasoner lane alone being ~49% — could not be
+attributed to the wake that ordered it. Every edge below is now stamped:
+
+| edge | carried by |
+|---|---|
+| campaign → run | `runId` on every record (GateStore) |
+| run → wake | `wake` on the coordinator usage event |
+| wake → dispatch | `wake` on every dispatch record |
+| dispatch → stage | `dispatchId` on audit, bundle-cert, reconstruction, comparison, gate-verdict, role-call |
+| dispatch → completion | the handle `id` |
+| stage → provider request | **still missing** — one record spans a whole tool loop and its retries |
+
+That last row is the remaining hole, and it is why "what did this call cost"
+is still unanswerable: a 500k-token turn and three 170k attempts are
+indistinguishable on file.
+
+## 13b. What must be recorded
 
 Derived by working backwards from the questions the 2026-08-09 study could not
 answer. Each row is a question, the field that answers it, and whether the

@@ -57,6 +57,12 @@ export interface CoordinatorToolDeps {
   declare: (d: { state: "pause" | "complete"; reason: string }) => void;
   /** Shared handle-id counter (workers, gates, and verification mint from one sequence). */
   nextId: () => number;
+  /** The wake that is ordering this dispatch. The tree is
+   *  campaign -> run -> wake -> dispatch -> stage records, and every aggregate
+   *  is derivable from leaves ONLY if each parent edge is on file. This one
+   *  was missing, so dispatched spend — the majority of the bill — could not
+   *  be attributed to the wake that ordered it. */
+  wake: () => number;
   handles: Map<string, Handle>;
   settledQueue: { h: Handle }[];
   liveWorkers: () => number;
@@ -187,6 +193,7 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
     store.append({
       kind: "dispatch",
       id,
+      wake: deps.wake(),
       role,
       mechanism: packet.mechanism,
       task: packet.task,
@@ -403,6 +410,7 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
       store.append({
         kind: "dispatch",
         id,
+        wake: deps.wake(),
         role: "gate-critic",
         mechanism: p.mechanism,
         task: p.firstImplication,

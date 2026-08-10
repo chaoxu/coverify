@@ -45,6 +45,8 @@ export interface CadenceDeps {
   /** Live declaration state: a declared campaign refuses new verification. */
   declaration: () => { state: string } | undefined;
   mintVerificationId: () => string;
+  /** See CoordinatorDeps.wake — the wake -> dispatch edge. */
+  wake: () => number;
   /** Cancellation surface: a cadence whose handle is gone must stop recording. */
   hasHandle: (id: string) => boolean;
   liveCount: () => number;
@@ -602,6 +604,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
       // (maxHandleId reads dispatch records only).
       store.append({
         kind: "dispatch",
+        wake: deps.wake(),
         id,
         role: "verification",
         mechanism: `${VERIFICATION_MECHANISM_PREFIX}${rel}`,

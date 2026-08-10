@@ -418,6 +418,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     evidenceRelative,
     declaration: () => declaration,
     mintVerificationId: () => `v${String(nextId++).padStart(3, "0")}`,
+    wake: () => wakeCount,
     hasHandle: (id) => handles.has(id),
     liveCount: () => handles.size,
     registerHandle,
@@ -444,6 +445,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       declaration = d;
     },
     nextId: () => nextId++,
+    wake: () => wakeCount,
     handles,
     settledQueue,
     liveWorkers,
