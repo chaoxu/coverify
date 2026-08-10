@@ -75,8 +75,10 @@ export function roleOf(r: Record<string, unknown>): string {
 
 const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
 
-/** Record kinds representing a provider call: a missing `usage` on one is a gap. */
-const SPENDING_KINDS = new Set([
+/** Record kinds representing a provider call: a missing `usage` on one is a gap.
+ *  Exported because "did this campaign call a provider at all" is the same
+ *  question `limits` asks, and two spellings of it would drift. */
+export const SPENDING_KINDS = new Set([
   "completion", "gate-verdict", "audit", "bundle-cert",
   "reconstruction", "comparison", "role-call", "usage",
 ]);

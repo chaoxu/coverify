@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Refusal } from "./refusal.js";
 import { repoRoot } from "./campaign.js";
 
 /**
@@ -19,7 +20,7 @@ const DEFAULT_LAUNCHER = () => path.join(repoRoot(), "contract", "math-proof-sea
 export function loadLauncherContract(): string {
   const p = process.env.COVERIFY_LAUNCHER_PATH ?? DEFAULT_LAUNCHER();
   if (!fs.existsSync(p)) {
-    throw new Error(
+    throw new Refusal(
       process.env.COVERIFY_LAUNCHER_PATH !== undefined
         ? `COVERIFY_LAUNCHER_PATH points at ${p}, which does not exist. Coverify does not fall ` +
           "back to the bundled contract when an explicit path is set: that would silently run " +
@@ -32,7 +33,7 @@ export function loadLauncherContract(): string {
   const text = fs.readFileSync(p, "utf-8");
   const match = text.match(/^```\n([\s\S]*?)\n```/m);
   if (!match) {
-    throw new Error(`launcher at ${p} has no fenced contract block`);
+    throw new Refusal(`launcher at ${p} has no fenced contract block`);
   }
   return match[1];
 }

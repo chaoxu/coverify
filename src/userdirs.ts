@@ -4,6 +4,7 @@
 // container or CI runner needs no HOME at all.
 import * as os from "node:os";
 import * as path from "node:path";
+import { Refusal } from "./refusal.js";
 
 /** `$XDG_CONFIG_HOME`, else `~/.config`. Relative values are ignored per the
  *  spec: one would move the credential store with the working directory. */
@@ -21,7 +22,7 @@ function xdg(variable: string, fallback: string): string {
   if (set !== undefined && set !== "" && path.isAbsolute(set)) return set;
   const home = os.homedir();
   if (home === "" || home === "/nonexistent") {
-    throw new Error(
+    throw new Refusal(
       `cannot resolve a per-user directory: $${variable} is unset and HOME is ` +
         `${home === "" ? "unset" : `"${home}"`}. Set $${variable} to an absolute writable path ` +
         "(coverify keeps only your credentials and the out-of-campaign gate store there; " +

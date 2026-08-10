@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { Refusal } from "./refusal.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
@@ -200,7 +201,7 @@ async function runLockedCampaign(
     // adopt the current statement as the accepted baseline so the freeze arms.
     recordStatement(store, dir, "adopted existing campaign at first coverify run");
   } else if (accepted !== statementHash(dir)) {
-    throw new Error(
+    throw new Refusal(
       "STATEMENT.md differs from the last user-accepted revision. If this is an explicit user " +
         "amendment, run 'coverify amend' to accept it (starting a new statement revision and " +
         "invalidating earlier completion evidence); otherwise restore the file.",

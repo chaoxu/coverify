@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { runRecords } from "./shared.js";
+import { SPENDING_KINDS } from "./spend.js";
 
 export interface LimitSample {
   ts: number;
@@ -60,7 +61,12 @@ export function campaignLimits(campaignDir: string, run?: string): LimitsReport 
   // pools in every rollout on the machine from that window — a campaign holding
   // one note reported "peak 95.0% occupancy", which is someone else's number
   // wearing this campaign's name.
-  if (!records.some((r) => r.usage !== undefined || typeof r.unmetered === "string")) {
+  // "Did anything call a provider", not "did anything report tokens". A
+  // campaign whose calls all FAILED before parse carries neither usage nor
+  // unmetered — and that is precisely the campaign someone runs `limits` on,
+  // because it is what a rate-limit wall looks like. spend.ts already keys on
+  // the record KIND for this question; use the same one.
+  if (!records.some((r) => SPENDING_KINDS.has(String(r.kind)))) {
     return { attribution: "none", rollouts: 0, samples: [], creditsEverUsed: false };
   }
 

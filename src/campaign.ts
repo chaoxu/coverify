@@ -2,6 +2,7 @@ import { execSync } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Refusal } from "./refusal.js";
 
 export interface JournalEntry {
   ts: string;
@@ -14,7 +15,7 @@ const JOURNAL_DIR = ".coverify";
 export function initCampaign(dir: string, statement: string): void {
   const statementPath = path.join(dir, "STATEMENT.md");
   if (fs.existsSync(statementPath)) {
-    throw new Error(`campaign already exists at ${dir}; use resume or status`);
+    throw new Refusal(`campaign already exists at ${dir}; use resume or status`);
   }
   // A missing STATEMENT.md is not proof of an empty directory: if the ledgers
   // survived a partial restore, writing the templates destroys every promotion
@@ -22,7 +23,7 @@ export function initCampaign(dir: string, statement: string): void {
   const survivors = ["PROVED.md", "FAILED.md", "REGISTRY.md", "PROCESS_LESSONS.md", "CURRENT_FRONTIER.md"]
     .filter((f) => fs.existsSync(path.join(dir, f)));
   if (survivors.length > 0) {
-    throw new Error(
+    throw new Refusal(
       `refusing to initialize over existing campaign ledgers at ${dir} (${survivors.join(", ")}): ` +
         "STATEMENT.md is missing, so this is a damaged campaign rather than a new one. Restore " +
         "STATEMENT.md and use resume, or move these files aside deliberately.",
@@ -65,14 +66,6 @@ export function initCampaign(dir: string, statement: string): void {
       "is run, else deferred with an activation test; mathematical facts belong in the ledgers; " +
       "mark cross-campaign lessons 'graduate' -->\n",
   );
-}
-
-/** A deliberate refusal, as opposed to a bug. The CLI prints these as a
- *  message and swallows the stack; anything else keeps its stack, because that
- *  one is a bug report. Marking the intent at the throw site is the only way to
- *  tell them apart — "is an Error with a message" describes nearly every bug. */
-export class Refusal extends Error {
-  readonly refusal = true;
 }
 
 export function campaignExists(dir: string): boolean {
@@ -181,7 +174,7 @@ export function acquireCampaignLock(dir: string): () => void {
       }
     }
     if (alive) {
-      throw new Error(
+      throw new Refusal(
         `campaign at ${dir} is already running (pid ${held.pid}, started ${held.startedAt}). Two runs ` +
           "would mint the same agent ids, share evidence directories, and gate against each other's " +
           "stale records. Stop that run, or use 'coverify status' to watch it.",

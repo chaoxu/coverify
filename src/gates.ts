@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
+import { Refusal } from "./refusal.js";
 import { stateHome } from "./userdirs.js";
 import * as path from "node:path";
-import { appendJournal, gateOf, readLedger, Refusal, sha256File, sha256Text } from "./campaign.js";
+import { appendJournal, gateOf, readLedger, sha256File, sha256Text } from "./campaign.js";
 import { spendFields, type RoleUsage } from "./providers.js";
 
 /**
@@ -98,12 +99,26 @@ export function campaignIdPath(campaignDir: string): string {
 function campaignIdentity(campaignDir: string, stateDir: string, readOnly = false): string {
   const idFile = campaignIdPath(campaignDir);
   if (fs.existsSync(idFile)) {
-    const id = fs.readFileSync(idFile, "utf-8").trim();
-    if (/^[0-9a-f]{16}$/.test(id)) return id;
+    const raw = fs.readFileSync(idFile, "utf-8").trim();
+    if (/^[0-9a-f]{16}$/.test(raw)) return raw;
+    // Present but malformed. Falling through would MINT A NEW IDENTITY and
+    // overwrite the file, orphaning an intact gate store one directory away
+    // with no tool that names it — while the ADOPT guard then steers the
+    // operator to the lower-trust journal rebuild. The id IS the campaign;
+    // a damaged one is a stop, not a fresh start.
+    throw new Refusal(
+      `campaign id at ${idFile} is malformed (${JSON.stringify(raw.slice(0, 40))}); expected 16 hex ` +
+        "characters. Its gate history is under the id this file used to hold. Restore the file from " +
+        "backup or version control rather than deleting it — deleting mints a new identity and leaves " +
+        "the existing history unreachable.",
+    );
   }
   const legacy = sha256Text(campaignDir).slice(0, 16);
-  // Adopt the legacy id when its store exists, otherwise mint a fresh one.
-  const id = fs.existsSync(path.join(stateDir, legacy, "gates.jsonl"))
+  // Adopt the legacy id when its store exists. Otherwise mint one — but
+  // deterministically for a reader, which never persists what it minted: a
+  // random id per invocation made `spend` name a different state directory
+  // every run, so the recovery path it prints could not be followed.
+  const id = fs.existsSync(path.join(stateDir, legacy, "gates.jsonl")) || readOnly
     ? legacy
     : sha256Text(`${campaignDir}:${Date.now()}:${Math.random()}`).slice(0, 16);
   // A reader must not brand a campaign it is only looking at: `coverify spend`
@@ -112,7 +127,11 @@ function campaignIdentity(campaignDir: string, stateDir: string, readOnly = fals
   if (!readOnly) {
     try {
       fs.mkdirSync(path.dirname(idFile), { recursive: true });
-      fs.writeFileSync(idFile, id + "\n");
+      // tmp + rename, for the same reason meta.json got it — and this file
+      // matters more: a torn id reads as malformed, which is now a hard stop.
+      const tmp = `${idFile}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, id + "\n");
+      fs.renameSync(tmp, idFile);
     } catch {
       /* read-only checkout or a race: the legacy lookup still works */
     }
@@ -286,8 +305,24 @@ export class GateStore {
     const journalPath = path.join(this.campaignDir, ".coverify", "journal.jsonl");
     let recoveredFromMirror = 0;
     if (!fs.existsSync(this.file) && fs.existsSync(journalPath)) {
+      // A reader NEVER adopts. Rebuilding gate history from the role-writable
+      // in-tree mirror is a trust-boundary event that stamps a permanent
+      // lower-trust provenance note into the campaign — and an operator who
+      // exported COVERIFY_ADOPT=1 because the refusal message told them to
+      // would have had every later `coverify spend` do it silently, to any
+      // campaign. Without the state directory (which readOnly does not create)
+      // it also wrote straight into a path that does not exist.
+      if (opts?.readOnly === true) {
+        console.error(
+          `[coverify] WARNING: ${this.campaignDir} has ledgers but no gate history at ${dir}. ` +
+            "Reporting from what is on disk, which is incomplete. Recovery is a write and belongs " +
+            "to a writing command (COVERIFY_ADOPT=1 with prove/resume/amend).",
+        );
+        this.records = [];
+        return;
+      }
       if (!ADOPT_ENABLED.has((process.env.COVERIFY_ADOPT ?? "").toLowerCase())) {
-        throw new Error(
+        throw new Refusal(
           `campaign at ${this.campaignDir} has ledgers but no gate history at ${dir}. Its verification ` +
             "records, statement freeze and FAIL history are not where its id points. Restore the state " +
             "directory, or re-run with COVERIFY_ADOPT=1 to rebuild gate history from the campaign's " +

@@ -11,7 +11,7 @@ import {
   readJournal,
   readLedgerOrNote,
 } from "./campaign.js";
-import { Refusal } from "./campaign.js";
+import { Refusal } from "./refusal.js";
 import { CLAUDE_BRIDGE_ID } from "./claude-bridge.js";
 import { GateStore, acceptedStatementHash, recordStatement, statementHash } from "./gates.js";
 import {
