@@ -1,10 +1,7 @@
-// The coordinator's clause-mapped tool surface, out of the event loop:
-// dispatch (reasoner/technician/gate critic), promotion recording,
-// cancel/steer, and the campaign declaration. Same factory pattern as
-// cadence.ts (CadenceDeps): the harness passes a narrow deps object and
-// keeps the loop — handles, wake building, compaction, inbox — to itself.
-// Every enforcement here traces to a launcher clause; the deps are the
-// loop's live state, reached only through the accessors the loop grants.
+// The coordinator's clause-mapped tool surface, out of the event loop: dispatch,
+// promotion recording, cancel/steer, and the campaign declaration. Same factory
+// pattern as cadence.ts — the harness passes a narrow deps object and keeps the
+// loop to itself. Every enforcement here traces to a launcher clause.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -37,12 +34,10 @@ import {
 import { runMemMb, runTimeoutMs, toolText } from "./sandbox.js";
 import type { CampaignOptions, Handle } from "./harness.js";
 
-/** What the coordinator's tools need from the campaign loop. Mirrors
- *  CadenceDeps, widened to what dispatch and declaration actually touch:
- *  the live handle map (dispatch patches sessions in place, cancel and
- *  declare remove entries), the settled queue (a cancelled handle's queued
- *  report must not be delivered), and get/set access to the declaration
- *  (declare_campaign_state writes it; every dispatch reads it). */
+/** What the coordinator's tools need from the campaign loop: the live handle map
+ *  (dispatch patches sessions in place; cancel and declare remove entries), the
+ *  settled queue (a cancelled handle's queued report must not be delivered), and
+ *  get/set access to the declaration. */
 export interface CoordinatorToolDeps {
   dir: string;
   store: GateStore;
@@ -58,11 +53,10 @@ export interface CoordinatorToolDeps {
   declare: (d: { state: "pause" | "complete"; reason: string }) => void;
   /** Shared handle-id counter (workers, gates, and verification mint from one sequence). */
   nextId: () => number;
-  /** The wake that is ordering this dispatch. The tree is
-   *  campaign -> run -> wake -> dispatch -> stage records, and every aggregate
-   *  is derivable from leaves ONLY if each parent edge is on file. This one
-   *  was missing, so dispatched spend — the majority of the bill — could not
-   *  be attributed to the wake that ordered it. */
+  /** The wake ordering this dispatch. The tree is campaign -> run -> wake ->
+   *  dispatch -> stage records, and aggregates are derivable from leaves ONLY if
+   *  each parent edge is on file; without this one, dispatched spend (most of
+   *  the bill) is unattributable to the wake that ordered it. */
   wake: () => number;
   handles: Map<string, Handle>;
   settledQueue: { h: Handle }[];
@@ -117,8 +111,8 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
     role: "reasoner" | "technician",
     packet: ReasonerPacket | TechnicianPacket,
   ) => {
-    // "cease dispatch": once the campaign is declared, new work would run in a
-    // process that is about to return, and its report would be discarded.
+    // "cease dispatch": once declared, new work runs in a process about to
+    // return, so its report would be discarded.
     const declared = deps.declaration();
     if (declared) {
       return refuse(
@@ -151,16 +145,13 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
       return refuse(store, "dispatch", decision.reason ?? "", { mechanism: packet.mechanism, role });
     }
     let spec = roleModelSpec(role);
-    // Ideation families: a reasoner may be routed to a different model
-    // family for decorrelated proposals — same charge, same gates. Refused
-    // with guidance (not errored) when the family has no usable auth, so a
-    // coordinator can fall back to a default dispatch in the same turn.
+    // Ideation families: refused with guidance rather than errored when the
+    // family has no usable auth, so a coordinator can fall back in the same turn.
     const family =
       role === "reasoner" ? (packet as ReasonerPacket).family : undefined;
     if (family !== undefined) {
-      // A family-routed reasoner is a toolless single-shot CLI consult: it
-      // cannot hold the librarian, so granting a literature question would
-      // render a "(granted)" prompt for a tool that does not exist.
+      // A family-routed reasoner is a toolless single-shot consult, so a
+      // literature grant would render "(granted)" for a tool that does not exist.
       if ((packet as ReasonerPacket).literature !== undefined) {
         return refuse(
           store,
@@ -187,9 +178,9 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
     const id = `${isTechnician ? "t" : "r"}${String(deps.nextId()).padStart(3, "0")}`;
     const evidenceDir = path.join(dir, "EVIDENCE", id);
     fs.mkdirSync(evidenceDir, { recursive: true });
-    // Role-authoritative, read once: tool schemas allow unknown extras, so a
-    // `literature` field smuggled onto a technician packet must neither reach
-    // the prompt nor grant the librarian.
+    // Read once from the role, not the packet: tool schemas allow unknown extras,
+    // so a `literature` field smuggled onto a technician packet must neither
+    // reach the prompt nor grant the librarian.
     const literature = role === "reasoner" ? (packet as ReasonerPacket).literature : undefined;
     store.append({
       kind: "dispatch",
@@ -201,12 +192,8 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
       deliverable: packet.deliverable,
       context: packet.context,
       failedCheck: packet.failedCheck,
-      // `family` only: `model` here carried specLabel(spec), which is the
-      // identical value `modelFamily` below already writes on the same record
-      // from the same expression, and nothing read it (trace's agent.model is
-      // populated from modelFamily). `family` stays because it is the one
-      // record of which ideation family was REQUESTED, as distinct from the
-      // spec that resolved.
+      // `family` is the one record of which ideation family was REQUESTED, as
+      // distinct from the spec that resolved (`modelFamily` below).
       ...(family !== undefined ? { family } : {}),
       computation: isTechnician ? (packet as TechnicianPacket).computation : undefined,
       literature: literature ? (packet as ReasonerPacket).literature : undefined,
@@ -222,13 +209,11 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
         ? `\n\n# Preregistered computation\n\n${(packet as TechnicianPacket).computation}`
         : "") +
       (literature ? `\n\n# Literature question (granted)\n\n${literature}` : "");
-    // One dispatch path: every worker is a RoleSession asked for its packet.
-    // A CLI backend yields a degenerate session (one deep attempt, no tools,
-    // the reply IS the deliverable — created synchronously); an API provider
-    // gets a durable pi AgentHarness session with a JSONL transcript under
-    // .coverify/sessions/ (crash-survivable, prompt_cache_key = the handle
-    // id), created asynchronously — the handle's promise chains behind it so
-    // dispatch stays synchronous for the coordinator.
+    // One dispatch path: every worker is a RoleSession asked for its packet. A
+    // CLI backend yields a degenerate session created synchronously; an API
+    // provider gets a durable AgentHarness session created asynchronously, with
+    // the handle's promise chained behind it so dispatch stays synchronous for
+    // the coordinator.
     let session: RoleSession | undefined;
     const sessionPromise: Promise<RoleSession> = isCliProvider(spec.provider)
       ? Promise.resolve(
@@ -255,17 +240,15 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
               scope: { allow: [evidenceDir], deny: [] },
               code: isTechnician,
               literature: literature !== undefined,
-              // The launcher requires a prior-route check before every route;
-              // this makes it a lookup instead of a 31 KB read that is then
-              // re-presented on every later turn of the dispatch (#28).
+              // Makes the launcher's prior-route check a lookup instead of a
+              // 31 KB read re-presented on every later turn (#28).
               failedLedger: path.join(dir, "FAILED.md"),
             },
             spec,
             models,
           },
-          // cwd is the campaign dir for every session: JsonlSessionRepo groups
-          // by cwd-encoded subdirectory, and one-directory-per-worker keyed on
-          // absolute evidence paths was pure junk layout (review 2026-08-02).
+          // cwd is the campaign dir for every session: JsonlSessionRepo groups by
+          // cwd-encoded subdirectory, so per-worker cwds produce junk layout.
           { sessionId: id, sessionsRoot, cwd: dir },
         );
     void sessionPromise.then((s) => {
@@ -285,15 +268,13 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
         ? `Assigned evidence directory: ${evidenceDir}\n\n${packetPrompt}`
         : packetPrompt;
       return live.ask(opening).then(
-        // Salvage nudge: deep-reasoning runs sometimes end without emitting a
-        // final message (observed live 2026-08-02: four @max scouts, ~2.6M
-        // tokens, empty final text). The session context is intact at this
-        // point, so ask once for the report before the settle-side classifier
-        // writes the run off as an infrastructure failure. Only a multi-turn
-        // session can be nudged — a CLI oracle answers exactly once.
+        // Salvage nudge: deep-reasoning runs sometimes end with no final message
+        // (observed 2026-08-02: four @max scouts, ~2.6M tokens, empty text). The
+        // session context is still intact, so ask once before the settle-side
+        // classifier writes the run off as an infrastructure failure.
         (text) =>
-          // No salvage for a cancelled handle (abort resolves empty by
-          // design) — a nudge there is a full-context turn nobody reads.
+          // No salvage for a cancelled handle (abort resolves empty by design):
+          // a nudge there is a full-context turn nobody reads.
           text.trim() !== "" || !handles.has(id) || !live.capabilities.steerable
             ? text
             : live.ask(
@@ -306,16 +287,14 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
       id,
       kind: "worker",
       // One verb for both substrates: a pi session aborts, a spawned CLI is
-      // killed — session.abort() means whichever its substrate does. Before
-      // the async session resolves, cancellation is the handles.has(id)
-      // check above: the turn never launches.
+      // killed. Before the async session resolves, cancellation is the
+      // handles.has(id) check above — the turn never launches.
       stop: () => session?.abort(),
       mechanism: packet.mechanism,
       promise,
       session,
       usage: () => session?.usage(),
-      // Request-level counts, so a worker's completion can distinguish one
-      // long turn from several retried ones.
+      // So a worker's completion can distinguish one long turn from retries.
       attempts: () => session?.attempts?.() ?? 0,
       unmetered: () => session?.unmetered?.() ?? [],
       requests: () => session?.requests?.() ?? 0,
@@ -455,12 +434,10 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
         servedModel, reportedModel, providerSessionId, backendCwd,
         attempts, requests,
       }) => {
-        // A cancelled gate must not record a verdict (mirrors verification):
-        // an unseen verdict could later unlock concurrent workers nobody reviewed.
         if (!handles.has(id)) {
-          // Cancelled after the critic returned: the verdict must not be
-          // recorded (an unseen PASS could unlock concurrent workers), but the
-          // tokens were spent. Leaf them, exactly as the cadence does.
+          // Cancelled after the critic returned: the verdict must NOT be
+          // recorded (an unseen PASS could later unlock concurrent workers
+          // nobody reviewed), but the tokens were spent — leaf them.
           store.append({
             kind: "role-call",
             dispatchId: id,
@@ -473,10 +450,9 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
           promptChars,
           durationMs,
           dispatchId: id,
-          // specLabel like every other modelFamily writer (cadence.ts:295,539;
-          // coordinator-tools.ts:200) — trace.ts compares this against
-          // reportedModel, so the spelling must match across record kinds.
-          // Thinking level rides in its own field rather than being fused in.
+          // specLabel like every other modelFamily writer: trace.ts compares
+          // this against reportedModel, so the spelling must match across
+          // record kinds. Thinking level rides in its own field.
           modelFamily: servedModel ?? specLabel(gateSpec),
           modelSpec: specKey(gateSpec),
           ...defined({ reportedModel, providerSessionId, backendCwd, attempts, requests }),
@@ -489,8 +465,8 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
         }
         return `${verdict}\n\n${text}`;
       });
-      // liveOnMechanism counts workers only, so the mechanism is recorded as
-      // itself — a pending gate no longer has to disguise its own subject.
+      // liveOnMechanism counts workers only, so a gate records its mechanism as
+      // itself rather than disguising its own subject.
       registerHandle({ id, kind: "gate", mechanism: p.mechanism.slice(0, 60), promise, stop: () => gateStop.abort() });
       return toolText(
         `gate ${id} dispatched (${handles.size} live). The verdict arrives at a later wake; ` +
@@ -560,10 +536,9 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
         .filter((e) => sameRevision(e.revision, rel) && typeof e.artifact === "string")
         .map((e) => `${e.kind}: ${e.artifact}`)
         .join("; ");
-      // The promoted text is coordinator-authored; the harness cannot check
-      // that it is what the candidate proves. Recording the verified
-      // revision's content hash at least makes an over-claim auditable
-      // against the exact artifact the verifiers saw.
+      // The promoted text is coordinator-authored and the harness cannot check
+      // it against the candidate; the verified revision's content hash at least
+      // makes an over-claim auditable against what the verifiers saw.
       const verifiedHash = sha256File(path.join(dir, "EVIDENCE", rel));
       const premisesLine =
         premises.length > 0
@@ -584,9 +559,8 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
         revision: rel,
         candidateHash: verifiedHash,
         statement: p.exactStatement,
-        // The exact appended entry: lets the wake check that PROVED.md still
-        // contains what the events say it does (a skill-session resume can
-        // edit the file; retraction relabeling is supposed to).
+        // The exact appended entry, so a wake can check PROVED.md still contains
+        // what the events say it does.
         entry,
         ...(premises.length > 0 ? { premises: premises.map((pr) => pr.revision) } : {}),
       });
@@ -620,8 +594,8 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
         id: p.id,
         cancelled: true,
         reason: p.reason,
-        // The provider was paid for whatever ran before the cancel. Dropping
-        // it recorded a multi-hour worker as zero tokens.
+        // The provider was paid for whatever ran before the cancel; dropping it
+        // records a multi-hour worker as zero tokens.
         ...defined({
           usage: handle.usage?.(),
           attempts: handle.attempts?.(),
@@ -697,9 +671,8 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
         );
       }
       deps.declare(p);
-      // Work that already finished is persisted before anything is
-      // interrupted: a report lives only in memory until it is harvested, and
-      // an agent that ran for an hour must not lose its result to a pause.
+      // Finished work is persisted BEFORE anything is interrupted: an agent that
+      // ran for an hour must not lose its result to a pause.
       const harvested = harvestSettled();
       // "cease dispatch, interrupt task agents, cancel task computations
       // unless explicitly authorized to continue under supervision".

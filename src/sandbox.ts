@@ -1,10 +1,8 @@
 // OS supervision and confinement mechanics — the semantics-invisible lane
 // (design rule 2): reaper hooks, sandboxed argv-only execution, batch caps,
-// result caps, write-scope resolution and checks. Removable without changing
-// what a campaign concludes.
-// The launcher-clause enforcement lane — the role tool surface — lives in
-// workspace.ts, which imports this module; the edge never points back.
-// Role prompt text does NOT live here (LIBRARIAN_CHARGE is in roles.ts).
+// result caps, write-scope resolution and checks. The launcher-clause
+// enforcement lane (the role tool surface) is workspace.ts, which imports this
+// module; the edge never points back. Role prompt text is in roles.ts.
 import { execFile, spawn } from "node:child_process";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -13,11 +11,9 @@ import { repoRoot } from "./campaign.js";
 
 export const OUTPUT_LIMIT = 50_000;
 /**
- * Live batch reapers. Every supervised batch registers one so that a harness
- * that dies — operator Ctrl-C on a machine being eaten, a crash, an OOM kill —
- * takes its compute with it. Without this the scripts are detached process
- * groups with no watchdog left: exactly the uncapped runaway this layer
- * exists to prevent.
+ * Live batch reapers. Every supervised batch registers one so a harness that
+ * dies takes its compute with it; without this the scripts are detached process
+ * groups with no watchdog left.
  */
 export const liveReapers = new Set<() => void>();
 let reaperHooksInstalled = false;
@@ -25,12 +21,10 @@ export function installReaperHooks(): void {
   if (reaperHooksInstalled) return;
   reaperHooksInstalled = true;
   const reapAll = () => {
-    // Drained, not iterated: process.exit() inside the signal and crash
-    // handlers fires the `exit` listener, which reaps a second time. Every
-    // reaper is idempotent by contract so that was harmless, but a
-    // double-kill on a pid that has since been reused would not be, and
-    // "harmless because everything downstream is idempotent" is a property
-    // that decays. Draining makes the second pass a no-op structurally.
+    // Drained, not iterated: process.exit() inside the signal handlers fires the
+    // `exit` listener, which reaps a second time — and a double-kill on a pid
+    // that has since been reused is not harmless. Draining makes the second pass
+    // a no-op structurally rather than by downstream idempotence.
     const pending = [...liveReapers];
     liveReapers.clear();
     for (const reap of pending) {
@@ -50,17 +44,10 @@ export function installReaperHooks(): void {
       process.exit(sig === "SIGINT" ? 130 : 143);
     });
   }
-  // NO uncaughtException/unhandledRejection handlers, deliberately, and this
-  // is a REVERSAL worth recording: they were added on the belief that a crash
-  // was the one death that left compute running. On Bun it is not — an
-  // unhandled rejection and an uncaught throw both run `exit` listeners, so
-  // the hook above already reaps. Measured both ways before removing them.
-  //
-  // Adding them cost two things and bought nothing: Bun's default crash output
-  // is source-mapped to the offending line, and a handler replaces it with a
-  // bare stack (or "[object Object]" for a non-Error rejection value); and
-  // installing them created a double-reap, because process.exit() inside a
-  // handler fires the `exit` listener too.
+  // NO uncaughtException/unhandledRejection handlers, deliberately: on Bun both
+  // an unhandled rejection and an uncaught throw run `exit` listeners, so the
+  // hook above already reaps (measured). Adding them replaces Bun's
+  // source-mapped crash output with a bare stack and creates a double-reap.
 }
 
 /** A malformed limit must not silently become NaN: setTimeout(fn, NaN) fires
@@ -71,11 +58,10 @@ export function envNumber(raw: string | undefined, fallback: number, min: number
 }
 const positiveEnvNumber = (raw: string | undefined, fallback: number) => envNumber(raw, fallback, 1);
 
-/** Wall limit for one run_script batch / one librarian call. Never a
- *  proof-work timebox (the launcher forbids those) — supervision only. */
-// Read at call time, never frozen at module load: tests and wrappers set
-// these envs after import, and a value captured at import silently ignores
-// them (caught live when a new test file changed the suite's import order).
+/** Wall limit for one run_script batch / one librarian call. Never a proof-work
+ *  timebox (the launcher forbids those) — supervision only. Read at call time,
+ *  never frozen at module load: tests and wrappers set these envs after import,
+ *  and a value captured at import silently ignores them. */
 export const runTimeoutMs = () => positiveEnvNumber(process.env.COVERIFY_RUN_TIMEOUT_MS, 600_000);
 
 export function toolText(text: string) {
@@ -96,12 +82,10 @@ function sbplLiteral(p: string): string {
 /**
  * Wrap an argv in an OS write-sandbox (macOS sandbox-exec; SBPL rules are
  * last-match-wins, so denies are declared after allows). Reads stay
- * unrestricted — this narrows the tool surface, it adds no policy. On
- * non-darwin platforms the backend is @landstrip/landstrip (Landlock +
- * seccomp on Linux — kernel-enforced, no root; ecosystem adoption
- * 2026-08-02): same WriteScope semantics plus deny-default networking.
- * If the landstrip binary is unavailable there, the argv runs unsandboxed
- * and write confinement degrades to instructed-only — loudly.
+ * unrestricted. On non-darwin the backend is @landstrip/landstrip (Landlock +
+ * seccomp, kernel-enforced, no root): same WriteScope semantics plus
+ * deny-default networking. Without that binary the argv runs unsandboxed and
+ * write confinement degrades to instructed-only — loudly.
  */
 const LANDSTRIP_BIN = path.join(repoRoot(), "node_modules", ".bin", "landstrip");
 let landstripChecked = false;
@@ -134,8 +118,7 @@ function landstripAvailable(): boolean {
 function landstripPolicy(scope: WriteScope): object {
   // Canonical paths only: landstrip refuses deny targets reachable through a
   // symlinked ancestor of an allow root (POLICY_DENY_WRITE_SYMLINK_ANCESTOR),
-  // e.g. /tmp → /private/tmp. realResolve also canonicalizes not-yet-existing
-  // deny targets against their deepest real ancestor.
+  // e.g. /tmp -> /private/tmp.
   const canon = (p: string) => realResolve(p);
   return {
     enabled: true,
@@ -182,10 +165,10 @@ export function sandboxedArgv(argv: string[], scope: WriteScope): { file: string
   return { file: "sandbox-exec", args: ["-p", profile, ...argv] };
 }
 
-/** Fully resolve a path, including the final component when it exists — a
- *  symlink the role created inside its own directory must be judged by its
- *  target, or scope checks are decorative. Components that do not exist yet
- *  are appended to the deepest resolved ancestor. */
+/** Fully resolve a path, including the final component when it exists: a symlink
+ *  the role created inside its own directory must be judged by its target, or
+ *  scope checks are decorative. Nonexistent components are appended to the
+ *  deepest resolved ancestor. */
 export function realResolve(p: string): string {
   const abs = path.resolve(p);
   if (fs.existsSync(abs)) {
@@ -195,10 +178,9 @@ export function realResolve(p: string): string {
       /* raced away; fall through to the ancestor walk */
     }
   }
-  // A symlink whose target does not exist yet: existsSync follows links and
-  // says false, so the link would be judged as itself while the kernel writes
-  // through it. Resolve the link by hand — a dangling link pointed at
-  // PROVED.md is exactly how a write escapes its scope.
+  // A symlink whose target does not exist yet: existsSync follows links and says
+  // false, so the link would be judged as itself while the kernel writes through
+  // it. A dangling link pointed at PROVED.md is how a write escapes its scope.
   try {
     if (fs.lstatSync(abs).isSymbolicLink()) {
       const target = fs.readlinkSync(abs);
@@ -250,10 +232,8 @@ export const runMemMb = () => positiveEnvNumber(process.env.COVERIFY_RUN_MEM_MB,
 
 /**
  * Does this command line name one of the batch's scripts as an argument?
- *
- * Whole-token only. A substring test would adopt — and then SIGKILL — any
- * unrelated process whose arguments merely mention the path, which on a shared
- * working directory means other agents, editors, and dev servers.
+ * Whole-token only: a substring test would adopt — and SIGKILL — any unrelated
+ * process whose arguments merely mention the path.
  */
 function namesAMark(args: string, marks: readonly string[]): boolean {
   if (marks.length === 0) return false;
@@ -332,10 +312,9 @@ export interface SupervisedOut {
 /**
  * Run one or more argvs concurrently under a single supervision regime: shared
  * wall limit, shared RSS cap, whole-tree kill on exit/timeout/abort, and a
- * reaper so a dying harness takes the compute with it. Every path that
- * executes anything goes through here — run_script and the delegated
- * librarian alike — so neither becomes a doorway to the uncapped runaway that
- * kernel-panicked the host on 2026-08-01.
+ * reaper so a dying harness takes the compute with it. EVERY path that executes
+ * anything goes through here, so none becomes a doorway to the uncapped runaway
+ * that kernel-panicked the host on 2026-08-01.
  */
 export async function supervise(
   specs: { file: string; args: string[] }[],
@@ -422,8 +401,7 @@ export async function supervise(
       },
       (err: Error) => {
         if (fate || finished) return;
-        // A silently absent cap is worse than a loud one: stop rather than
-        // let an unmetered search run.
+        // A silently absent cap is worse than a loud stop.
         fate = `memory watchdog unavailable (${err.message}); stopped rather than run uncapped`;
         void killAll();
       },

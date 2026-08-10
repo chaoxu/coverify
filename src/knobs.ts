@@ -1,28 +1,17 @@
-// Every environment knob, declared once (issue #45).
+// Every environment knob, declared once (issue #45). Previously the truth lived
+// in three hand-synced places — the read site, cli.ts's usage string, and the
+// run stamp — and six knobs were stamped nowhere, so a campaign could not prove
+// what governed it.
 //
-// The problem was never the count — this many knobs against 6 CLI flags is a
-// lot, but not wrong. It was that the truth lived in three hand-synced places:
-// the read site in code, the usage string in cli.ts, and the run stamp in
-// observe.ts. The usage string named 5 of them, six were stamped nowhere, so a
-// campaign could not prove what governed it. That is the same drift pattern as
-// issue #43, one layer up.
+// Counts are deliberately never written down here: this module's whole thesis is
+// that a number kept by hand goes stale.
 //
-// Counts are deliberately not written down here. The first version of this
-// file said "31" in three places while declaring 37, inside the module whose
-// whole thesis is that a number kept by hand goes stale.
-//
-// Deliberately NOT a config file. Coverify just spent issue #44 removing an
-// ambient input that made runs unreproducible; a config file adds a new one —
-// "which config governed this run?" — for benefits available without it. One
-// source of truth per knob: the environment, with a declared default.
-//
-// Deliberately NOT a config LIBRARY either. envalid, znv, @t3-oss/env-core,
-// convict and nconf were surveyed: none provides provenance, generated help,
-// or a serializable snapshot — the three things actually needed — and all of
-// them parse eagerly and freeze, which breaks the lazy reads this codebase and
-// its tests depend on (tests set COVERIFY_FAMILY_* and COVERIFY_CODEX_CMD
-// mid-run and expect the next read to see it). typebox, already a dependency,
-// does the coercion and validation that was the only part they'd have covered.
+// Deliberately NOT a config file (issue #44 removed an ambient input that made
+// runs unreproducible; a config file adds "which config governed this run?"),
+// and deliberately NOT a config library: envalid, znv, @t3-oss/env-core, convict
+// and nconf provide no provenance, generated help, or serializable snapshot, and
+// all parse eagerly and freeze — which breaks the lazy reads this codebase and
+// its tests depend on.
 import { Type, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 
@@ -37,11 +26,9 @@ export interface Knob {
   detail: string;
   /** Which module reads it — so a reader can go straight to the enforcement. */
   module: string;
-  /** A free-form shell command template, which routinely carries auth flags
-   *  (`--api-key sk-…`). The run stamp is mirrored into the campaign's in-tree
-   *  journal, which lives in a project repo and is plausibly committed, so
-   *  these are stamped as `<set>` rather than verbatim. Standing rule: never
-   *  put a secret value in code, logs, or issues. */
+  /** A free-form shell command template, which routinely carries auth flags.
+   *  The run stamp is mirrored into the in-tree journal, which is plausibly
+   *  committed, so these are stamped as `<set>` rather than verbatim. */
   secret?: true;
 }
 
@@ -51,9 +38,8 @@ const nonNegInt = Type.Integer({ minimum: 0 });
 const flag = Type.Union([Type.Literal("1"), Type.Literal("true"), Type.Literal("yes")]);
 
 /** Role suffixes as spelled in the env names (NOT the RoleName union: the gate
- *  critic's variable is CRITIC and the auditor's is AUDITOR). Imported from
- *  providers.ts would be circular, so the conformance check pins that these
- *  match the ROLE_ENV table rather than a comment asking you to remember. */
+ *  critic's variable is CRITIC, the auditor's AUDITOR). Importing providers.ts
+ *  would be circular, so the conformance check pins these against ROLE_ENV. */
 export const ROLE_ENV_SUFFIXES = [
   "COORDINATOR",
   "REASONER",
@@ -202,22 +188,17 @@ export function readKnob(name: string): string | undefined {
   return raw;
 }
 
-/** Why this raw value is invalid for this knob, or undefined if it is fine.
- *
- *  Validates the CONVERTED value but reports the RAW one, because the raw
- *  string is what the operator typed and what every real reader will see —
- *  typebox's Convert is lenient enough that "true", "0x10" and "1e3" all
- *  satisfy Integer, so a check that returned the converted value would bless
- *  strings the actual readers then turn into NaN. */
 /** The literal values a union-schema knob accepts, read off the schema rather
- *  than spelled in prose — the hand-written usage block used to list the
- *  effort ladder by hand, which is precisely the drift this registry ends. */
+ *  than spelled in prose. */
 function knobChoices(knob: Knob): string[] | undefined {
   const anyOf = (knob.schema as { anyOf?: { const?: string }[] }).anyOf;
   const consts = anyOf?.map((s) => s.const).filter((c): c is string => c !== undefined);
   return consts !== undefined && consts.length > 0 ? consts : undefined;
 }
 
+/** Why this raw value is invalid for this knob, or undefined if it is fine.
+ *  Validates the CONVERTED value but reports the RAW one, which is what the
+ *  operator typed. */
 function knobError(knob: Knob, raw: string): string | undefined {
   const converted = Value.Convert(knob.schema, raw);
   const choices = knobChoices(knob);
@@ -229,19 +210,16 @@ function knobError(knob: Knob, raw: string): string | undefined {
       ". Refusing to fall back to the default: a silently ignored setting is worse than a stop."
     );
   }
-  // Re-serialization check, for NUMERIC and enum knobs only. It defeats
-  // typebox Convert's leniency — "true", "0x10" and "1e3" all satisfy
-  // Integer, and the real readers then Number() them into NaN or a silently
-  // different value.
+  // Re-serialization check, for NUMERIC and enum knobs ONLY. It defeats typebox
+  // Convert's leniency: "true", "0x10" and "1e3" all satisfy Integer, and the
+  // real readers then Number() them into NaN.
   //
-  // NOT applied to free-form strings, and that exclusion is the bug fix: for a
-  // plain Type.String() Convert is the identity and Check always passes, so
-  // the comparison could only ever REJECT. It rejected any value with
-  // surrounding whitespace — ` claude -p `, or a template set from a heredoc
-  // with a trailing newline — and since validateKnobs() is the first statement
-  // of prove(), that refused to start the campaign, with an empty reason
-  // because a valid string produces no Value.Errors. 20 of the knobs are
-  // plain strings, including every model spec and every command template.
+  // It must NOT apply to free-form strings: for a plain Type.String() Convert is
+  // the identity, so the comparison can only ever REJECT — it rejected any value
+  // with surrounding whitespace (` claude -p `, a heredoc's trailing newline),
+  // and validateKnobs() is the first statement of prove(), so that refused to
+  // start the campaign with an empty reason. Most knobs are plain strings,
+  // including every model spec and command template.
   const freeForm = (knob.schema as { type?: string }).type === "string" && choices === undefined;
   if (freeForm || String(converted) === raw.trim()) return undefined;
   return (
@@ -253,18 +231,13 @@ function knobError(knob: Knob, raw: string): string | undefined {
 }
 
 /**
- * Validate every knob set in this environment, and throw listing ALL the bad
- * ones. Called once at campaign start.
- *
- * This is where the "never silently falls back" property is actually
- * enforced. The individual readers stay lenient on purpose — `runTimeoutMs()`
- * is called while a tool is executing, and throwing there would kill a live
- * campaign over a telemetry-shaped setting — so the check runs up front,
- * before any spend, where a bad value costs nothing to reject. Without it the
- * registry documents a guarantee nothing provides: `COVERIFY_RETRY_MAX=abc`
- * silently became 3, and `COVERIFY_COORDINATOR_CONTEXT_TOKENS=abc` became
- * NaN, which made `approxTokens() > NaN` false forever so compaction never
- * fired and the coordinator's context grew unbounded.
+ * Validate every knob set in this environment, throwing with ALL the bad ones.
+ * Called once at campaign start, which is where "never silently falls back" is
+ * actually enforced: the individual readers stay lenient because `runTimeoutMs()`
+ * runs while a tool executes and throwing there would kill a live campaign.
+ * Without this, `COVERIFY_RETRY_MAX=abc` silently became 3 and
+ * `COVERIFY_COORDINATOR_CONTEXT_TOKENS=abc` became NaN, making
+ * `approxTokens() > NaN` false forever so compaction never fired.
  */
 export function validateKnobs(): void {
   const bad = KNOBS.map((k) => {
@@ -283,9 +256,8 @@ export interface ResolvedKnob {
   detail: string;
   module: string;
   /** Set when the environment holds a value this knob's schema rejects. The
-   *  pre-flight has to SHOW this: a command whose stated purpose is "confirm
-   *  the arm before spending quota" would otherwise render a typo'd arm as a
-   *  healthy `env`-sourced value. */
+   *  pre-flight must SHOW this, or a typo'd A/B arm renders as a healthy
+   *  `env`-sourced value. */
   invalid?: string;
 }
 
@@ -306,14 +278,9 @@ export function resolvedKnobs(): ResolvedKnob[] {
 }
 
 /** The run stamp's view: only what was actually SET, so the record says what
- *  governed this run without a row of "unset" for every knob that was not.
- *
- *  Command templates are stamped as `<set>`. They are free-form shell strings
- *  that routinely carry auth flags, and this record is mirrored into the
- *  campaign's in-tree journal — a file inside a project repo that is
- *  plausibly committed. Recording THAT a template was overridden is the part
- *  that matters for reproducing a run; recording the flag that authenticated
- *  it is a leak. */
+ *  governed this run without an "unset" row for every knob that did not.
+ *  Command templates are stamped as `<set>` — recording THAT one was overridden
+ *  reproduces the run; recording the flag that authenticated it is a leak. */
 export function knobSnapshot(): Record<string, string> {
   return Object.fromEntries(
     KNOBS.filter((k) => {
@@ -339,13 +306,11 @@ export function knobUsage(): string {
 }
 
 /**
- * @param effective role -> the spec that will actually be used, resolved by
- *        providers.ts. Passed in rather than imported so this module stays
- *        dependency-free (the conformance check imports it). Without it the
- *        model knobs render as "unset", which is true of the VARIABLE and
- *        misleading about the run: their defaults live in ROLE_DEFAULTS, and
- *        the effective spec is the thing an operator is actually checking
- *        before spending quota on an A/B arm.
+ * @param effective role -> the spec that will actually be used. Passed in rather
+ *        than imported so this module stays dependency-free (the conformance
+ *        check imports it). Without it the model knobs render as "unset", which
+ *        is true of the VARIABLE and misleading about the run, since their
+ *        defaults live in ROLE_DEFAULTS.
  */
 export function formatResolvedKnobs(
   rows: readonly ResolvedKnob[],
@@ -366,9 +331,8 @@ export function formatResolvedKnobs(
   out.push("");
   const w = Math.max(...rows.map((r) => r.name.length));
   for (const r of rows) {
-    // Redacted only when the ENVIRONMENT supplied it. A shipped default
-    // carries no secret and IS the fact this command exists to show; printing
-    // `default: <set>` was incoherent and hid the built-in from the reader.
+    // Redacted only when the ENVIRONMENT supplied it: a shipped default carries
+    // no secret and IS the fact this command exists to show.
     const secret = KNOBS.find((k) => k.name === r.name)?.secret === true;
     const shown = r.value === undefined ? "—" : secret && r.source === "env" ? "<set>" : r.value;
     out.push(`  ${(r.invalid ? "INVALID" : r.source).padEnd(7)} ${r.name.padEnd(w)}  ${shown}`);

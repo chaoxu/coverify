@@ -49,24 +49,21 @@ export interface CampaignOptions {
 
 export interface Handle {
   id: string;
-  /** What this handle is. The user's --agent-limit caps workers only, and the
-   *  wave gate counts workers on a mechanism — both were previously decided by
-   *  string prefixes on the id and a `gate:` prefix stuffed into `mechanism`,
-   *  so a change of id spelling would have silently moved a launcher limit. */
+  /** What this handle is. --agent-limit caps workers only and the wave gate
+   *  counts workers on a mechanism, so this must be an explicit field: deciding
+   *  it from id-string prefixes let a change of id spelling silently move a
+   *  launcher limit. */
   kind: "worker" | "gate" | "verification";
   mechanism: string;
   promise: Promise<string>;
-  /** The work's session, when it runs as one (workers; the coordinator is
-   *  held separately; a verification cadence has none). What the session can
-   *  do — steered mid-flight, or only stopped — is its explicit
-   *  `capabilities` flag, not the presence of this field. */
+  /** The work's session, when it runs as one (workers only). What the session
+   *  can do is its `capabilities` flag, not the presence of this field. */
   session?: RoleSession;
-  /** Stop this work, whatever substrate runs it: abort a session, kill a
-   *  spawned child, or make a composite cadence notice it was cancelled.
-   *  Idempotent; safe to call on work that has already finished. */
+  /** Stop this work, whatever substrate runs it. Idempotent; safe on work that
+   *  already finished. */
   stop?: () => void;
-  /** Provider- or CLI-reported usage, read at completion (undefined when the
-   *  backend reported none). */
+  /** Usage read at completion (undefined when the backend reported none —
+   *  absent ≠ zero; see RoleUsage). */
   usage?: () => RoleUsage | undefined;
   /** Request-level counts; see RoleSession.attempts. */
   attempts?: () => number;
@@ -87,18 +84,13 @@ const NOOP_WAKE_PAUSE = 3;
  *  should stop the campaign loudly instead of spinning. */
 const TURN_FAILURE_LIMIT = 5;
 
-/** Coordinator context cap (approx tokens). The coordinator stays resident
- *  across wakes — matching how the skill runs in a live harness session —
- *  until this cap, at which point the session compacts in place (the
- *  launcher's anticipated "context compaction", summary subordinated to the
- *  ledgers, restart-rule reread in the next wake message); kill-and-rebuild
- *  via the restart rule remains the fallback when compaction is unavailable
- *  or fails. Mechanics: the cap changes cost, not semantics, because
- *  every decision must be externalized to the ledgers regardless. */
-// Guarded, not bare Number(): a typo made this NaN, and `approxTokens() > NaN`
-// is false forever — so in-place compaction never fired and the coordinator
-// context grew unbounded. validateKnobs() rejects a bad value at startup; this
-// keeps the failure impossible rather than merely reported.
+/** Coordinator context cap (approx tokens): the coordinator stays resident
+ *  across wakes until this cap, then compacts in place (the launcher's
+ *  anticipated "context compaction"), with restart-rule rebuild as the fallback.
+ *  Mechanics — the cap changes cost, not semantics.
+ *
+ *  Guarded, not bare Number(): a typo made this NaN, and `approxTokens() > NaN`
+ *  is false forever, so compaction never fired and context grew unbounded. */
 const COORDINATOR_CONTEXT_TOKENS = envNumber(process.env.COVERIFY_COORDINATOR_CONTEXT_TOKENS, 300_000, 1);
 
 /**
@@ -108,9 +100,8 @@ const COORDINATOR_CONTEXT_TOKENS = envNumber(process.env.COVERIFY_COORDINATOR_CO
  */
 export async function runCampaign(opts: CampaignOptions): Promise<string> {
   const dir = path.resolve(opts.campaignDir);
-  // Held for the whole run and released on every exit path, including the
-  // throwing ones — this is exactly the shape of obligation that produced
-  // three lost-report bugs when it was left to each return statement.
+  // Held for the whole run and released on every exit path, throwing ones
+  // included; leaving this to each return statement lost reports three times.
   const release = acquireCampaignLock(dir);
   try {
     return await runLockedCampaign(opts, dir);
@@ -123,18 +114,14 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   const contract = loadLauncherContract();
   const models = await buildModels();
   const store = new GateStore(dir);
-  // Set before ANY record is written — the guidance import below and the
-  // statement freeze both append, and the reading rule this enables ("no runId
-  // means the record predates 2026-08-09") is corrupted by present-day writers
-  // that also write unstamped.
+  // Set before ANY record is written: the reading rule "no runId means the
+  // record predates 2026-08-09" breaks if a present-day writer emits unstamped.
   const runId = randomUUID().slice(0, 8);
   store.setRunId(runId);
 
-  // One-time import: standing user guidance recorded before the event-log
-  // unification (2026-08-07) lives only in the in-tree journal. Adopt it into
-  // the authoritative log once, marked as imported — the journal is the
-  // lower-trust surface, and the marker keeps that provenance on the record
-  // forever. The closing marker also makes the import idempotent.
+  // One-time import: guidance recorded before the event-log unification
+  // (2026-08-07) lives only in the in-tree journal. The marker keeps the
+  // lower-trust provenance on the record and makes the import idempotent.
   if (!store.all().some((e) => e.kind === "note" && e.journalGuidanceImport === true)) {
     for (const e of readJournal(dir) as unknown as Record<string, unknown>[]) {
       const note = typeof e.note === "string" ? e.note : "";
@@ -146,16 +133,9 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   }
 
   // Run-config stamp: attributes this run to an exact (harness, contract,
-  // policy, runtime) tuple — see observe.ts.
-  // One id per harness process, stamped on every usage event. Coordinator
-  // usage is CUMULATIVE per session, and the only previous way to find an
-  // epoch boundary was to watch the counter go backwards — an inference that
-  // over-split one campaign into 18 epochs against 15 real sessions and
-  // overstated its fresh input by 16.7M tokens. Short and human-typeable: it
-  // appears in operator queries.
-
-  // One resolution per run; every record naming the coordinator model spells
-  // it from this, so the run-config stamp and the usage events join.
+  // policy, runtime) tuple — see observe.ts. One resolution per run; every
+  // record naming the coordinator model spells it from this, so the stamp and
+  // the usage events join.
   const coordinatorSpec = roleModelSpec("coordinator");
   recordRunConfig(store, {
     runId,
@@ -204,10 +184,9 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       : path.join(dir, "EVIDENCE");
     let resolved = path.resolve(root, p);
     if (!resolved.startsWith(root + path.sep)) return undefined;
-    // Canonical on-disk case: gate records (prior FAIL, bundle-cert FAIL,
-    // promotion) key on this string, and darwin opens `Cand.md` and `cand.md`
-    // as one file — without this, retyping the case would look like a new
-    // revision and slip past anti-verdict-shopping.
+    // Canonical on-disk case: gate records key on this string, and darwin opens
+    // `Cand.md` and `cand.md` as one file — without this, retyping the case
+    // looks like a new revision and slips past anti-verdict-shopping.
     if (fs.existsSync(resolved)) resolved = fs.realpathSync.native(resolved);
     if (!resolved.startsWith(root + path.sep)) return undefined;
     return path.relative(root, resolved);
@@ -216,81 +195,57 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   const liveOnMechanism = (mechanism: string): number =>
     [...handles.values()].filter((h) => h.kind === "worker" && h.mechanism === mechanism).length;
 
-  // The user's --agent-limit caps concurrent WORKERS (reasoners r*, technicians
-  // t*). Judges — gate critics g* and verification cadences v* — are also
-  // handles but must not consume the workers' budget: ten pending verdicts
-  // should never block a dispatch.
+  // --agent-limit caps concurrent WORKERS only. Judges (gate critics, cadences)
+  // are handles too but must not consume the workers' budget: ten pending
+  // verdicts should never block a dispatch.
   const liveWorkers = (): number =>
     [...handles.values()].filter((h) => h.kind === "worker").length;
 
   const sessionsRoot = path.join(dir, ".coverify", "sessions");
 
-  /** Registers a settled-queue handle: the one async pattern every dispatch
-   *  shares. The work arrives as a promise or a thunk; a thunk is started
-   *  only after the handle is in `handles`, so work with a synchronous
-   *  prefix (a fully carried-forward verification cadence) can never observe
-   *  its own id as missing and spuriously self-cancel. Already-running
-   *  promises register as before. */
+  /** Registers a settled-queue handle. A thunk is started only after the handle
+   *  is in `handles`, so work with a synchronous prefix cannot observe its own
+   *  id as missing and spuriously self-cancel. */
   const registerHandle = (
     h: Omit<Handle, "settled" | "promise"> & { promise: Promise<string> | (() => Promise<string>) },
   ) => {
     const handle = h as unknown as Handle;
-    // Durability happens here, at the moment work settles — not later, when
-    // some exit path remembers to harvest. Three separate bugs (pause, the
-    // wake-limit exit, the declaration return) each lost an hour of an agent's
-    // work because the report lived only in this queue until harvested; with
-    // the write at settle time that class cannot recur, and the queue carries
+    // Durability happens at the moment work settles, never later when some exit
+    // path remembers to harvest: three exit paths each lost an hour of agent
+    // work when the report lived only in the queue. The queue then carries
     // nothing but a pointer to bytes already on disk.
     //
-    // Failure is classified here too — a rejected call or empty final text is
-    // an infrastructure failure — so `failed` is the single source of truth
-    // and `failed` set ⟺ no report artifact exists.
+    // Failure is classified here too, so `failed` is the single source of truth:
+    // `failed` set ⟺ no report artifact exists.
     const persist = (report: string, failed?: string, partialText?: string, billed?: RoleUsage) => {
       const live = handles.has(handle.id);
-      // The tree's last edge for this dispatch: `usage`, and the two request
-      // counts beside it so a reader can tell four retried calls from one long
-      // one.
+      // Written even when the handle is no longer live, deliberately: a cancel
+      // records handle.usage() synchronously, but a pi session refreshes totals
+      // only in an attempt's `finally`, so the cancel record of a mid-turn
+      // worker is ~0 and the real number lands HERE. Both are cumulative
+      // snapshots of one session and view/spend.ts keeps the last per id, so
+      // writing both de-duplicates at read time.
       //
-      // Written even when the handle is no longer live, and that is deliberate
-      // rather than sloppy. A cancel records `handle.usage()` synchronously,
-      // but a pi session only refreshes its totals in the `finally` of an
-      // attempt — before the first refresh `usage()` is all zeros, so the
-      // cancel record of a mid-turn worker is ~0 and the real number does not
-      // exist until the abort unwinds and lands HERE. Suppressing it to avoid
-      // a duplicate threw away the only true total and left the fabricated
-      // zero standing. Both records are cumulative snapshots of one session,
-      // the later strictly containing the earlier, and view/spend.ts keeps the
-      // last per id — so writing both is de-duplicated at read time and is
-      // strictly more information than writing one.
-      //
-      // `billed` is the fallback for a call the provider was PAID for before
-      // it failed: a CLI that exits nonzero after emitting turn.completed
-      // carries its spend on the rejection, and the gate and worker lanes
-      // register no usage() of their own. Skipped once some component upstream
-      // has claimed that payment (BilledFailure.usageLeafed) — the cadence
-      // leafs it with richer context, and the claim is what keeps that leaf
-      // and this record from both counting it.
+      // `billed` is the fallback for a call the provider was PAID for before it
+      // failed (a CLI exiting nonzero after turn.completed). Skipped once
+      // something upstream claimed that payment (BilledFailure.usageLeafed), so
+      // that leaf and this record cannot both count it.
       const spend = () =>
         defined({
           usage: handle.usage?.() ?? billed,
           attempts: handle.attempts?.(),
           requests: handle.requests?.(),
         });
-      // Tool-spawned provider calls this handle could not measure (the
-      // librarian's own searches, the agy and chatgpt-cli lanes, which ship no
-      // usage payload at all). Leafed once per settle, so an unmeasurable call
-      // reads as a declared gap instead of as silence. Drained rather than
-      // read: `persist` is the single settle path, but an array that is only
-      // ever peeked is one refactor away from emitting each gap twice.
+      // Tool-spawned calls this handle could not measure. Leafed once per
+      // settle so an unmeasurable call reads as a declared gap, not silence.
+      // Drained rather than peeked, so a refactor cannot emit each gap twice.
       for (const u of handle.unmetered?.().splice(0) ?? []) {
         store.append({ kind: "role-call", dispatchId: handle.id, unmetered: u.lane, detail: u.detail });
       }
       if (failed !== undefined) {
-        // Preserve whatever the dead stream had produced. It is NOT a
-        // deliverable — the completion stays an infrastructure failure, the
-        // assignment stays unfinished, and redispatch stays legitimate —
-        // but half an hour of reasoning is worth more on disk than in a
-        // dropped socket, and the coordinator can mine it when redispatching.
+        // Preserve what the dead stream produced. NOT a deliverable: the
+        // completion stays an infrastructure failure and redispatch stays
+        // legitimate, but the coordinator can mine the notes.
         let partial: string | undefined;
         if (partialText !== undefined && partialText.trim() !== "") {
           const p = newEvidencePath(dir, `${handle.id}/partial`);
@@ -316,9 +271,9 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       fs.writeFileSync(reportPath, report);
       const rel = path.relative(dir, reportPath);
       if (live) {
-        // Hash-bound like every other trusted artifact: delivery re-reads the
-        // file from an in-tree path a coordinator's write scope can touch, so
-        // the bytes delivered must be provably the bytes the worker returned.
+        // Hash-bound: delivery re-reads the file from a path the coordinator's
+        // write scope can touch, so the bytes delivered must be provably the
+        // bytes the worker returned.
         store.append({
           kind: "completion",
           id: handle.id,
@@ -328,14 +283,10 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
         });
         settledQueue.push({ h: handle, failed: undefined });
       } else {
-        // Cancelled while running: its completion is already recorded, so this
-        // is journaled as a late artifact rather than a second completion —
-        // the work is kept, the accounting is not double-counted, and it never
-        // resurfaces to the coordinator as a new report.
-        // Carries the settle-time totals for the same reason the failure branch
-        // does: the cancel record was written before this session's usage had
-        // ever been refreshed. Same id, so the reader supersedes the earlier
-        // snapshot rather than adding to it.
+        // Cancelled while running: the completion is already recorded, so this
+        // is a late artifact rather than a second completion — kept, not
+        // double-counted, and never resurfaced as a new report. Same id, so a
+        // reader supersedes the earlier snapshot rather than adding to it.
         store.event({
           kind: "note",
           note: `late report after cancellation`,
@@ -352,11 +303,10 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
         persist(report, report.trim() === "" ? "empty report (no final text returned)" : undefined),
       (err: unknown) => {
         let failure = String(err);
-        // Name the real cause of a mid-run window overflow: the SESSION grew
-        // past the model context (accumulated tool results + reasoning), not
-        // the packet. Without this the coordinator's natural response is
-        // packet-splitting, which measurably does not help (issue #22:
-        // r181/r185 — the minimal split retry died the same way).
+        // Name the real cause: the SESSION grew past the model context, not the
+        // packet. Without this the coordinator reaches for packet-splitting,
+        // which measurably does not help (issue #22: r181/r185 died the same
+        // way).
         if (/context window|context length|maximum context/i.test(failure)) {
           failure +=
             " [harness diagnosis: the worker's session outgrew the model window mid-run — " +
@@ -376,17 +326,14 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   };
 
   /**
-   * Drain every settled handle: persist its report (or its infrastructure
-   * failure) and journal the completion. A report exists only in memory until
-   * it is harvested, so every path that empties the queue must come through
-   * here — dropping it instead destroys finished work.
+   * Drain every settled handle. Every path that empties the queue must come
+   * through here; dropping it instead destroys finished work.
    */
   const harvestSettled = (): { total: number; failed: number } => {
     const settled = settledQueue.splice(0, settledQueue.length);
     for (const s of settled) handles.delete(s.h.id);
-    // Counts only. The wake's report text is rendered from the durable record
-    // by undeliveredCompletions(store, dir) — this used to render a second copy that no
-    // caller read, an invitation for the two to drift.
+    // Counts only: the wake's report text is rendered from the durable record by
+    // undeliveredCompletions(store, dir).
     return {
       total: settled.length,
       failed: settled.filter((s) => s.failed !== undefined).length,
@@ -394,24 +341,10 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   };
 
   /**
-   * Completions the coordinator has not been shown yet.
-   *
-   * Persistence and delivery are separate obligations: a report is written the
-   * moment it settles, but if the wake that would show it throws (a provider
-   * error) or the run ends at its wake limit, the in-memory sections are gone
-   * and the completion record already excludes it from the lost-work list — so
-   * no coordinator would ever see it, in this run or any later one. Delivery is
-   * therefore recorded too, and anything unmarked is re-offered, including
-   * across restarts.
-   */
-  /**
-   * Every user directive delivered so far, oldest first.
-   *
-   * A delivered `coverify say` used to live only in the coordinator's
-   * conversation: the resume bundle has no user channel and the compaction
-   * preserve-list names ledgers, so "never spend on route B" silently stopped
-   * applying at the next rebuild while the campaign ran on. Directives are
-   * journaled on delivery, so they can simply be replayed.
+   * Every user directive delivered so far, oldest first. Directives are
+   * journaled on delivery and replayed here: living only in the coordinator's
+   * conversation, a `coverify say` silently stopped applying at the next
+   * rebuild (the resume bundle has no user channel).
    */
   const standingGuidance = (): string[] => {
     const out: string[] = [];
@@ -473,13 +406,10 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     },
   });
 
-  // Reading discipline for a coordinator whose context was just built or
-  // compacted. Measured on the 2026-08-01 lin3cut campaign (issue #17): a
-  // rebuilt coordinator voluntarily re-read PROVED.md, FAILED.md, and old
-  // candidates wholesale — 143–208k tokens of onboarding against a ~5k
-  // bundle — which is why only ~3 wakes fit per context window. The restart
-  // clause already scopes the reread; this note makes the scope explicit at
-  // the moment of temptation. Mechanics: it forbids nothing.
+  // Reading discipline for a just-built or just-compacted coordinator. Measured
+  // 2026-08-01 (issue #17): a rebuilt coordinator re-read the ledgers wholesale
+  // — 143–208k tokens of onboarding against a ~5k bundle, which is why only ~3
+  // wakes fit per window. Mechanics: it forbids nothing.
   const readingDiscipline =
     "\n\nReading discipline (context economy): the bundle above is the contract's scoped reread — " +
     "statement, frontier, registry index, and lessons. PROVED.md, FAILED.md, and EVIDENCE/ are " +
@@ -501,15 +431,15 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   let turnFailures = 0;
   let coordinator: RoleSession | undefined;
   let coordinatorEpoch = 0;
-  /** Unique per (run, rebuild). Used both as pi's session id — hence its
-   *  prompt cache key — and as the `sessionId` on every coordinator usage
-   *  record, so spend groups by an identity on the record instead of by a
-   *  reset inferred from a counter that went backwards. */
+  /** Unique per (run, rebuild). Serves as pi's session id (hence prompt cache
+   *  key) and as `sessionId` on every coordinator usage record, so spend groups
+   *  by an identity on the record rather than by inferring a reset from a
+   *  counter that went backwards — that inference over-split one campaign into
+   *  18 epochs against 15 real sessions and overstated fresh input by 16.7M
+   *  tokens. */
   const coordinatorSessionId = () => `coordinator-${runId}-${coordinatorEpoch}`;
-  // Baseline for the per-wake deltas. A rebuilt session starts a new cumulative
-  // series, so this resets with it — the one place the epoch boundary is now
-  // used, and it is known here rather than inferred at read time. One object so
-  // the two counters cannot be reset in different places and drift.
+  // Baseline for the per-wake deltas, reset with the session. One object so the
+  // two counters cannot be reset in different places and drift.
   let prevCoord: { usage?: RoleUsage; attempts: number; requests: number } = { attempts: 0, requests: 0 };
   /** Both discard paths (compaction failure, failed turn) throw the session
    *  away, and the call that failed was already billed. This is the last
@@ -526,22 +456,18 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       modelSpec: specKey(coordinatorSpec),
       usage: subUsage(total, prevCoord.usage),
       // The retries are the POINT of this record: a failed turn is the lane
-      // retryAssistantCall actually fires on, and an attempt re-presents the
-      // whole context and is billed while leaving no message behind. It is the
-      // one count no later reader can reconstruct, and the session holding it
-      // is discarded on the next line.
+      // retryAssistantCall fires on, and attempts are the one count no later
+      // reader can reconstruct — the session holding it is discarded next line.
       ...defined({
         attempts: (coordinator?.attempts?.() ?? 0) - prevCoord.attempts,
         requests: Math.max(0, (coordinator?.requests?.() ?? 0) - prevCoord.requests),
       }),
     });
   };
-  /** The compaction's own spend, leafed like any other call. The summarization
-   *  is a real, large provider request, and its tokens were being folded
-   *  silently into the session total — so the first-order cost of the
-   *  resident-coordinator design was unmeasurable, and no record said a
-   *  compaction had happened at all (#37). The record carries the DELTA this
-   *  call cost plus the context it traded away. */
+  /** The compaction's own spend, leafed like any other call: a real, large
+   *  provider request whose tokens otherwise fold silently into the session
+   *  total, leaving the resident-coordinator design's first-order cost
+   *  unmeasurable (#37). Carries the DELTA plus the context traded away. */
   const leafCompactionSpend = (session: RoleSession, before: RoleUsage | undefined, beforeTokens: number) => {
     const after = session.usage();
     if (!after) return;
@@ -553,22 +479,17 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       compaction: true,
       modelSpec: specKey(coordinatorSpec),
       usage: subUsage(after, before),
-      // compact() is one provider request that leaves no assistant message
-      // behind, so `requests` (derived from the transcript) cannot see it and
-      // `attempts` is the only record it will ever have. Rule 13 requires both
-      // on every usage-bearing record, and calls attempts the one count no
-      // later reader can reconstruct.
+      // compact() leaves no assistant message, so `requests` (transcript-
+      // derived) cannot see it and `attempts` is its only record. Rule 13
+      // requires both on every usage-bearing record.
       attempts: 1,
       requests: 0,
       contextTokensBefore: beforeTokens,
       contextTokensAfter: session.approxTokens(),
     });
-    // BOTH baselines move, not just usage. compact() increments the session's
-    // attempt counter, so advancing only `usage` left the wake's own leaf
-    // reporting a wake-only token delta beside an attempt count that still
-    // included this call — the same "usage and attempts disagree by
-    // construction on every compacted session" that providers.ts's attempts++
-    // was added to end, re-opened from the other side.
+    // BOTH baselines move: compact() increments the session's attempt counter,
+    // so advancing only `usage` leaves the wake's leaf reporting a wake-only
+    // token delta beside an attempt count that still includes this call.
     prevCoord = {
       usage: after,
       attempts: session.attempts?.() ?? prevCoord.attempts,
@@ -577,8 +498,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   };
   // Per-wake context growth, surfaced when large (issue #17): the measured
   // campaign grew 29–55k tokens per wake, ~90% of it the coordinator's own
-  // reads and output, invisible to the coordinator itself. Telemetry plus a
-  // note — never a refusal.
+  // reads and output. Telemetry plus a note — never a refusal.
   const GROWTH_NOTE_TOKENS = envNumber(process.env.COVERIFY_WAKE_GROWTH_NOTE_TOKENS, 40_000, 1);
   let prevContextTokens: number | undefined;
   let growthNote = "";
@@ -586,7 +506,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     wakeCount++;
     if (opts.maxWakes !== undefined && wakeCount > opts.maxWakes) {
       // Harvest before returning: what unblocked this loop is usually an agent
-      // finishing, and its report lives only in the queue until persisted.
+      // finishing.
       const atLimit = harvestSettled();
       store.event({
         kind: "note",
@@ -600,9 +520,8 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       );
     }
     activityThisWake = 0;
-    // Harvest first: the digest and the live-agent limits must describe the
-    // world the coordinator is about to act in, not the one before completions
-    // landed — otherwise a finished agent is reported as still running in the
+    // Harvest first, so the digest describes the world the coordinator is about
+    // to act in: otherwise a finished agent is reported as still running in the
     // same message that delivers its report.
     const harvested = harvestSettled();
     // Delivered from the record, not from the queue: a report the previous
@@ -612,10 +531,8 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     const limits: string[] = [];
     if (opts.userAgentLimit !== undefined) limits.push(`workers ${liveWorkers()}/${opts.userAgentLimit}`);
     if (opts.maxWakes !== undefined) limits.push(`wakes ${wakeCount}/${opts.maxWakes}`);
-    // Mechanical fact only (allocation judgment stays the coordinator's):
-    // idle worker capacity alongside live judges is easy to overlook from
-    // inside a wake, and stated plainly it lets the coordinator decide
-    // whether waiting is deliberate (skill-feedback 2026-08-09).
+    // Mechanical fact only; allocation judgment stays the coordinator's
+    // (skill-feedback 2026-08-09).
     const liveJudges = [...handles.values()].filter((h) => h.kind !== "worker").length;
     if (
       opts.userAgentLimit !== undefined &&
@@ -640,25 +557,20 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       pendingDelivery: pending.length,
       ...(harvested.failed > 0 ? { failed: harvested.failed } : {}),
     });
-    // Bookkeeping the harness can check, so the coordinator does not have to
-    // remember it (observe.ts): dangling citations, contradicted or edited
-    // promotions, refused work nothing followed up.
+    // Bookkeeping the harness can check so the coordinator need not remember it
+    // (observe.ts): dangling citations, edited promotions, unfollowed refusals.
     const bookkeeping = wakeBookkeeping(store, dir);
     const idleNudge =
       handles.size === 0 && reportSections.length === 0 && wakeCount > 1
         ? "\nNothing is live and no new reports arrived. Per the contract the campaign remains " +
           "authorized: dispatch the next materially new fan-out, or explicitly declare_campaign_state."
         : "";
-    // Resident coordinator: at the context cap the session compacts in
-    // place; rebuild happens only at start, on compaction failure, or after
-    // a failed coordinator turn (the launcher's restart rule is the rebuild).
+    // Resident coordinator: at the context cap the session compacts in place;
+    // rebuild happens only at start, on compaction failure, or after a failed
+    // turn (the launcher's restart rule is the rebuild).
     let justCompacted = false;
     if (coordinator && coordinator.approxTokens() > COORDINATOR_CONTEXT_TOKENS) {
       if (coordinator.compact) {
-        // Redesign phase 2: real in-place compaction (the launcher's
-        // anticipated "context compaction") instead of session kill+rebuild.
-        // The reread rule fires in the next wake message; the summary is
-        // explicitly subordinated to the ledgers.
         store.event({
           kind: "note",
           note: `coordinator context cap (${COORDINATOR_CONTEXT_TOKENS} tok) reached; compacting (restart rule applies)`,
@@ -676,9 +588,8 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           justCompacted = true;
           leafCompactionSpend(coordinator, beforeUsage, beforeTokens);
         } catch (e) {
-          // Compaction is a real LLM call and can fail (quota, provider);
-          // the campaign must not die with workers live — fall back to the
-          // infallible restart-rule rebuild (review 2026-08-02).
+          // Compaction is a real LLM call and can fail; the campaign must not
+          // die with workers live, so fall back to the restart-rule rebuild.
           leafDiscardedCoordSpend({ compactionFailed: true });
           store.event({
             kind: "note",
@@ -703,13 +614,11 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
         {
           contract,
           charge: CHARGES.coordinator,
-          // failedLedger: the coordinator is the role that AUTHORS the
-          // prior-route check — `failedCheck` on every dispatch packet, gated
-          // by checkDispatch — so it is the one that most needs the lookup,
-          // and its session is long-lived across wakes, which is where a 31 KB
-          // read is re-presented most (#28). Wiring it only to dispatched
-          // workers left ~32% of the FAILED.md traffic, in the lane where the
-          // clause actually bites, unhelped.
+          // failedLedger: the coordinator authors the prior-route check
+          // (`failedCheck`, gated by checkDispatch) and its session is
+          // long-lived, which is where a 31 KB read is re-presented most.
+          // Wiring it to workers only left ~32% of FAILED.md traffic unhelped
+          // (#28).
           workspace: { cwd: dir, scope: coordinatorScope, failedLedger: path.join(dir, "FAILED.md") },
           extraTools: [
             dispatchReasoner,
@@ -725,12 +634,9 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           models,
         },
         {
-          // Epoch-numbered per rebuild AND scoped to this run. The filename's
-          // timestamp keeps rollout FILES from colliding, but the session id
-          // itself was `coordinator-1` in every process that ever ran, and pi
-          // derives prompt_cache_key from it — so two concurrent campaigns
-          // shared a cache key, and journal spend could only be split into
-          // epochs by inferring a reset from a decreasing counter.
+          // Epoch-numbered per rebuild AND scoped to this run: pi derives
+          // prompt_cache_key from this id, so a run-independent id makes two
+          // concurrent campaigns share a cache key.
           sessionId: coordinatorSessionId(),
           sessionsRoot,
           cwd: dir,
@@ -749,14 +655,10 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           "(the contract's restart rule applies at that boundary). Anything living only in this " +
           "conversation must be externalized — ensure CURRENT_FRONTIER.md and the registry capture it now."
         : "";
-    // The contract's restart rule, applied at the compaction boundary: the
-    // summary is soft context; the ledgers are what the coordinator re-reads.
-    // Post-compaction the contract's reread is SUPPLIED, not merely
-    // instructed — the same resume bundle a rebuilt coordinator gets, so the
-    // compaction branch enforces the identical clause (review 2026-08-02).
-    // Replayed on any prompt that rebuilds context (first wake of a run, and
-    // after an in-place compaction): standing guidance is not re-sent on an
-    // ordinary continuing wake, where the coordinator already has it.
+    // The contract's restart rule at the compaction boundary: post-compaction
+    // the reread is SUPPLIED, not merely instructed — the same resume bundle a
+    // rebuilt coordinator gets. Replayed on any prompt that rebuilds context,
+    // never on an ordinary continuing wake where the coordinator already has it.
     const guidance = fresh || justCompacted ? standingGuidance() : [];
     const guidanceBlock =
       guidance.length > 0
@@ -777,10 +679,8 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       growthNote = "";
       prevContextTokens = undefined;
     }
-    // User messages (coverify say): delivered verbatim at the wake boundary —
-    // the headless analog of the user typing to an interactive skill session.
-    // Consumed only after the coordinator's turn succeeds; a failed turn
-    // leaves them queued for the next wake.
+    // User messages (coverify say): delivered verbatim at the wake boundary and
+    // consumed only after the turn succeeds; a failed turn leaves them queued.
     const userMessages = peekUserMessages(dir);
     const userBlock =
       userMessages.length > 0
@@ -788,13 +688,11 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           "These are user guidance, not a statement amendment: STATEMENT.md changes still " +
           "require 'coverify amend'."
         : "";
-    // Mid-turn steer: messages queued while the coordinator's turn runs are
-    // injected live via session steer instead of waiting a wake. The inbox is
-    // FIFO and append-only, so mid-turn arrivals are exactly the entries past
-    // the wake batch plus what this watcher already steered; delivery order
-    // is preserved by steering them in sequence. At-least-once: a steered
-    // message is consumed only if the turn succeeds — a failed turn loses the
-    // steered content with the session, so it redelivers at the next wake.
+    // Mid-turn steer: messages queued during the turn are injected live rather
+    // than waiting a wake. The inbox is FIFO and append-only, so mid-turn
+    // arrivals are exactly the entries past the wake batch plus what this
+    // watcher already steered. At-least-once: a failed turn loses the steered
+    // content with the session, so it redelivers at the next wake.
     let steeredCount = 0;
     let watcherBusy = false;
     const inboxWatcher = setInterval(() => {
@@ -829,24 +727,19 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       consumeUserMessages(dir, userMessages.length + steeredCount);
       if (pending.length > 0) store.append({ kind: "delivery", ids: pending.map((p) => p.id) });
     } catch (e) {
-      // A hard provider failure on the coordinator's turn must not kill the
-      // campaign with workers live: journal it and rebuild from the ledgers
-      // (the restart rule is already the recovery path). But a *persistent*
-      // failure — expired token, retired model id, quota exhausted — fails in
-      // milliseconds, so retrying immediately spins: measured 2610 rebuilds a
-      // second, one session tree each, while the campaign silently does
-      // nothing. Back off, and give up into a pause rather than burn a
-      // bounded run's whole wake budget on one broken credential.
+      // A hard provider failure must not kill the campaign with workers live:
+      // journal it and rebuild via the restart rule. But a persistent failure
+      // (expired token, retired model id, quota) fails in milliseconds, so
+      // immediate retry spins — measured 2610 rebuilds a second, one session
+      // tree each. Back off, then pause rather than burn the wake budget.
       turnFailures++;
       store.event({
         kind: "note",
         note: `coordinator turn failed (${String(e).slice(0, 200)}); rebuilding via restart rule`,
         consecutiveFailures: turnFailures,
       });
-      // A failed turn still spent tokens — the call itself plus every
-      // retryAssistantCall attempt. Journal them before the session is
-      // discarded, or "coordinator records sum like every other role's" holds
-      // only for wakes that happened to succeed.
+      // A failed turn still spent tokens (the call plus every retry attempt);
+      // journal them before the session is discarded.
       leafDiscardedCoordSpend({ turnFailed: true });
       coordinator = undefined;
       prevCoord = { attempts: 0, requests: 0 }; // the next turn rebuilds; a new series starts
@@ -880,30 +773,19 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           )}k cap). If much of that was wholesale file reads, prefer grep or read with ` +
           "offset/limit — re-reads are cheap, residency is not."
         : "";
-    // A LEAF record, like every other role's: what this wake cost, not a
-    // running total. The session total was the only derived aggregate in the
-    // coordinator lane, and it is why reading this journal used to need
-    // reset-detection — a heuristic that split one campaign into 18 epochs
-    // against 15 real sessions and overstated its fresh input by 16.7M tokens.
-    // Deltas sum; snapshots have to be un-inferred first.
+    // A LEAF record: what this wake cost, not a running total. Deltas sum;
+    // snapshots need reset-detection, and that heuristic split one campaign
+    // into 18 epochs against 15 real sessions and overstated fresh input by
+    // 16.7M tokens.
     const sessionTotal = coordinator.usage();
     const spent = sessionTotal && subUsage(sessionTotal, prevCoord.usage);
-    // Attempts are cumulative per session exactly like usage, so they are
-    // journalled as a delta too. This is the lane where retryAssistantCall
-    // actually fires.
+    // Attempts are cumulative per session like usage, so they are deltaed too.
     const attemptsNow = coordinator.attempts?.() ?? 0;
     const attempts = attemptsNow - prevCoord.attempts;
-    // Requests is cumulative too — it counts assistant messages in the live
-    // transcript — so it is deltaed on the same baseline. Journalling it raw
-    // beside a delta made `attempts < requests` invert on every wake after the
-    // first and inflated any sum over wakes quadratically.
-    //
-    // It cannot go backwards: requests() reads getEntries(), pi's storage is
-    // append-only, and a compaction APPENDS an entry rather than dropping the
-    // messages it superseded — the same reason usage() keeps counting them.
-    // The clamp is a backstop against that changing upstream, not a live case;
-    // it is also why this and the usage delta cannot disagree, since both are
-    // derived from the same message list.
+    // Requests is cumulative too; journalling it raw beside a delta inverted
+    // `attempts < requests` on every wake after the first and inflated sums
+    // quadratically. The clamp is a backstop only — pi's storage is append-only
+    // and compaction appends rather than dropping superseded messages.
     const requestsNow = coordinator.requests?.() ?? 0;
     const requests = Math.max(0, requestsNow - prevCoord.requests);
     prevCoord = { usage: sessionTotal, attempts: attemptsNow, requests: requestsNow };
@@ -950,15 +832,13 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       noopWakes = 0;
     }
     if (handles.size > 0 && settledQueue.length === 0) {
-      // Settled, not raw: a rejected promise here (one transient API error in
-      // any live agent) would reject the race and kill the whole campaign,
-      // including every other live agent. registerHandle already turns a
-      // rejection into a failure report.
+      // Settled, not raw: one transient API error in any live agent would
+      // reject the race and kill the whole campaign. registerHandle already
+      // turns a rejection into a failure report.
       //
-      // The inbox is raced too. Without it, `coverify say` — the operator's
-      // one lever over a running campaign — waits for the next agent
-      // completion, which with three multi-hour reasoners live means hours,
-      // while the CLI has already reported the message as queued.
+      // The inbox is raced too, or `coverify say` waits for the next agent
+      // completion — hours, with multi-hour reasoners live — while the CLI has
+      // already reported the message as queued.
       const pending = peekUserMessages(dir).length;
       let stopPolling = () => {};
       const inboxArrival = new Promise<void>((resolve) => {

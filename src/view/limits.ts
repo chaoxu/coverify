@@ -1,23 +1,17 @@
-// The constraint that actually stops campaigns. Subscription runs are not
-// metered in dollars: credits are a purchasable OVERAGE currency, drawn on
-// only after the included allowance, and this account carries
-// has_credits=false / balance=0 on every sample — so zero credits were ever
-// consumed and a dollar figure measures nothing. What binds is a rolling
-// window. Danus died on it: 55% -> 100% of a weekly allowance in 3h52m,
-// terminated mid-consolidation. A campaign that fits comfortably in a month's
-// spend can still die in an afternoon, which makes --agent-limit a burst-rate
-// control and not only a concurrency knob (issue #30).
+// The constraint that actually stops campaigns (issue #30). Subscription runs
+// are not metered in dollars — credits are overage currency and this account
+// carries balance=0 on every sample — so what binds is a rolling window. Danus
+// died on it: 55% -> 100% of a weekly allowance in 3h52m. A campaign that fits a
+// month's spend can still die in an afternoon, which makes --agent-limit a
+// burst-rate control and not only a concurrency knob.
 //
-// The issue's stated fix — "the codex lanes already receive
-// rate_limits.primary.used_percent on every call; record it in the usage
-// entry" — is not available: `codex exec --json` stdout carries no rate-limit
-// event at all (verified against 0.145.0, and why #35 records a join key
-// rather than parsing more stdout). The numbers live in codex's own rollout
-// under ~/.codex/sessions/, which this reader joins to.
+// `codex exec --json` stdout carries no rate-limit event at all (verified
+// against 0.145.0), which is why #35 records a join key instead. The numbers
+// live in codex's own rollout under ~/.codex/sessions/, joined here.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { GateStore } from "../gates.js";
+import { runRecords } from "./shared.js";
 
 export interface LimitSample {
   ts: number;
@@ -62,15 +56,10 @@ const rolloutDirs = (root: string, fromMs: number, toMs: number): string[] => {
 };
 
 export function campaignLimits(campaignDir: string, run?: string): LimitsReport {
-  const store = new GateStore(campaignDir);
-  const records = (store.all() as unknown as Record<string, unknown>[]).filter(
-    (r) => run === undefined || r.runId === run,
-  );
-  // `ts` is an ISO-8601 STRING on every record (gates.ts stamps it), not epoch
-  // millis. Number() on it yields NaN, which filtered every record out and made
-  // this reader report "no rollout attributed" for a campaign with 1,916
-  // records — a silent empty answer, the failure mode this whole batch exists
-  // to stop.
+  const { records } = runRecords(campaignDir, run);
+  // `ts` is an ISO-8601 STRING on every record, not epoch millis: Number() on it
+  // yields NaN, which filtered every record out and reported "no rollout
+  // attributed" for a campaign with 1,916 records.
   const times = records.map((r) => Date.parse(String(r.ts))).filter((n) => Number.isFinite(n) && n > 0);
   if (times.length === 0) return { attribution: "none", rollouts: 0, samples: [], creditsEverUsed: false };
 
@@ -108,9 +97,9 @@ export function campaignLimits(campaignDir: string, run?: string): LimitsReport 
       const exact =
         (meta?.session_id !== undefined && sessionIds.has(meta.session_id)) ||
         (meta?.cwd !== undefined && cwds.has(meta.cwd));
-      // Coverify spawns every CLI role in its own temp workdir, so the cwd is
-      // this harness's signature even on records written before the join key
-      // existed. Time-bounded, and reported as an inference.
+      // Every CLI role gets its own temp workdir, so the cwd is this harness's
+      // signature even on records predating the join key. Reported as an
+      // inference.
       const inferred = !exact && (meta?.cwd ?? "").includes("coverify-cli-");
       if (!exact && !inferred) continue;
 
@@ -147,13 +136,11 @@ export function campaignLimits(campaignDir: string, run?: string): LimitsReport 
   }
 
   samples.sort((a, b) => a.ts - b.ts);
-  // Steepest rise over a span of at least BURN_SPAN_MS, not between adjacent
-  // samples. A campaign runs many rollouts CONCURRENTLY, so two consecutive
-  // samples are routinely milliseconds apart from different sessions, and
-  // dividing a 2-point rise by 1ms reports millions of points per hour. The
-  // quantity that matters is the sustained rate — Danus died at roughly 11.6
-  // points/hour (55% -> 100% in 3h52m) — so it must be measured over a span
-  // long enough to mean something.
+  // Steepest rise over a span of at least BURN_SPAN_MS, never between adjacent
+  // samples: a campaign runs many rollouts CONCURRENTLY, so two consecutive
+  // samples are routinely milliseconds apart and dividing a 2-point rise by 1ms
+  // reports millions of points per hour. The rate that matters is sustained
+  // (Danus died at roughly 11.6 points/hour).
   const BURN_SPAN_MS = 30 * 60_000;
   let fastestBurn: LimitsReport["fastestBurn"];
   let lo_i = 0;
@@ -208,11 +195,9 @@ export function formatLimits(r: LimitsReport): string {
       (windows.size > 1 ? ` — CHANGED mid-campaign, saw ${[...windows].join(", ")}` : ""),
   );
   const hi = Math.max(...r.samples.map((s) => s.usedPercent));
-  // Falls in the series. NOT called resets: used_percent is an account-wide
-  // meter and a campaign runs many rollouts concurrently, so a fall is equally
-  // well explained by a stale sample from a session that read the meter
-  // earlier and wrote it later. Both readings are on file and this reader
-  // cannot tell them apart, so it reports the count and says so.
+  // Falls in the series. NOT called resets: used_percent is account-wide and
+  // rollouts run concurrently, so a fall is equally well explained by a stale
+  // sample. This reader cannot tell them apart, so it reports the count.
   let falls = 0;
   for (let i = 1; i < r.samples.length; i++) {
     if (r.samples[i].usedPercent < r.samples[i - 1].usedPercent - 1) falls++;

@@ -16,9 +16,9 @@ export function initCampaign(dir: string, statement: string): void {
   if (fs.existsSync(statementPath)) {
     throw new Error(`campaign already exists at ${dir}; use resume or status`);
   }
-  // STATEMENT.md alone is not proof of an empty directory. If it was renamed,
-  // moved aside, or restored from a partial backup while the ledgers survived,
-  // writing the templates would destroy every promotion and closed route.
+  // A missing STATEMENT.md is not proof of an empty directory: if it was
+  // renamed or restored from a partial backup while the ledgers survived,
+  // writing the templates destroys every promotion and closed route.
   const survivors = ["PROVED.md", "FAILED.md", "REGISTRY.md", "PROCESS_LESSONS.md", "CURRENT_FRONTIER.md"]
     .filter((f) => fs.existsSync(path.join(dir, f)));
   if (survivors.length > 0) {
@@ -40,9 +40,8 @@ export function initCampaign(dir: string, statement: string): void {
     path.join(dir, "CURRENT_FRONTIER.md"),
     "# CURRENT_FRONTIER\n\nCampaign initialized; nothing dispatched yet.\n",
   );
-  // Field templates are scaffolding, not schema: they quote the launcher's
-  // required fields so entry format survives coordinator changes. Nothing
-  // mechanical parses these files.
+  // Scaffolding, not schema: these quote the launcher's required fields so the
+  // entry format survives coordinator changes. Nothing parses them.
   fs.writeFileSync(
     path.join(dir, "REGISTRY.md"),
     "# REGISTRY\n\n<!-- per route (contract): exact claim · gap · smallest obstruction · " +
@@ -91,10 +90,9 @@ export function newEvidencePath(dir: string, base: string): string {
     }
     fs.mkdirSync(path.dirname(p), { recursive: true });
     try {
-      // O_EXCL, not existsSync-then-return: the caller writes later, and two
-      // concurrent cadences on one revision compute the same slug. Reserving
-      // the name here is what makes "a cited artifact is never overwritten"
-      // true by construction rather than by timing.
+      // O_EXCL, not existsSync-then-return: the caller writes later and two
+      // concurrent cadences on one revision compute the same slug, so reserving
+      // the name here is what makes "never overwritten" true by construction.
       fs.closeSync(fs.openSync(p, "wx"));
       return p;
     } catch (e) {
@@ -104,13 +102,10 @@ export function newEvidencePath(dir: string, base: string): string {
 }
 
 /**
- * Evidence paths cited in the ledgers that do not exist on disk.
- *
- * Purely mechanical: it looks for `EVIDENCE/...` tokens and checks the
- * filesystem, never reading or judging content. A ledger citing an artifact
- * that is not there is either a typo or a hallucinated citation, and both are
- * invisible to a reader who trusts the ledger — which is exactly the kind of
- * bookkeeping the model should not have to hold in its head.
+ * Evidence paths cited in the ledgers that do not exist on disk. Purely
+ * mechanical: `EVIDENCE/...` tokens checked against the filesystem, never
+ * reading content. A citation that is not there is a typo or a hallucination,
+ * and both are invisible to a reader who trusts the ledger.
  */
 export function danglingCitations(dir: string): { ledger: string; citation: string }[] {
   const out: { ledger: string; citation: string }[] = [];
@@ -134,20 +129,9 @@ export function citedEvidencePaths(text: string): Set<string> {
   return out;
 }
 
-/**
- * Exclusive access to a campaign, for as long as the returned release lives.
- *
- * Every mechanism here assumes one writer: handle ids come from a counter each
- * process computes once, `GateStore` snapshots its records at construction and
- * never re-reads, and evidence directories are handed to agents by name. Two
- * runs therefore mint the same `r001`, give one directory to two agents, and
- * each gate against a record set that is missing the other's FAILs. Starting a
- * second run is easy to do by accident — an idle campaign parked on a handle
- * looks dead.
- */
 /** Read the campaign lock file; `held` is absent when missing or torn. The
- *  lock's location and {pid, startedAt} shape are owned here — `coverify
- *  stop` and the acquire path must agree on both. */
+ *  lock's location and {pid, startedAt} shape are owned here — `coverify stop`
+ *  and the acquire path must agree on both. */
 export function readCampaignLock(dir: string): {
   lockPath: string;
   held?: { pid?: number; startedAt?: string };
@@ -160,6 +144,14 @@ export function readCampaignLock(dir: string): {
   }
 }
 
+/**
+ * Exclusive access to a campaign for as long as the returned release lives.
+ * Every mechanism here assumes one writer: handle ids come from a counter each
+ * process computes once, GateStore snapshots its records at construction, and
+ * evidence directories are handed out by name. Two runs mint the same `r001`,
+ * share a directory between two agents, and each gate against a record set
+ * missing the other's FAILs.
+ */
 export function acquireCampaignLock(dir: string): () => void {
   const lock = path.join(dir, JOURNAL_DIR, "lock.json");
   fs.mkdirSync(path.dirname(lock), { recursive: true });
@@ -209,9 +201,8 @@ export function acquireCampaignLock(dir: string): () => void {
   return release;
 }
 
-/** Harness-generated audit metadata — permitted by the launcher's EVIDENCE bullet. */
-/** The coverify checkout root (src/'s parent) — the one authority for
- *  locating the checkout and its node_modules; never re-derive per file. */
+/** The coverify checkout root (src/'s parent) — the one authority for locating
+ *  the checkout and its node_modules; never re-derive per file. */
 export function repoRoot(): string {
   return path.dirname(path.dirname(new URL(import.meta.url).pathname));
 }
@@ -250,10 +241,9 @@ export function readJournal(dir: string): JournalEntry[] {
     try {
       entries.push(JSON.parse(lines[i]) as JournalEntry);
     } catch {
-      // The journal is a write-only audit mirror that gates never read, so a
-      // line torn by a crash costs observability at most. Skipping keeps
-      // `status` and `trace` working on a campaign that is otherwise healthy;
-      // failing hard would take them away when they are most wanted.
+      // The journal is a write-only audit mirror gates never read, so a torn
+      // line costs observability at most; failing hard would take `status` and
+      // `trace` away exactly when they are most wanted.
       skipped++;
     }
   }
@@ -273,12 +263,8 @@ export function gateOf(e: unknown): Record<string, unknown> | undefined {
 
 /**
  * User→coordinator message channel (`coverify say`). The inbox lives under
- * .coverify/, which every role's write scope denies, so only the user (via
- * the CLI, outside any role) can queue a message — a role cannot forge user
- * guidance. Transport is verbatim: the harness delivers the text unchanged
- * at the next wake and journals it; it adds no policy of its own. This is
- * the headless analog of typing to an interactive skill session — the
- * message arrives at the coordinator's next turn.
+ * .coverify/, which every role's write scope denies, so a role cannot forge user
+ * guidance. Transport is verbatim and adds no policy of its own.
  */
 export function queueUserMessage(dir: string, message: string): void {
   fs.mkdirSync(path.join(dir, JOURNAL_DIR), { recursive: true });
@@ -319,13 +305,10 @@ export function peekUserMessages(dir: string): string[] {
 }
 
 /**
- * Mark the first `count` pending messages delivered.
- *
- * The inbox is never rewritten: `coverify say` runs in another process and
- * appends whenever the user types, so a read-modify-write here would drop any
- * message that landed between the read and the write — silently, and exactly
- * when the user is most likely to be typing. Advancing a separate cursor makes
- * the two writers independent.
+ * Mark the first `count` pending messages delivered. The inbox is NEVER
+ * rewritten: `coverify say` appends from another process whenever the user
+ * types, so a read-modify-write here silently drops any message that landed in
+ * between. A separate cursor makes the two writers independent.
  */
 export function consumeUserMessages(dir: string, count: number): void {
   if (count <= 0) return;
@@ -348,10 +331,9 @@ export function sha256File(p: string): string {
 /**
  * Statements-only projection of PROVED.md for prompt contexts: each entry is
  * cut at its provenance metadata (**Dependencies:** / **Audit artifacts:**),
- * keeping the heading, theorem statements, and scope. The ledger itself is
- * untouched — this slims what rides into gate/audit/reconstruction prompts
- * (provenance is dispute-time material; the toolful coordinator can always
- * read the full file). Pure context assembly: semantics-invisible mechanics.
+ * keeping the heading, theorem statements, and scope. The ledger is untouched;
+ * this only slims what rides into gate/audit/reconstruction prompts, since
+ * provenance is dispute-time material. Mechanics.
  */
 export function promotedStatementsView(dir: string): string {
   const full = readLedger(dir, "PROVED.md");

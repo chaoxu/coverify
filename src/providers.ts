@@ -527,30 +527,30 @@ export function sumMessagesUsage(messages: readonly unknown[]): RoleUsage {
 
 interface RoleResult {
   text: string;
-  /** Undefined when the backend reported no usage (e.g. an env-overridden CLI template without JSON output). */
+  /** Undefined when the backend reported no usage (absent ≠ zero; see RoleUsage). */
   usage?: RoleUsage;
   /** Request-shape telemetry for single-shot roles (their only "turn"). */
   promptChars?: number;
   durationMs?: number;
-  /** Server-attested served model (oracle backends): when present, records
-   *  must prefer it over the requested spec label (issue #20 — the spec is
-   *  testimony, this is attestation). */
+  /** Server-attested served model (oracle backends): records must prefer it
+   *  over the requested spec label (issue #20 — the spec is testimony, this is
+   *  attestation). */
   servedModel?: string;
-  /** Self-reported model (claude-cli's own JSON). Journalled beside the
-   *  requested spec; never enforced (#21 P3, rule 3). */
+  /** Self-reported model (claude-cli JSON). Journalled beside the requested
+   *  spec; never enforced (#21 P3, rule 3). */
   reportedModel?: string;
   /** Provider-side transcript join keys (codex lane); see RoleSession. */
   providerSessionId?: string;
   backendCwd?: string;
-  /** Request-level counts: the last edge of the record tree. Without these a
-   *  record spanning a tool loop cannot be told from one spanning retries. */
+  /** Without these, a record spanning a tool loop cannot be told from one
+   *  spanning retries. */
   attempts?: number;
   requests?: number;
 }
 
 export type HarnessSessionOpts = {
-  /** Stable session identity: names the session and becomes the
-   *  provider's prompt_cache_key (keep ≤64 chars). */
+  /** Stable session identity; becomes the provider's prompt_cache_key (keep
+   *  ≤64 chars). */
   sessionId: string;
 } & (
   | {
@@ -559,23 +559,11 @@ export type HarnessSessionOpts = {
       cwd: string;
       ephemeral?: false;
     }
-  /** In-memory session (single-shot roles): same harness surface and cache
-   *  keying, nothing written under .coverify/sessions/. */
+  /** In-memory session: same harness surface and cache keying, nothing written
+   *  under .coverify/sessions/. */
   | { ephemeral: true }
 );
 
-/**
- * Role session on pi's AgentHarness (redesign phase 1), implementing the full
- * RoleSession surface (telemetry, compaction, steering). By default the
- * transcript is an append-only JSONL session tree on disk —
- * crash-survivable, forkable, and the raw material for telemetry; with
- * `ephemeral: true` (runRole's single-shot path) the same harness runs over
- * an in-memory repo and leaves nothing on disk. Chosen over pi-coding-agent's
- * createAgentSession because the harness layer takes systemPrompt verbatim
- * (prompt purity by construction), our Models instance directly, and plain
- * AgentTools, with zero disk/env discovery (docs/redesign-proposal.md).
- * prompt_cache_key threads automatically from the session id.
- */
 /** Turn-level retry policy for harness sessions, read at call time
  *  (min 0: zero is meaningful — it disables retries). */
 export function retryPolicy(): { enabled: boolean; maxRetries: number; baseDelayMs: number } {
@@ -589,6 +577,10 @@ export function codexTransport(): Transport {
   return (process.env.COVERIFY_CODEX_TRANSPORT as Transport | undefined) ?? "auto";
 }
 
+/** Role session on pi's AgentHarness: durable append-only JSONL session tree by
+ *  default, in-memory under `ephemeral`. The harness layer rather than
+ *  pi-coding-agent's createAgentSession because it takes systemPrompt verbatim
+ *  (prompt purity by construction) with zero disk/env discovery. */
 export async function createHarnessRoleSession(
   run: Omit<RoleRun, "prompt"> & { prompt?: string },
   opts: HarnessSessionOpts,
@@ -616,22 +608,18 @@ export async function createHarnessRoleSession(
     models: run.models,
     model: getModel(run.models, run.spec),
     thinkingLevel: run.spec.thinking,
-    // Stream transport (openai-codex honors it; others ignore it). "auto"
-    // holds a WebSocket open for the whole turn — a Sol@max worker thinks
-    // quietly for 10-20 min on one socket, and 2026-08-08 measured ~25% of
-    // long turns dying mid-stream with close code 1006, each an unrecoverable
-    // infra failure (pi's SSE fallback arms only for the session's NEXT turn,
-    // which an ask-once worker never has). "sse" streams over plain HTTP with
-    // no long-lived socket; the websocket context cache mostly benefits
-    // multi-turn sessions, not ask-once workers. Env read at call time.
+    // openai-codex honors this; others ignore it. "auto" holds one WebSocket
+    // open for the whole turn, and 2026-08-08 measured ~25% of long turns
+    // dying mid-stream with close code 1006 (pi's SSE fallback arms only for
+    // the session's NEXT turn, which an ask-once worker never has). "sse" has
+    // no long-lived socket. Read at call time.
     streamOptions: {
       transport: codexTransport(),
     },
-    // NOTE (verified 0.83.0): AgentHarness consumes this option ONLY for
-    // compaction and branch-summary calls — the prompt path never reads it
-    // (a live 1006 sailed through with this set; caught 2026-08-08). Kept
-    // for those two call sites; ordinary turns are retried by the
-    // retryAssistantCall wrapper around harness.prompt in ask() below.
+    // Verified pi 0.83.0: AgentHarness reads this ONLY for compaction and
+    // branch-summary calls, never the prompt path (a live 1006 sailed through
+    // with it set, 2026-08-08). Ordinary turns are retried by the
+    // retryAssistantCall wrapper in ask() below.
     retry: retryPolicy(),
     // Verbatim — the harness layer performs no prompt assembly of its own.
     systemPrompt: systemText(run),
@@ -639,8 +627,8 @@ export async function createHarnessRoleSession(
     activeToolNames: tools.map((t) => t.name),
     resources: {},
   });
-  // Wire logging via the harness's own hooks (the Agent-ctor onPayload path
-  // does not exist at this layer — review 2026-08-02 caught the silent loss).
+  // Wire logging must use the harness's own hooks; the Agent-ctor onPayload
+  // path does not exist at this layer and silently logs nothing.
   const wirePath = process.env.COVERIFY_WIRE_LOG;
   if (wirePath) {
     const logPayload = wireLogPayload(wirePath);
@@ -648,34 +636,27 @@ export async function createHarnessRoleSession(
       logPayload((e as { payload?: unknown }).payload, (e as { model?: unknown }).model);
       return undefined;
     });
-    // Response-side records (status, rate-limit headers) are NOT available:
-    // pi 0.83.0 types after_provider_response but never emits it on this
-    // provider path (verified empirically 2026-08-02 — neither .on() nor
-    // subscribe() ever sees it, and the Agent-path onResponse never fired
-    // either). Revisit on pi upgrade; until then the wire log is
-    // request-side only.
+    // No response-side records: pi 0.83.0 types after_provider_response but
+    // never emits it on this provider path (verified 2026-08-02). Revisit on
+    // upgrade; until then the wire log is request-side only.
   }
-  // Sync RoleSession surface over async session storage: the message cache
-  // refreshes after every completed run (telemetry reads between runs).
-  // Two views on purpose: `allMessages` (every message ever, across all
-  // branches — usage totals never un-count compacted spend) vs
-  // `contextMessages` (session.buildContext() — what the model actually
-  // sees next call).
+  // Sync RoleSession surface over async storage; the cache refreshes after
+  // every completed run. Two views on purpose: `allMessages` (every message
+  // ever, so usage totals never un-count compacted spend) vs `contextMessages`
+  // (what the model actually sees next call).
   let allMessages: AgentMessage[] = [];
   let contextMessages: AgentMessage[] = [];
-  // Empty total from the same builder the refresh uses: a literal here fabricated
-  // `cacheWrite: 0` (a measured zero this lane never measures) and carried no
-  // meter, which made addUsage drop the provenance of any usage() read before the
-  // first refresh.
+  // Empty total from the same builder refresh uses: a literal fabricates
+  // `cacheWrite: 0` and carries no meter, so addUsage would drop provenance for
+  // any usage() read before the first refresh.
   let compactionUsage: RoleUsage = sumMessagesUsage([]);
   const refresh = async () => {
-    // getEntries (not getBranch): usage/turn totals must keep counting
-    // everything ever spent — including entries a compaction superseded.
+    // getEntries (not getBranch): totals must keep counting everything ever
+    // spent, including entries a compaction superseded.
     const entries = await session.getEntries();
     allMessages = entries.flatMap((e) => (e.type === "message" ? [e.message] : []));
-    // The summarization call's own spend lives on the compaction entry, not
-    // on any assistant message — without this, every compaction's large
-    // request would vanish from the usage journal (review 2026-08-02).
+    // The summarization call's own spend lives on the compaction entry, not on
+    // any assistant message; without this every compaction vanishes from usage.
     compactionUsage = sumMessagesUsage(
       entries.flatMap((e) =>
         e.type === "compaction" && (e as { usage?: unknown }).usage
@@ -685,65 +666,50 @@ export async function createHarnessRoleSession(
     );
     contextMessages = (await session.buildContext()).messages;
   };
-  // Provider attempts across this session's life, retries included.
   let attempts = 0;
-  // Calls this session made through tools whose spend cannot be measured.
   const unmetered: { lane: string; detail: string }[] = [];
   // Cancellation must also cover the retry wrapper's backoff sleeps:
-  // harness.abort() only aborts an in-flight prompt, and between attempts
-  // there is none — so abort() additionally fires this controller, which
-  // retryAssistantCall honors as terminal (an aborted backoff resolves as
-  // an aborted message, never another attempt).
+  // harness.abort() only aborts an in-flight prompt, and between attempts there
+  // is none. retryAssistantCall honors this controller as terminal.
   const sessionStop = new AbortController();
   return {
     capabilities: { steerable: true, durable: !opts.ephemeral },
     async ask(prompt: string): Promise<string> {
-      // Turn-level retry at the ask boundary, built from pi's own parts:
-      // retryAssistantCall classifies the resolved message — transient
-      // transport/provider failures ("socket connection was closed",
-      // "WebSocket closed 1006", codex fetch resets) restart the turn with
-      // exponential backoff; quota/billing errors and aborts stay
-      // fail-fast. 2026-08-08 measured ~30% of long Sol worker turns dying
-      // to such drops on both transports; each retry re-prompts the session
-      // (the failed turn stays in the transcript, like the salvage nudge),
-      // and refresh() runs per attempt so telemetry counts every attempt.
+      // Turn-level retry at the ask boundary: retryAssistantCall restarts the
+      // turn on transient transport failures with backoff, while quota/billing
+      // errors and aborts stay fail-fast. 2026-08-08 measured ~30% of long Sol
+      // worker turns dying to such drops on both transports.
       const final = await retryAssistantCall(
         async () => {
-          // Each entry here is one provider attempt. A retry re-presents the
-          // entire context and is billed again, but leaves no message behind —
-          // so unlike request count, this is NOT derivable from the transcript
-          // afterwards, and a 500k-token turn is indistinguishable from three
-          // 170k attempts without it. The last missing edge of the record tree
-          // (docs/measurement-protocol.md rule 13).
+          // One provider attempt. Not derivable from the transcript afterwards:
+          // without it a 500k-token turn is indistinguishable from three 170k
+          // attempts (docs/measurement-protocol.md rule 13).
           attempts++;
           try {
             return (await harness.prompt(prompt)) as AssistantMessage;
           } finally {
-            // Telemetry must reflect spend even when the run rejects — a
-            // failed 500k-token run recorded as zero usage is worse than
-            // the failure.
+            // Spend must be recorded even when the run rejects: a failed
+            // 500k-token run logged as zero usage is worse than the failure.
             await refresh().catch(() => {});
           }
         },
         retryPolicy(),
         sessionStop.signal,
       );
-      // The harness resolves failures as a synthetic message; surface the
-      // real cause instead of an empty string (which would read as the
-      // empty-report infra failure and trigger a pointless salvage nudge).
+      // The harness resolves failures as a synthetic message; surface the real
+      // cause rather than an empty string, which would read as the empty-report
+      // infra failure and trigger a pointless salvage nudge.
       if (final.stopReason === "error") {
-        // Classify overflow with pi's own predicate while the structured
-        // message still exists (issue #24) — the appended marker is what the
-        // harness diagnosis keys on, independent of provider phrasing.
+        // Classify overflow with pi's own predicate while the structured message
+        // still exists (issue #24); the appended marker is what the harness
+        // diagnosis keys on, independent of provider phrasing.
         const overflow = isContextOverflow(final) ? " [context window exceeded]" : "";
         const err = new Error((final.errorMessage ?? "provider error (no message)") + overflow);
         // Salvage: pi's errored message IS the object that accumulated the
-        // stream, so a turn that dies at minute 29 of 30 still holds every
-        // block it received. Throwing it away loses real reasoning — BET
-        // measured a 50% failure rate on ~30-minute turns, each a total
-        // loss. Attach it; the harness persists it as PARTIAL evidence and
-        // the completion stays a failure (never a deliverable, never a
-        // verdict — verdict roles run through the CLI path, not here).
+        // stream, so a turn dying at minute 29 of 30 still holds every block it
+        // received (BET measured a 50% failure rate on ~30-minute turns). The
+        // harness persists it as PARTIAL evidence; the completion stays a
+        // failure.
         const partial = (Array.isArray(final.content) ? final.content : [])
           .filter((b): b is { type: "text"; text: string } => (b as { type?: string }).type === "text")
           .map((b) => b.text)
@@ -767,23 +733,20 @@ export async function createHarnessRoleSession(
     },
     attempts: () => attempts,
     unmetered: () => unmetered,
-    // Assistant messages are the provider requests that produced output; the
-    // transcript already holds them, so this is derived rather than counted
-    // twice — a stamped duplicate of derivable state is a second source that
-    // can drift from the first.
+    // Derived, not counted twice: a stamped duplicate of derivable state is a
+    // second source that can drift.
     requests: () => allMessages.filter((m) => (m as { role?: string }).role === "assistant").length,
     async compact(customInstructions?: string): Promise<void> {
-      // A real provider call with its own retry policy, and its tokens are
-      // already inside usage() — so not counting it here made usage and
-      // attempts disagree by construction on every compacted session.
+      // A real provider call whose tokens are already inside usage(); not
+      // counting it makes usage and attempts disagree on every compacted
+      // session.
       attempts++;
       await harness.compact(customInstructions);
       await refresh();
     },
     steer(text: string): Promise<boolean> {
-      // AgentHarness.steer REJECTS when idle (worker just finished): a
-      // dropped steer is routine, an unhandled rejection kills the process —
-      // resolve to a delivered/dropped boolean so callers can act on it.
+      // AgentHarness.steer REJECTS when idle. A dropped steer is routine but an
+      // unhandled rejection kills the process, so resolve to a boolean.
       return harness.steer(text).then(
         () => true,
         () => false,

@@ -24,21 +24,17 @@ export interface GateRecord {
     | "rebuttal"
     | "promotion"
     | "delivery"
-    /** Provider spend with no stage record of its own. Three sources today: a
-     *  cadence cancelled after the call returned, a call the provider was paid
-     *  for before it failed, and a coordinator compaction (which is a real
-     *  request that leaves no assistant message behind). A leaf, so cost never
+    /** Provider spend with no stage record of its own (cancelled cadence, a
+     *  paid-then-failed call, a coordinator compaction). A leaf, so cost never
      *  has to be recovered by subtracting children from a summary.
      *
-     *  NOT all verification spend: a `role-call` carrying `role: "coordinator"`
-     *  belongs to the coordinator lane, so a per-stage query must filter on
-     *  `role IS NULL` or it will pull compaction into the verdict-stage table
-     *  (see design.md's analytics queries). */
+     *  NOT all verification spend: a `role-call` with `role: "coordinator"` is
+     *  coordinator-lane, so a per-stage query must filter on `role IS NULL` or
+     *  it pulls compaction into the verdict-stage table (design.md queries). */
     | "role-call"
-    // Campaign events (wakes, usage, notes, replayed user guidance). One
-    // event log: these live in the same out-of-tree store as gate records —
-    // anything read back for behavior (standing guidance, delivery) must
-    // come from the trust domain no role's workspace tools can write.
+    // Campaign events. One event log: these live in the same out-of-tree store
+    // as gate records, because anything read back for behavior must come from
+    // the trust domain no role's workspace tools can write.
     | "wake"
     | "usage"
     | "note";
@@ -47,19 +43,13 @@ export interface GateRecord {
 
 /**
  * The one read-side view with a consumer: the four verification stage records
- * share a shape, and modelSubstitutions() reads it (observe.ts).
- *
- * There were five of these — DispatchView, CompletionView, PromotionView,
- * RefusalView — behind a generic `viewsOf<K>` map. None of the other four was
- * ever instantiated: every other reader hand-casts at its own boundary
- * (view/spend.ts, view/outcomes.ts, view/limits.ts, view/trace.ts), which is
- * the honest thing to do when the write shape is deliberately open. A typed
- * lookup table serving one caller is the abstraction-for-single-use the house
- * style rejects.
+ * share a shape, and modelSubstitutions() reads it (observe.ts). Every other
+ * reader hand-casts at its own boundary, which is the honest thing to do when
+ * the write shape is deliberately open.
  *
  * Every field stays optional by design: a campaign recorded before a field
- * existed narrows to `undefined` rather than erroring, which is exactly why
- * this layer needs no migrations.
+ * existed narrows to `undefined` rather than erroring, which is why this layer
+ * needs no migrations.
  */
 export interface VerdictView {
   revision?: string;
@@ -79,27 +69,15 @@ export function verdictViews(store: GateStore, kind: string): (VerdictView & Gat
   return store.all().filter((e) => e.kind === kind) as (VerdictView & GateRecord)[];
 }
 
-/**
- * A campaign's identity, stored inside the campaign so it survives being moved.
- *
- * It used to be `sha256(realpath(dir))`, which meant renaming a folder — or
- * restoring a backup elsewhere, or mounting it at another path — produced a
- * campaign with intact ledgers and zero gate history: the statement freeze
- * re-armed on whatever the file now said, and every recorded FAIL vanished.
- * Existing campaigns keep their id by writing the legacy path hash into the
- * file on first read, so nothing in flight is disturbed.
- */
-/** The out-of-tree state root — one authority, shared with dev tooling
- *  (scripts/smoke.ts) so cleanup never guesses at this path. */
-/** Values that ENABLE journal-mirror adoption. Previously this was a bare
- *  truthiness test, so `COVERIFY_ADOPT=0` and `COVERIFY_ADOPT=false` both
- *  turned it ON — the opposite of what an operator typing them means, on the
- *  one knob that crosses coverify's trust boundary (it rebuilds gate history
- *  from the lower-trust in-tree mirror). Matches the schema declared in
- *  knobs.ts; a value outside this set is rejected at startup by validateKnobs,
- *  so an unrecognised spelling stops the run instead of silently enabling. */
+/** Values that ENABLE journal-mirror adoption. NOT a truthiness test: a bare
+ *  one turned `COVERIFY_ADOPT=0` and `=false` ON, the opposite of what an
+ *  operator means, on the one knob that crosses coverify's trust boundary.
+ *  Matches knobs.ts's schema, so validateKnobs rejects any other spelling at
+ *  startup instead of silently enabling. */
 const ADOPT_ENABLED = new Set(["1", "true", "yes"]);
 
+/** The out-of-tree state root — one authority, shared with dev tooling
+ *  (scripts/smoke.ts) so cleanup never guesses at this path. */
 export function stateRootDir(): string {
   return process.env.COVERIFY_STATE_DIR ?? path.join(stateHome(), "coverify");
 }
@@ -109,6 +87,13 @@ export function campaignIdPath(campaignDir: string): string {
   return path.join(campaignDir, ".coverify", "campaign-id");
 }
 
+/**
+ * A campaign's identity, stored INSIDE the campaign so it survives being moved.
+ * As `sha256(realpath(dir))` it did not: renaming or restoring a folder
+ * elsewhere produced a campaign with intact ledgers and zero gate history.
+ * Existing campaigns keep their id by writing the legacy path hash on first
+ * read.
+ */
 function campaignIdentity(campaignDir: string, stateDir: string): string {
   const idFile = campaignIdPath(campaignDir);
   if (fs.existsSync(idFile)) {
@@ -129,12 +114,9 @@ function campaignIdentity(campaignDir: string, stateDir: string): string {
   return id;
 }
 
-/** Keep only the fields that have a value. Record writers stamp optional
- *  telemetry through this because absence is load-bearing throughout this
- *  journal — "the backend never reported it" is a different record from a
- *  measured value, and every reader keys on the field simply not being there.
- *  One call replaces a row of `...(x !== undefined ? { x } : {})` spreads,
- *  which had multiplied to five per record site. */
+/** Keep only the fields that have a value. Absence is load-bearing throughout
+ *  this journal and every reader keys on a field simply not being there
+ *  (absent ≠ zero; see RoleUsage in providers.ts). */
 export function defined<T extends object>(fields: T): Partial<T> {
   return Object.fromEntries(
     Object.entries(fields).filter(([, v]) => v !== undefined),
@@ -144,10 +126,8 @@ export function defined<T extends object>(fields: T): Partial<T> {
 /**
  * Completions the coordinator has not been shown yet, rendered for a wake.
  *
- * Pure query over the store, exported so it can be TESTED. It used to be a
- * closure inside runLockedCampaign, so the test that claimed to cover it
- * reimplemented the logic locally and asserted against its own copy —
- * deleting the real rule left that test green.
+ * Pure query over the store, exported so it can be TESTED against the real rule
+ * rather than a test-local reimplementation.
  *
  * Persistence and delivery are separate on purpose: a wake that fails after
  * harvesting must not consume the only chance to show a report.
@@ -188,9 +168,8 @@ dir: string,
     const p = path.join(dir, e.report);
     if (!fs.existsSync(p)) continue;
     const bytes = fs.readFileSync(p, "utf-8");
-    // Integrity check against the recorded hash: an edited report is
-    // delivered with a loud taint instead of silently, mirroring the
-    // candidate-hash discipline everywhere else.
+    // Integrity check against the recorded hash: an edited report is delivered
+    // with a loud taint instead of silently.
     const tainted =
       typeof e.reportSha256 === "string" && sha256Text(bytes) !== e.reportSha256
         ? `\n\n[WARNING: this report file no longer matches the hash recorded at completion — ` +
@@ -210,12 +189,10 @@ export class GateStore {
   private records: GateRecord[];
   private file: string;
   readonly campaignDir: string;
-  /** Stamped on every record this process writes. Records that predate it are
-   *  marked by its ABSENCE, which is a cleaner boundary than any date rule —
-   *  and the run-config `runStart` note carries harnessRev, launcherSha256,
-   *  piVersions, patches and roleSpecs, so "which convention did this record
-   *  use" becomes "look up its run" rather than "know the commit history".
-   *  A `v: 3` integer would say only THAT the shape changed, never what. */
+  /** Stamped on every record this process writes; older records are marked by
+   *  its ABSENCE. The run-config `runStart` note carries harnessRev,
+   *  launcherSha256, piVersions, patches and roleSpecs, so "which convention did
+   *  this record use" becomes "look up its run". */
   private runId: string | undefined;
 
   constructor(campaignDir: string) {
@@ -226,9 +203,9 @@ export class GateStore {
     const dir = path.join(stateDir, id);
     fs.mkdirSync(dir, { recursive: true });
     this.file = path.join(dir, "gates.jsonl");
-    // meta.json names the opaque 16-hex state dir for cross-campaign
-    // analytics (design.md, Appendix: Canonical analytics queries): the campaign path and its statement's
-    // first line, best-effort, refreshed each construction.
+    // meta.json names the opaque 16-hex state dir for cross-campaign analytics
+    // (design.md, Appendix: Canonical analytics queries): campaign path plus the
+    // statement's first line, best-effort, refreshed each construction.
     try {
       const stmt = readLedger(this.campaignDir, "STATEMENT.md");
       const firstLine = stmt.split("\n").find((l) => l.trim() && !l.startsWith("#")) ?? "";
@@ -240,12 +217,10 @@ export class GateStore {
     } catch {
       /* fresh campaign without a statement yet */
     }
-    // A campaign that has run before (its journal exists) but has no gate
-    // history has lost its authoritative state — moved before ids travelled
-    // with it, or ~/.local/state wiped. Adopting silently would re-arm the
-    // statement freeze on whatever STATEMENT.md now says and erase every
-    // recorded FAIL, so this stops instead. A first run has no journal yet,
-    // and neither does a fresh campaign, so both proceed normally.
+    // A campaign with a journal but no gate history has lost its authoritative
+    // state. Adopting silently would re-arm the statement freeze on whatever
+    // STATEMENT.md now says and erase every recorded FAIL, so this stops. A
+    // fresh campaign has no journal, so it proceeds normally.
     const journalPath = path.join(this.campaignDir, ".coverify", "journal.jsonl");
     let recoveredFromMirror = 0;
     if (!fs.existsSync(this.file) && fs.existsSync(journalPath)) {
@@ -259,12 +234,10 @@ export class GateStore {
             "baseline).",
         );
       }
-      // Mirror-based recovery: the journal is a derived mirror of the lost
-      // authoritative log — gate records wrapped as {kind:"note", gate},
-      // campaign events verbatim. Rebuilding from it turns "lose every
-      // recorded FAIL or refuse to run" into "recover, with the taint on the
-      // ledger forever": the mirror is in-tree and role-adjacent, so the
-      // rebuilt history is honest testimony, not the trust anchor it replaced.
+      // Mirror-based recovery from the derived journal (gate records wrapped as
+      // {kind:"note", gate}, campaign events verbatim). The mirror is in-tree
+      // and role-adjacent, so the rebuilt history is testimony, not the trust
+      // anchor it replaced — hence the permanent taint below.
       const lines: string[] = [];
       for (const raw of fs.readFileSync(journalPath, "utf-8").split("\n")) {
         if (!raw.trim()) continue;
@@ -284,10 +257,10 @@ export class GateStore {
           "from the campaign journal mirror (lower-trust provenance; marked on the record).",
       );
     }
-    // A torn line (crash or full disk mid-append) must not make the campaign
-    // unresumable: gate records are append-only, so the salvageable prefix is
-    // authoritative and a damaged line is dropped loudly. Failing hard here
-    // would brick every prove/resume/amend with a raw SyntaxError.
+    // A torn line (crash mid-append) must not make the campaign unresumable:
+    // records are append-only, so the salvageable prefix is authoritative and a
+    // damaged line is dropped loudly. Failing hard here bricks every
+    // prove/resume/amend with a raw SyntaxError.
     this.records = [];
     if (fs.existsSync(this.file)) {
       let dropped = 0;
@@ -306,8 +279,7 @@ export class GateStore {
         );
       }
     }
-    // Permanent provenance mark: a rebuilt history is testimony from the
-    // in-tree mirror, not the original trust anchor. On the ledger forever.
+    // Permanent provenance mark: on the ledger forever.
     if (recoveredFromMirror > 0) {
       this.event({
         kind: "note",
@@ -323,27 +295,24 @@ export class GateStore {
   }
 
   append(record: { kind: GateRecord["kind"] } & Record<string, unknown>): GateRecord {
-    // Stamp LAST: a caller-supplied runId must not silently win over the
-    // process identity that the whole "absence means pre-2026-08-09" reading
-    // rule depends on.
+    // Stamp LAST: a caller-supplied runId must not win over the process
+    // identity the "absence means pre-2026-08-09" reading rule depends on.
     const full: GateRecord = { ts: new Date().toISOString(), ...record, ...this.runStamp() };
     this.records.push(full);
     fs.appendFileSync(this.file, JSON.stringify(full) + "\n");
     // Derived mirror in the campaign journal: observability only, never read
-    // back for behavior. Gate records mirror wrapped (the journal's
-    // historical shape); campaign events mirror verbatim via event().
+    // back for behavior. Wrapped here (the journal's historical shape);
+    // campaign events mirror verbatim via event().
     appendJournal(this.campaignDir, { kind: "note", gate: full });
     return full;
   }
 
   /**
-   * A campaign event (wake, usage, note): same authoritative out-of-tree log
-   * as gate records, mirrored VERBATIM into the in-tree journal so trace and
-   * status keep their input shape. This is the only sanctioned way to record
-   * an event the harness may later read back (standing user guidance,
-   * delivery bookkeeping): the in-tree journal is role-adjacent — on a
-   * degraded-confinement platform a script could append to it — so nothing
-   * behavioral may ever be read from there.
+   * A campaign event: same authoritative out-of-tree log as gate records,
+   * mirrored VERBATIM into the in-tree journal so trace and status keep their
+   * input shape. The only sanctioned way to record an event the harness may
+   * later read back, because the in-tree journal is role-adjacent (a script
+   * could append to it) and nothing behavioral may be read from there.
    */
   event(record: { kind: "wake" | "usage" | "note" } & Record<string, unknown>): GateRecord {
     const full = { ts: new Date().toISOString(), ...record, ...this.runStamp() };
@@ -406,11 +375,9 @@ export function parseFirstLineVerdict(
  * paraphrase inside keyIdeas remains the bundle certifier's judgment.
  */
 export function assertCandidateWithheld(renderedPrompt: string, candidate: string): void {
-  // Compared with whitespace collapsed: a candidate that reaches the prompt
-  // re-indented, re-wrapped, or with CRLF endings is the same leak, and an
-  // exact-substring check would wave it through while the journal still
-  // claims the candidate was withheld. This catches verbatim inclusion under
-  // reformatting; paraphrase remains model judgment (see the honesty ledger).
+  // Whitespace collapsed: a candidate reaching the prompt re-indented,
+  // re-wrapped, or CRLF is the same leak, and an exact-substring check waves it
+  // through while the journal still claims the candidate was withheld.
   const norm = (s: string) => s.replace(/\s+/g, " ").trim();
   const c = norm(candidate);
   if (c.length > 0 && norm(renderedPrompt).includes(c)) {
@@ -449,10 +416,9 @@ export interface TechnicianPacket extends DispatchPacket {
 }
 
 /**
- * Revision identity for gate lookups. Records written before revisions were
- * canonicalized to their on-disk case hold the coordinator's spelling, and on
- * a case-insensitive volume both name the same file — comparing case-folded
- * as well keeps prior FAIL/PASS records matching after the change.
+ * Revision identity for gate lookups. Records predating on-disk-case
+ * canonicalization hold the coordinator's spelling, and on a case-insensitive
+ * volume both name the same file, so comparison is case-folded too.
  */
 export function sameRevision(a: unknown, b: string): boolean {
   return typeof a === "string" && (a === b || a.toLowerCase() === b.toLowerCase());
@@ -465,12 +431,10 @@ export const VERIFICATION_MECHANISM_PREFIX = "verification:";
 /**
  * Promoted revisions that have since received a substantive FAIL.
  *
- * The contract requires a retraction when this happens — relabel in
- * REGISTRY.md, append to FAILED.md, mark the PROVED.md entry historical,
- * demote dependents. Deciding all that is model judgment, but *noticing* it is
- * arithmetic over records the harness already holds, and a promoted claim
- * quietly contradicted by a later verdict is the worst thing this ledger can
- * contain.
+ * The contract requires a retraction when this happens (relabel, append to
+ * FAILED.md, mark the PROVED.md entry historical, demote dependents). Deciding
+ * that is model judgment; noticing it is arithmetic over records the harness
+ * already holds.
  */
 export function promotionsNeedingRetraction(store: GateStore): { revision: string; stage: string }[] {
   const records = store.all();
@@ -491,25 +455,18 @@ export function promotionsNeedingRetraction(store: GateStore): { revision: strin
   return out;
 }
 
-/**
- * Retractions with their recorded dependent closure.
- *
- * Promotion records carry machine-resolvable `premises` (revisions of earlier
- * promotions), so when a promoted revision later takes a substantive FAIL the
- * harness can enumerate every promotion standing on it — transitively —
- * instead of leaving the coordinator to rediscover the graph from prose.
- * Enumeration only: relabeling, FAILED.md appends, and demotion remain the
- * coordinator's judgment (contract).
- */
+/** Promotion records carry machine-resolvable `premises` (revisions of earlier
+ *  promotions), so retractionClosure can enumerate every promotion standing on
+ *  a failed one transitively. Enumeration only: relabeling, FAILED.md appends,
+ *  and demotion remain the coordinator's judgment (contract). */
 function promotionPremises(p: GateRecord): string[] {
   return Array.isArray(p.premises) ? (p.premises as unknown[]).map(String) : [];
 }
 
 /**
  * Resolve coordinator-typed premise names to recorded promotions. Each must
- * match an existing promotion (via revision identity): a typo would silently
- * disconnect the dependency edge that retraction enumeration walks, which is
- * the whole point of recording it. Returns the canonical stored revisions and
+ * match an existing promotion, or a typo silently disconnects the dependency
+ * edge retraction enumeration walks. Returns the canonical stored revisions and
  * their content hashes, or the first unresolvable name.
  */
 export function resolvePremises(
@@ -562,11 +519,10 @@ export function retractionClosure(
 
 /**
  * Promotion events whose recorded PROVED.md entry no longer appears in the
- * file. The same pattern as danglingCitations: mechanical noticing, judgment
- * stays with the coordinator. An entry legitimately rewritten by a recorded
- * retraction relabel will show up here once and be recognized as such; an
- * entry that silently vanished is the ledger corruption this exists to catch.
- * Only promotions recorded with their entry text (2026-08-07+) are checkable.
+ * file: mechanical noticing, judgment stays with the coordinator. A legitimate
+ * retraction relabel shows up here once; a silently vanished entry is the ledger
+ * corruption this catches. Only promotions recorded with their entry text
+ * (2026-08-07+) are checkable.
  */
 export function promotionsMissingFromProved(store: GateStore, dir: string): { revision: string }[] {
   const provedPath = path.join(dir, "PROVED.md");
@@ -585,22 +541,18 @@ export interface GateDecision {
 
 const FAILED_CHECK_RE = /^(no close prior route|closest prior route is .+; this differs materially because .+)/is;
 
-/** Latest verdict wins: a mechanism re-gated to IDEA FAIL/REPAIR loses fan-out
- *  permission it earned earlier, or the gate could never be re-armed. */
 /**
- * Gate keys are compared on this, not on the raw string.
- *
- * A mechanism name is free text the coordinator retypes across turns, and it
- * decides two launcher rules: whether a wave needs the idea gate, and whether
- * an IDEA PASS already exists. Raw comparison fails in both directions — a
- * trailing space or a capital letter both evades the wave gate (the harness
- * sees no concurrent worker on "that" mechanism) and discards an IDEA PASS the
- * campaign already paid for.
+ * Gate keys are compared on this, never on the raw string. A mechanism name is
+ * free text the coordinator retypes across turns, and it decides two launcher
+ * rules. Raw comparison fails both ways: a trailing space or capital letter
+ * evades the wave gate AND discards an IDEA PASS the campaign already paid for.
  */
 export function normalizeMechanism(mechanism: string): string {
   return mechanism.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+/** Latest verdict wins: a mechanism re-gated to IDEA FAIL/REPAIR loses fan-out
+ *  permission it earned earlier, or the gate could never be re-armed. */
 function ideaGatePassed(store: GateStore, mechanism: string): boolean {
   const key = normalizeMechanism(mechanism);
   return (
@@ -614,9 +566,8 @@ function ideaGatePassed(store: GateStore, mechanism: string): boolean {
 /**
  * Fan-out gate. Launcher: "Do not allow recursive subagent fan-out or broad
  * concurrent exploration of a route before the parent mechanism receives
- * IDEA PASS". Enforced only
- * at the unambiguous threshold — a second CONCURRENT worker on the same
- * mechanism. History-based cases (sequential retries) are the coordinator's
+ * IDEA PASS". Enforced only at the unambiguous threshold — a second CONCURRENT
+ * worker on the same mechanism. Sequential retries stay the coordinator's
  * judgment; the harness attaches an advisory reminder instead of refusing.
  */
 export function checkDispatch(
@@ -695,12 +646,9 @@ export function recordGateVerdict(
   mechanism: string,
   verdictText: string,
   usage?: unknown,
-  /** Identity and provenance for the gate lane. Before this, all 544
-   *  gate-verdict records on file carried usage and NO id, no model and no
-   *  dispatch link — the only record of that lane's spend, and unattributable.
-   *  `dispatchId` (never `id`: an `id` on a non-dispatch kind joins wrong in
-   *  the analytics queries) plus the served/requested model and the codex
-   *  rollout join key. */
+  /** Identity and provenance for the gate lane, whose spend was otherwise
+   *  unattributable. Use `dispatchId`, never `id`: an `id` on a non-dispatch
+   *  kind joins wrong in the analytics queries. */
   request?: {
     promptChars?: number;
     durationMs?: number;
@@ -736,11 +684,10 @@ export function acceptedStatementHash(store: GateStore): string | undefined {
 
 /**
  * Two-stage verification bookkeeping, bound to content: each stage record
- * carries sha256 of the candidate file and of STATEMENT.md at verification
- * time. `verifier-backed` requires a stage-1 audit PASS and a stage-2
- * comparison PASS (the launcher's PASS belongs to the comparison mapping the
- * reconstruction to the candidate, not to the blind reconstructor itself)
- * whose hashes still match the files on disk.
+ * carries sha256 of the candidate file and of STATEMENT.md at verification time.
+ * `verifier-backed` requires a stage-1 audit PASS and a stage-2 comparison PASS
+ * (the launcher's PASS belongs to the comparison, not to the blind
+ * reconstructor) whose hashes still match the files on disk.
  */
 function verificationState(store: GateStore, dir: string, revision: string) {
   const candidatePath = path.join(dir, "EVIDENCE", revision);
@@ -767,26 +714,18 @@ function verificationState(store: GateStore, dir: string, revision: string) {
 /**
  * The one carry-forward lookup for every reusable verifier response.
  *
- * Reuse soundness in this cadence is information-flow control, not
- * memoization: a record is reusable iff its output provably could not have
- * influenced the request now presenting these inputs. Two enforced
- * conditions always hold — content-keyed on every hash the caller passes (a
- * repaired candidate changes `candidateHash` and never matches), and
- * content-bound to the saved artifact (an artifact edited since it was
- * recorded is no longer the response that was verified). The one policy
- * difference between the mechanisms lives in `requireStranded`:
+ * Reuse soundness here is information-flow control, not memoization: a record is
+ * reusable iff its output provably could not have influenced the request now
+ * presenting these inputs. Two conditions always hold — content-keyed on every
+ * hash the caller passes, and content-bound to the saved artifact. The policy
+ * difference lives in `requireStranded`:
  *
  * - `true` (audit, bundle-cert): the stage saw the candidate, so its PASS is
- *   reusable only while its own cadence is stranded — a verification
- *   dispatch with no completion record, the journal's definition of the
- *   contract's "protocol or infrastructure failure" (observed: campaign
- *   2026-08-01 v033/v035). A PASS from a finished cadence is never reused;
- *   a rebuttal challenge or duplicate re-request owes fresh scrutiny.
- * - `false` (reconstruction): the reconstructor never sees any candidate,
- *   so its output cannot have been influenced by a repair — reuse crosses
- *   completed cadences by design (it is the dominant cost of a clerical
- *   re-cadence), with `candidateHash` in the keys as an influence-tracking
- *   bound, not a disclosed input.
+ *   reusable only while its own cadence is stranded. A PASS from a finished
+ *   cadence is never reused; a rebuttal or re-request owes fresh scrutiny.
+ * - `false` (reconstruction): the reconstructor never sees any candidate, so
+ *   reuse crosses completed cadences by design, with `candidateHash` in the keys
+ *   as an influence-tracking bound, not a disclosed input.
  */
 export function priorReusableRecord(
   store: GateStore,
@@ -796,10 +735,9 @@ export function priorReusableRecord(
   policy: { requireStranded: boolean },
 ): GateRecord | undefined {
   // Stranded = the journal's definition of an infrastructure failure: a
-  // dispatch with NO completion, or one whose completion is itself a failure
-  // or cancellation (a restart records failed completions for killed
-  // cadences — without this clause, byte-identical re-runs after a restart
-  // re-paid every stage; observed twice on lin3cut, 2026-08-09).
+  // dispatch with NO completion, or one whose completion is itself a failure or
+  // cancellation. Without the second clause, byte-identical re-runs after a
+  // restart re-paid every stage (observed twice on lin3cut, 2026-08-09).
   const stranded = policy.requireStranded
     ? new Set([
         ...store.dispatchesWithoutCompletion().map((d) => d.id as string),

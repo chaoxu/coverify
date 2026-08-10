@@ -1,10 +1,8 @@
-// Subscription CLI transports: the spawned official-CLI lane behind the
-// single-shot verdict roles (claude, codex, chatgpt-cli, agy) — command
-// templates, process-group kill/reaper wiring, and output/usage parsing.
-// Semantics-invisible mechanics (design rule 2) with one exception: the
-// served-model attestation policy on the oracle-json path (user policy,
-// Chao 2026-08-09; issue #20) lives here because it is a property of the
-// transport's reply, enforced at the only point the reply is parsed.
+// Subscription CLI transports for the single-shot verdict roles: command
+// templates, process-group kill/reaper wiring, output/usage parsing. Mechanics
+// (design rule 2) with one exception — the served-model attestation policy on
+// the oracle-json path (user policy 2026-08-09; issue #20) lives here because
+// it is a property of the reply, enforced where the reply is parsed.
 import { spawn } from "node:child_process";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -14,29 +12,24 @@ import { installReaperHooks, liveReapers } from "./sandbox.js";
 import type { RoleRun, RoleSession, RoleUsage } from "./providers.js";
 
 /** A CLI failure that still cost money: the provider was paid before it exited
- *  nonzero, so the rejection carries the spend and its join keys instead of
- *  discarding them. One shape for the writer here and the reader in cadence.ts,
- *  so a leafed failure can't quietly drop a field neither side names. */
+ *  nonzero, so the rejection carries the spend and its join keys. One shape for
+ *  the writer here and the reader in cadence.ts. */
 export interface BilledFailure extends Error {
   usage?: RoleUsage;
   providerSessionId?: string;
   backendCwd?: string;
   /** Provider requests the failed call made; the attached `usage` sums them. */
   requests?: number;
-  /** Set by whichever component journalled this spend first. The error object
-   *  is rethrown, so without a claim the cadence's leaf and the completion
-   *  record downstream both write the same tokens — one payment, two records.
-   *  One owner per payment; a later handler sees the claim and stands down. */
+  /** Set by whichever component journalled this spend first. The error is
+   *  rethrown, so without a claim the cadence's leaf and the completion record
+   *  both write the same tokens — one payment, two records. */
   usageLeafed?: true;
 }
 
 /**
- * A spawned official CLI as a degenerate RoleSession: it answers exactly
- * once, can be stopped (kill) but not steered, holds no transcript, and
- * reports usage only when its machine-readable output carried it. The
- * capability flags make the honesty-ledger claim ("a CLI role can be
- * stopped but not steered") observable in the type instead of inferred
- * from a missing field.
+ * A spawned official CLI as a degenerate RoleSession: answers exactly once, can
+ * be stopped (kill) but not steered, holds no transcript, reports usage only
+ * when its machine-readable output carried it.
  */
 export function createCliRoleSession(
   run: Omit<RoleRun, "workspace" | "extraTools">,
@@ -64,11 +57,8 @@ export function createCliRoleSession(
       sentChars = fullPrompt.length;
       const r = await runCliRole(provider, run.spec.modelId, fullPrompt, stop.signal).catch(
         (e: BilledFailure) => {
-          // A nonzero exit after the provider was already paid still made N
-          // turns, and the usage on the rejection SUMS all of them. Leaving
-          // requests at the floor of 1 would report N turns of tokens against
-          // one claimed request — the defect this counter exists to prevent,
-          // surviving on the failure path alone.
+          // The usage on the rejection SUMS all N turns, so leaving requests at
+          // the floor of 1 reports N turns of tokens against one request.
           requests = e.requests;
           throw e;
         },
@@ -83,22 +73,19 @@ export function createCliRoleSession(
     },
     approxTokens: () => 0,
     usage: () => usage,
-    // Server-attested served model (oracle backends only): the honest value
-    // for a record's modelFamily — the requested spec is testimony, this is
-    // attestation (issue #20).
+    // Server-attested served model: the honest value for a record's modelFamily
+    // — the requested spec is testimony, this is attestation (issue #20).
     servedModel: () => servedModel,
-    /** Self-reported model (claude-cli). Journal-only: recorded beside the
-     *  requested spec, never enforced (#21 P3). codex-cli emits no model
-     *  echo in its JSONL (verified 2026-08-09), so it stays undefined. */
+    /** Self-reported model (claude-cli). Journal-only, never enforced (#21 P3).
+     *  codex-cli emits no model echo in its JSONL (verified 2026-08-09). */
     reportedModel: () => reportedModel,
     unmetered: () =>
       CLI_BACKENDS[provider].unmetered && asked
         ? [{ lane: provider, detail: `${provider} reports no usage payload` }]
         : [],
-    // A CLI oracle answers exactly once and keeps no transcript, so attempts
-    // is exact. Requests is NOT: a codex tool loop is several requests inside
-    // that one answer, so the count derived from the stream wins wherever the
-    // transport could produce one (runCliRole's `requests`).
+    // Attempts is exact (one answer, no transcript). Requests is not: a codex
+    // tool loop is several requests inside that one answer, so the
+    // stream-derived count wins where the transport produces one.
     attempts: () => (asked ? 1 : 0),
     requests: () => requests ?? (asked ? 1 : 0),
     /** Join keys into the provider's own rollout (codex lane), where the
@@ -122,8 +109,8 @@ interface CliBackend {
   output: "stdout" | "claude-json" | "outfile" | "oracle-json";
   /** Backend-specific stdout-side usage parser (telemetry only), orthogonal to `output`. */
   usage?: (stdout: string) => RoleUsage | undefined;
-  /** This lane reports no usage at all. Not "reported zero" — no payload
-   *  exists — so a record must carry the gap explicitly. */
+  /** This lane reports no usage at all, so a record must carry the gap
+   *  explicitly (absent ≠ zero; see RoleUsage in providers.ts). */
   unmetered?: true;
 }
 
@@ -137,11 +124,8 @@ const CLI_BACKENDS: Record<"claude-cli" | "codex-cli" | "chatgpt-cli" | "agy", C
   "claude-cli": {
     env: "COVERIFY_CLAUDE_CMD",
     // --effort max (user decision 2026-08-08): the hostile audit is the one
-    // cross-family check behind every promotion — "otherwise it's hard to
-    // believe the result". The codex verdict roles already run max-tier
-    // reasoning (user's ~/.codex config: model_reasoning_effort ultra), so
-    // this closes the last default-effort gap in the cadence. Audits are
-    // ~1% of token spend; several-fold deeper thinking stays negligible.
+    // cross-family check behind every promotion, and audits are ~1% of token
+    // spend, so deeper thinking here is negligible.
     cmd: "claude -p --model {model} --effort max --output-format json",
     output: "claude-json",
   },
@@ -151,20 +135,15 @@ const CLI_BACKENDS: Record<"claude-cli" | "codex-cli" | "chatgpt-cli" | "agy", C
     output: "outfile",
     usage: codexJsonlUsage,
   },
-  /** Chao's chatgpt.com daemon CLI (gitea chaoxu/chatgpt-cli): the only road
-   *  to ChatGPT-Pro-only models (gpt-5.6-pro) — the deep one-shot prover.
-   *  The daemon picks the actual model; the spec's modelId is a provenance
-   *  label. Emits {ok, text, error} JSON on stdout. */
-  /** --timeout here is the oracle's poll deadline; 604800s = 7 days — a hang
-   *  guard, not a work limit (user decision: no timeouts on model thinking,
-   *  Chao 2026-08-09). */
+  /** chatgpt.com daemon CLI (gitea chaoxu/chatgpt-cli): the only road to
+   *  ChatGPT-Pro-only models. The daemon picks the actual model, so the spec's
+   *  modelId is a provenance label. Emits {ok, text, error} JSON on stdout.
+   *  --timeout is the oracle's poll deadline; 604800s = 7 days is a hang guard,
+   *  not a work limit (user decision: no timeouts on model thinking). */
   "chatgpt-cli": {
     env: "COVERIFY_CHATGPT_CMD",
     cmd: "chatgpt-cli oracle --quiet --timeout 604800",
     output: "oracle-json",
-    // The daemon's reply carries no usage payload, so calls on this lane are
-    // real spend this harness cannot measure. Declared here so the record
-    // says "unmetered" rather than simply omitting a number.
     unmetered: true,
   },
   /** Antigravity CLI (Google subscription): the gemini ideation family.
@@ -179,14 +158,10 @@ export function cliBackendCommand(provider: keyof typeof CLI_BACKENDS): string {
 }
 
 /** The same template, safe to write into a record. A built-in default is
- *  recorded verbatim — it carries no secret and IS the reproducibility fact a
- *  reader wants. A user override is recorded as the fact that one exists,
- *  because these are free-form shell strings that routinely carry auth flags
- *  and the run stamp is mirrored into the campaign's in-tree journal, which
- *  lives in a project repo and is plausibly committed.
- *
- *  Redacting only knobSnapshot() left this field leaking the same values
- *  (found while reviewing the commit that added that redaction). */
+ *  recorded verbatim (no secret, and it IS the reproducibility fact); a user
+ *  override is recorded only as the fact that one exists, because these are
+ *  free-form shell strings that routinely carry auth flags and the run stamp is
+ *  mirrored into the in-tree journal, which is plausibly committed. */
 export function cliBackendCommandForRecord(provider: keyof typeof CLI_BACKENDS): string {
   const backend = CLI_BACKENDS[provider];
   return process.env[backend.env] === undefined ? backend.cmd : `<set: ${backend.env}>`;
@@ -221,8 +196,7 @@ function codexJsonlUsage(stdout: string): RoleUsage | undefined {
   let cacheRead = 0;
   let cacheWrite = 0;
   let sawCacheWrite = false;
-  // Absent unless an event actually carried it — a measured 0 and "the field
-  // was never reported" are different records.
+  // Absent unless an event carried it (absent ≠ zero; see RoleUsage).
   let reasoning: number | undefined;
   for (const line of stdout.split("\n")) {
     if (!line.includes('"turn.completed"')) continue;
@@ -243,16 +217,12 @@ function codexJsonlUsage(stdout: string): RoleUsage | undefined {
     }
     if (event.type !== "turn.completed" || !event.usage) continue;
     found = true;
-    // `input` is the UNCACHED part, disjoint from cacheRead/cacheWrite — the
-    // convention the pi lane already records and that view/turns.ts documents.
-    // Codex nests them: input_tokens includes cached_input_tokens and
-    // cache_write_input_tokens (verified over 50,152 records — none has cached
-    // > input, and total_tokens == input + output throughout). Copying
-    // input_tokens through unsubtracted made this lane's records mean something
-    // different from every other lane's, and overstated fresh input by 30% in
-    // the 2026-08-09 cost study before anyone noticed. Journals written before
-    // this fix carry the nested convention for gate-critic, certifier,
-    // reconstructor and comparator; see docs/measurement-protocol.md rule 1.
+    // `input` is the UNCACHED part, disjoint from cacheRead/cacheWrite, matching
+    // every other lane. Codex nests them: input_tokens includes
+    // cached_input_tokens and cache_write_input_tokens (verified over 50,152
+    // records). Copying it through unsubtracted overstated fresh input by 30% in
+    // the 2026-08-09 cost study. Journals predating this fix carry the nested
+    // convention; see docs/measurement-protocol.md rule 1.
     const cr = event.usage.cached_input_tokens ?? 0;
     const cw = event.usage.cache_write_input_tokens ?? 0;
     if (event.usage.cache_write_input_tokens !== undefined) sawCacheWrite = true;
@@ -267,25 +237,22 @@ function codexJsonlUsage(stdout: string): RoleUsage | undefined {
     ? {
         input, output, cacheRead, reasoning, meter: "codex-cli-jsonl" as const,
         // Observed per record, never read off a lane table: the day codex
-        // #32479 lands and the field starts arriving, this records the real
-        // number instead of stamping a stale "unmeasured" over it.
+        // #32479 lands, this records the real number.
         ...(sawCacheWrite ? { cacheWrite } : {}),
       }
     : undefined;
 }
 
-/** Provider requests this call made. codexJsonlUsage SUMS every
- *  turn.completed, so a tool loop records N turns of tokens; stamping
- *  requests:1 beside that would report four turns of spend against one
- *  claimed request. Same event, counted rather than summed. */
+/** Provider requests this call made. codexJsonlUsage SUMS every turn.completed,
+ *  so stamping requests:1 beside a tool loop reports N turns of spend against
+ *  one claimed request. Same event, counted rather than summed. */
 export function codexTurns(stdout: string): number {
   let n = 0;
   for (const line of stdout.split("\n")) {
     // Parsed, not substring-matched, and gated on the SAME predicate
-    // codexJsonlUsage sums on. A truncated line, a turn.completed carrying no
-    // usage, or assistant prose quoting the literal (this repo's own comments
-    // do) would otherwise count a request whose tokens were never added —
-    // reporting more calls than the usage beside it can account for.
+    // codexJsonlUsage sums on: a truncated line, a usage-less turn.completed, or
+    // prose quoting the literal would otherwise count a request whose tokens
+    // were never added.
     if (!line.includes('"turn.completed"')) continue;
     try {
       const e = JSON.parse(line) as { type?: string; usage?: unknown };
@@ -295,11 +262,10 @@ export function codexTurns(stdout: string): number {
   return n;
 }
 
-/** The rollout id codex writes for this call. `codex exec --json` emits
- *  {"type":"thread.started","thread_id":...} as its first line, and that id is
- *  verbatim the `session_id` of the rollout under ~/.codex/sessions/ — which
- *  carries `rate_limits.primary.used_percent`, the meter that actually ends
- *  campaigns and that nothing in this journal could previously join to. */
+/** The rollout id codex writes for this call: `codex exec --json` emits
+ *  {"type":"thread.started","thread_id":...} first, and that id is verbatim the
+ *  `session_id` of the rollout under ~/.codex/sessions/, which carries
+ *  `rate_limits.primary.used_percent` — the meter that actually ends campaigns. */
 export function codexThreadId(stdout: string): string | undefined {
   for (const line of stdout.split("\n")) {
     if (!line.includes('"thread.started"')) continue;
@@ -314,13 +280,11 @@ export function codexThreadId(stdout: string): string | undefined {
 }
 
 /**
- * Run one single-shot role through an official subscription CLI. cwd is a
- * fresh empty temp dir; the CLI's own tools find nothing there
- * (instructed-only isolation — recorded honestly by callers). No timeout:
- * audit and reconstruction work is never clocked. Output comes from the
- * {out} file when the template names one (codex), else stdout (claude).
- * Per-call token usage is parsed from the CLI's machine-readable output
- * when present (telemetry only — absence never fails the call).
+ * Run one single-shot role through an official subscription CLI. cwd is a fresh
+ * empty temp dir, so the CLI's own tools find nothing (instructed-only
+ * isolation). No timeout: audit and reconstruction work is never clocked. Output
+ * comes from the {out} file when the template names one, else stdout. Usage is
+ * telemetry only — absence never fails the call.
  */
 function runCliRole(
   provider: keyof typeof CLI_BACKENDS,
@@ -333,12 +297,10 @@ function runCliRole(
   servedModel?: string;
   reportedModel?: string;
   /** Rollout join keys; see codexThreadId. `backendCwd` is the per-call temp
-   *  cwd, a second route to the same rollout via its session_meta.cwd that
-   *  holds when stdout was lost or the event name changes upstream. */
+   *  cwd, a second route to the same rollout via its session_meta.cwd. */
   providerSessionId?: string;
   backendCwd?: string;
-  /** Provider requests this call made — a codex tool loop emits one
-   *  turn.completed per request, so it is derived, never assumed to be 1. */
+  /** Derived from the stream (one turn.completed per request), never 1. */
   requests?: number;
 }> {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "coverify-cli-"));
@@ -350,16 +312,14 @@ function runCliRole(
     .replaceAll("{out}", outFile)
     .split(/\s+/);
   return new Promise((resolve, reject) => {
-    // detached: the CLI gets its own process group so kill() can take the
-    // whole tree. The codex CLI is a node wrapper whose vendored binary runs
-    // as a grandchild — SIGKILLing only the wrapper orphans the binary, which
-    // keeps thinking (and billing) headless. That is exactly the issue-#19
-    // survivor observed on the 2026-08-08 lin3cut restart.
+    // detached: the CLI gets its own process group so kill() takes the whole
+    // tree. The codex CLI is a node wrapper whose vendored binary runs as a
+    // grandchild — SIGKILLing only the wrapper orphans it, still thinking and
+    // billing headless (issue #19, observed on the 2026-08-08 lin3cut restart).
     const child = spawn(parts[0], parts.slice(1), { cwd, stdio: ["pipe", "pipe", "pipe"], detached: true });
-    // A spawned verdict role is work like any other: it must die when the
-    // harness dies, and stop when the campaign stops. Without this an
-    // in-flight `claude -p` audit outlives a pause, bills a full Opus run,
-    // and its verdict lands nowhere because no live process is waiting.
+    // A spawned verdict role must die when the harness dies. Without this an
+    // in-flight `claude -p` audit outlives a pause, bills a full Opus run, and
+    // its verdict lands nowhere.
     const kill = () => {
       try {
         if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
@@ -393,12 +353,9 @@ function runCliRole(
     child.stderr.on("data", (d: Buffer) => (err += d));
     child.on("error", reject);
     child.on("close", (code: number | null, signalName: NodeJS.Signals | null) => {
-      // Read {out} BEFORE reaping the temp dir. Cleanup used to run as its
-      // own earlier 'close' handler, deleting the out file before this
-      // resolver's existsSync — every codex-cli verdict silently fell back
-      // to raw --json stdout and parsed UNPARSEABLE (regression from
-      // c60c03f, caught by the 2026-08-07 smoke campaign, the first live
-      // run after that commit).
+      // Read {out} BEFORE reaping the temp dir: cleanup in an earlier 'close'
+      // handler deleted the out file first, and every codex-cli verdict silently
+      // fell back to raw --json stdout and parsed UNPARSEABLE (c60c03f).
       const outText = fs.existsSync(outFile) ? fs.readFileSync(outFile, "utf-8") : undefined;
       cleanup();
       if (backend.output === "oracle-json") {
@@ -412,11 +369,9 @@ function runCliRole(
           if (code !== 0 || !payload.ok || !payload.text?.trim()) {
             return reject(new Error(`${provider} failed: ${payload.error ?? `exit ${code}`}`));
           }
-          // Served-model enforcement (user policy, Chao 2026-08-09; issue
-          // #20): ChatGPT's router silently downgrades, and a weak model's
-          // advice must never enter the campaign wearing a Pro label. The
-          // oracle reports the server-attested resolved slug; anything but
-          // an exact match to the requested model is "no useful response".
+          // Served-model enforcement (user policy 2026-08-09; issue #20):
+          // ChatGPT's router silently downgrades, so anything but an exact match
+          // to the requested model is "no useful response".
           const served = payload.served_model ?? undefined;
           if (served !== modelId) {
             return reject(
@@ -435,17 +390,15 @@ function runCliRole(
         }
       }
       if (code !== 0) {
-        // Empty stderr on a nonzero exit is uninformative and happened three
-        // times on 2026-08-09 (claude-cli exit 1, no message) while identical
-        // probes succeeded — so surface whatever the process DID leave:
-        // stdout head and the signal, and say plainly that the CLI reported
-        // nothing. Without this the next occurrence is equally unreadable.
+        // Empty stderr on a nonzero exit happened three times on 2026-08-09
+        // (claude-cli exit 1, no message) while identical probes succeeded, so
+        // surface whatever the process did leave.
         const detail = err.trim()
           ? err.slice(0, 500)
           : `no stderr; signal=${String(signalName)}; stdout head: ${out.slice(0, 300).trim() || "(empty)"}`;
-        // The provider was paid before it failed — for codex, stdout already
-        // holds turn.completed usage. Rejecting before parsing threw away a
-        // measured number, which is the one thing this journal must not do.
+        // The provider was paid before it failed and stdout already holds
+        // turn.completed usage; rejecting before parsing discards a measured
+        // number.
         const failure: BilledFailure = new Error(`${provider} exited ${code}: ${detail}`);
         const spent = backend.usage?.(out);
         if (spent) failure.usage = spent;
@@ -459,41 +412,33 @@ function runCliRole(
           const payload = JSON.parse(out) as ClaudeJsonResult;
           if (payload.is_error) return reject(new Error(`${provider} reported an error result`));
           const u = payload.usage;
-          // Self-reported model (#21 P3): journal it beside the requested
-          // spec, NEVER refuse on mismatch — auto-refusing would invent
-          // policy (design rule 3). Highest-value case is the hostile
-          // auditor's cross-family guarantee.
+          // Self-reported model (#21 P3): journal it beside the requested spec,
+          // NEVER refuse on mismatch — that would invent policy (rule 3).
           const mu = payload.modelUsage ?? {};
           const reportedKey = Object.keys(mu)[0];
           const reported = reportedKey ? (mu[reportedKey].canonicalModel ?? reportedKey) : undefined;
           return resolve({
             text: (payload.result ?? "").trim(),
             reportedModel: reported ? `${provider}/${reported}` : undefined,
-            // This lane leaves a transcript too, under
-            // ~/.claude/projects/<url-encoded cwd>/<session_id>.jsonl —
-            // verified: 411 such directories exist from past auditor runs,
-            // named after the mkdtemp cwd. It holds the THINKING BLOCKS this
-            // lane's result JSON omits, so "reasoning is a provider fact we
-            // cannot have" was only true of the payload, not of the run.
-            // Token counts stay from the payload: the transcript's
-            // output_tokens is a mid-stream snapshot (anthropics/claude-code
-            // #27361), so it must not be summed.
+            // This lane also leaves a transcript at
+            // ~/.claude/projects/<url-encoded cwd>/<session_id>.jsonl, holding
+            // the thinking blocks the result JSON omits. Token counts stay from
+            // the payload: the transcript's output_tokens is a mid-stream
+            // snapshot (anthropics/claude-code #27361) and must not be summed.
             providerSessionId: payload.session_id,
             backendCwd: cwd,
             usage: u && {
               input: u.input_tokens ?? 0,
               output: u.output_tokens ?? 0,
               cacheRead: u.cache_read_input_tokens ?? 0,
-              // This lane genuinely measures cache creation, unlike the codex
-              // and pi lanes; observed per record rather than assumed.
+              // This lane genuinely measures cache creation, unlike codex and
+              // pi; observed per record rather than assumed.
               ...(u.cache_creation_input_tokens !== undefined
                 ? { cacheWrite: u.cache_creation_input_tokens }
                 : {}),
               meter: "claude-cli-json" as const,
               // `reasoning` stays absent: the result JSON has no thinking-token
-              // field at all (absent on 204/204 audit records). pi's contract
-              // already fixes undefined as "provider does not report it", so no
-              // parallel gap list is needed.
+              // field at all (absent ≠ zero; see RoleUsage).
             },
           });
         } catch {
@@ -507,11 +452,8 @@ function runCliRole(
           usage: backend.usage?.(out),
           providerSessionId: codexThreadId(out),
           backendCwd: cwd,
-          // Provider requests in this call: codex runs a tool loop and emits
-          // one turn.completed per request, so this is derived from the
-          // stream rather than assumed to be 1. Undefined when the stream said
-          // nothing — a call that happened is never 0 requests, so the session
-          // falls back to its floor of 1 rather than reporting "no call".
+          // Undefined when the stream said nothing: a call that happened is
+          // never 0 requests, so the session falls back to its floor of 1.
           requests: codexTurns(out) || undefined,
         });
       }

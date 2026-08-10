@@ -1,10 +1,8 @@
-// The verification cadence: the launcher's two-stage verification compiled
-// into code — fresh hostile audit, bundle certification, blind
-// reconstruction, fresh comparison — with hash-binding, anti-verdict-
-// shopping, and the carry-forward rules. This is the most clause-dense code
-// in the repo (conformance table: the verification rows all point here);
-// extracted from harness.ts so the enforcement is auditable file-by-file,
-// while the scheduler it runs under stays semantics-invisible.
+// The launcher's two-stage verification compiled into code — fresh hostile
+// audit, bundle certification, blind reconstruction, fresh comparison — with
+// hash-binding, anti-verdict-shopping, and the carry-forward rules. The most
+// clause-dense code in the repo; the conformance table's verification rows all
+// point here.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -34,9 +32,8 @@ import {
 } from "./providers.js";
 import { toolText } from "./sandbox.js";
 
-/** What the cadence needs from the campaign loop. Narrow by design: the
- *  cadence never touches the settle queue, wake counters, or compaction —
- *  it dispatches itself as one verification handle and records gate state. */
+/** What the cadence needs from the campaign loop. Narrow by design: it never
+ *  touches the settle queue, wake counters, or compaction. */
 export interface CadenceDeps {
   dir: string;
   store: GateStore;
@@ -58,8 +55,8 @@ export interface CadenceDeps {
     mechanism: string;
     stop?: () => void;
     promise: () => Promise<string>;
-    // No `usage` reporter: the loop's Handle offers one, but a cadence-level
-    // total would be a sum of stage records already on file (see the call site).
+    // No `usage` reporter: a cadence-level total would be a sum of stage
+    // records already on file (see the call site).
   }) => void;
 }
 
@@ -119,9 +116,9 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
       if (!rel) return toolText(`revision must be a path inside EVIDENCE/ (got: ${p.revision})`);
       const candidatePath = path.join(dir, "EVIDENCE", rel);
       if (!fs.existsSync(candidatePath)) return toolText(`no such evidence revision: ${rel}`);
-      // One read, one hash: a candidate can live in a live worker's evidence
-      // directory and be rewritten between two reads, which would record a
-      // hash of bytes no verifier ever saw.
+      // One read, one hash: a candidate in a live worker's evidence directory
+      // can be rewritten between two reads, recording a hash of bytes no
+      // verifier ever saw.
       const candidateBytes = fs.readFileSync(candidatePath);
       const candidate = candidateBytes.toString("utf-8");
       const candidateHash = sha256Text(candidate);
@@ -151,11 +148,9 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           { revision: rel, candidateHash },
         );
       }
-      // Matched on content, not on filename. "A substantive FAIL from any
-      // stage stands against the revision that received it" — and identical
-      // bytes under a different name are that revision, so copying a FAILed
-      // candidate to a new path must not clear the requirement for a repair,
-      // a retraction, or a recorded rebuttal.
+      // Matched on content, not filename: "a substantive FAIL from any stage
+      // stands against the revision that received it", and identical bytes under
+      // a different name are that revision.
       const priorFail = store
         .all()
         .some(
@@ -184,24 +179,17 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
       const slug = rel.replace(/[\/]/g, "_");
       const bundleHash = sha256Text(bundle);
       const provedHash = sha256Text(proved);
-      // Spend from a provider call that has returned but whose stage record has
-      // not been written yet: set immediately after each runRole, cleared
-      // immediately after the store.append that carries it. If the cadence is
-      // cancelled in that window, abortIfCancelled emits it as its own leaf — so
-      // cadence spend is ALWAYS a leaf, never a residual recovered by
-      // subtracting children from a roll-up. That roll-up cost 80.4M tokens of
-      // double-counting and two ordering bugs in four commits before it was
-      // deleted.
+      // Spend from a returned provider call whose stage record is not yet
+      // written: set right after each runRole, cleared right after the append
+      // that carries it. If the cadence unwinds in that window it is emitted as
+      // its own leaf, so cadence spend is ALWAYS a leaf — the roll-up that
+      // replaced this cost 80.4M tokens of double-counting.
       let unrecordedSpend: RoleUsage | undefined;
 
-      // The cadence runs as an async handle, like a worker: during a long
-      // blind reconstruction the coordinator keeps gating, dispatching, and
-      // writing ledgers; the verdict arrives at a later wake.
-      // Set once the handle exists; a cancelled cadence must stop recording
-      // verdicts — otherwise cancel_agent would hide a verification that keeps
-      // running and can still authorize promotion off an unseen PASS.
-      // Minted before the stage helpers close over it: every stage record
-      // carries its cadence's dispatch id, which is what lets a later run
+      // The cadence runs as an async handle, like a worker: the verdict arrives
+      // at a later wake while the coordinator keeps working. The id is minted
+      // before the stage helpers close over it, because every stage record
+      // carries its cadence's dispatch id — that is what lets a later run
       // recognize a stranded (dispatched, never completed) cadence.
       const id = deps.mintVerificationId();
       const cadenceStop = new AbortController();
@@ -212,9 +200,8 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
       const flushErrorSpend = (e: unknown, why: string) => {
         const { usage, providerSessionId, backendCwd } = e as BilledFailure;
         if (!usage) return;
-        // Claim this payment before writing it. The error is rethrown to the
-        // handle's settle path, which records billed spend too; unclaimed, the
-        // richer leaf here and the completion there both carry it.
+        // Claim this payment before writing it: the error is rethrown to the
+        // handle's settle path, which also records billed spend.
         (e as BilledFailure).usageLeafed = true;
         store.append({
           kind: "role-call",
@@ -222,18 +209,16 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           revision: rel,
           orphaned: why,
           usage,
-          // The failed call still has a rollout; without its join keys this
-          // leaf is the one spend record nobody can trace back to a provider.
+          // The failed call still has a rollout; without its join keys this leaf
+          // is untraceable back to a provider.
           ...defined({ providerSessionId, backendCwd }),
         });
       };
-      /** The provider was paid for a stage whose record was never written.
-       *  Emit that spend as its own leaf so it is on file rather than lost.
-       *  Idempotent, and called from BOTH the cancellation path and the
-       *  cadence's outer finally — cancellation is only one of the ways this
-       *  window unwinds: newEvidencePath, writeFileSync, sha256File and
-       *  store.append itself can all throw (ENOSPC, EACCES, read-only
-       *  checkout) between the provider call and the record. */
+      /** The provider was paid for a stage whose record was never written; emit
+       *  that spend as its own leaf. Idempotent, and called from BOTH the
+       *  cancellation path and the cadence's outer finally, because
+       *  newEvidencePath, writeFileSync, sha256File and store.append can all
+       *  throw in that window too. */
       const flushUnrecordedSpend = (why: string) => {
         if (!unrecordedSpend) return;
         store.append({
@@ -250,18 +235,10 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         flushUnrecordedSpend("cadence cancelled after the provider returned, before the stage record");
         throw new Error(`verification cancelled; no verdict recorded for ${rel}`);
       };
-      /**
-       * One verdict stage of the cadence: a fresh role call, a first-line
-       * PASS/FAIL parse, the output saved as a citable artifact, and a gate
-       * record bound to the candidate + statement hashes. Audit, bundle
-       * certification, and comparison differ only in inputs and disclosure —
-       * the stage sequence itself stays spelled out in `cadence` below.
-       */
-      // One list drives both the prompt and the journal's suppliedInputs
-      // (2026-08-02 uniformity review): what the model was sent and what the
-      // record testifies can no longer drift. `blindness` stays hand-authored
-      // per call — it carries enforcement-modality and content-provenance
-      // claims a section list cannot derive.
+      // One list drives both the prompt and the journal's suppliedInputs, so
+      // what the model was sent and what the record testifies cannot drift.
+      // `blindness` stays hand-authored per call: it carries
+      // enforcement-modality and provenance claims a section list cannot derive.
       const sectionsOf = (sections: { heading: string; name: string; text: string }[]) => ({
         prompt: sections.map((s) => `# ${s.heading}\n\n${s.text}`).join("\n\n"),
         suppliedInputs: sections.map((s) => s.name),
@@ -274,6 +251,12 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           ? "no workspace granted; official-CLI backend may expose its own tools (instructed only)"
           : "none (single-shot, no tools granted)";
 
+      /**
+       * One verdict stage: a fresh role call, a first-line PASS/FAIL parse, the
+       * output saved as a citable artifact, and a gate record bound to the
+       * candidate + statement hashes. Audit, bundle certification and comparison
+       * differ only in inputs and disclosure.
+       */
       const verdictStage = async (stage: {
         kind: "audit" | "bundle-cert" | "comparison";
         role: "hostileAuditor" | "bundleCertifier" | "comparator";
@@ -300,10 +283,8 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         const verdictLine = parseFirstLineVerdict(text, ["VERDICT: PASS", "VERDICT: FAIL"]);
         const pass = verdictLine === "VERDICT: PASS";
         // A reply with no verdict line is a protocol failure: never PASS
-        // (launcher), but recorded as UNPARSEABLE rather than FAIL so it
-        // neither arms anti-verdict-shopping against the revision nor
-        // hash-blocks a legitimate bundle forever — re-running the stage is
-        // the contract's legitimate response to an infrastructure failure.
+        // (launcher), but UNPARSEABLE rather than FAIL, so it neither arms
+        // anti-verdict-shopping nor hash-blocks a legitimate bundle forever.
         const verdict = pass ? "PASS" : verdictLine === undefined ? "UNPARSEABLE" : "FAIL";
         try {
         store.append({
@@ -327,14 +308,12 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           // Attested served model when the backend reports one (issue #20):
           // the requested spec label is testimony; the attestation is truth.
           modelFamily: servedModel ?? specLabel(spec),
-          // The requested spec INCLUDING thinking level. specLabel drops
-          // @thinking, which survived only in the once-per-run roleSpecs stamp
-          // — so reasoning effort, one of the perfectly confounded covariates
-          // rule 11 names, was unrecoverable per call and issue #31's effort
-          // A/B was unmeasurable as instrumented.
+          // The requested spec INCLUDING thinking level: specLabel drops
+          // @thinking, without which reasoning effort is unrecoverable per call
+          // and issue #31's effort A/B is unmeasurable.
           modelSpec: specKey(spec),
-          // Self-reported model beside it (#21 P3) — journal-only, never a
-          // refusal trigger; modelSubstitutions() surfaces disagreements.
+          // Self-reported model (#21 P3) — journal-only, never a refusal
+          // trigger; modelSubstitutions() surfaces disagreements.
           ...defined({ reportedModel }),
           usage,
           promptChars,
@@ -343,44 +322,34 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           ...defined({ attempts, requests }),
         });
         } finally {
-          // The stage record now carries this spend. Cleared in a finally so a
-          // failure of store.append's in-tree journal MIRROR — which runs after
-          // the authoritative line is already on disk — cannot leave the debt
-          // standing and have the next flush emit a duplicate leaf.
+          // Cleared in a finally so a failure of store.append's in-tree journal
+          // MIRROR — which runs after the authoritative line is on disk —
+          // cannot leave the debt standing and emit a duplicate leaf.
           unrecordedSpend = undefined;
         }
         return { text, pass, unparseable: verdictLine === undefined, artifact };
       };
 
-      // Restart-lost stage reuse: the contract allows reusing a verifier
-      // response only for "a re-run on the byte-identical candidate (a
-      // protocol or infrastructure failure)". A cadence that died between
-      // stages strands its completed PASSes; a fresh request on identical
-      // bytes reuses them instead of paying the stage again. Three checks,
-      // all enforced (priorReusableRecord): every input the stage saw matches by
-      // content hash, the saved artifact is byte-unchanged, and the PASS's
-      // own cadence is stranded — dispatched but never completed, the
-      // journal's definition of an infrastructure failure. An ordinary
-      // re-request whose prior cadence finished (a rebuttal challenge, a
-      // duplicate ask) runs every stage fresh. A repaired candidate changes
-      // candidateHash and never matches; comparison — the final verdict — is
-      // never reused. Recorded as a carried-forward gate record so promotion
-      // checking and the journal both see it.
+      // Restart-lost stage reuse: the contract allows reusing a verifier response
+      // only for "a re-run on the byte-identical candidate (a protocol or
+      // infrastructure failure)". A cadence that died between stages strands its
+      // completed PASSes, and a fresh request on identical bytes reuses them.
+      // All three conditions are enforced in priorReusableRecord. Comparison —
+      // the final verdict — is never reused.
       const dependenciesHash = sha256Text(p.declaredDependencies);
       const carried: string[] = [];
       // The one carried-record writer: copies the artifact binding and
-      // provenance from the prior record, adds this cadence's identity, and
-      // takes the reuse-policy justification as the hand-authored blindness
-      // string (per the 2026-08-02 narrowed-form decision).
+      // provenance from the prior record, adds this cadence's identity, and takes
+      // the reuse-policy justification as the hand-authored blindness string.
       const carriedRecord = (
         kind: "audit" | "bundle-cert" | "reconstruction",
         prior: NonNullable<ReturnType<typeof priorReusableRecord>>,
         extra: Record<string, unknown>,
         blindness: string,
       ): { text: string; artifact: string } => {
-        // Same invariant as verdictStage: a cancelled cadence must stop
-        // recording verdicts — enforced here too so a future await added
-        // before a carry can't silently bypass cancel_agent.
+        // Same invariant as verdictStage: a cancelled cadence must stop recording
+        // verdicts, enforced here too so a future await added before a carry
+        // cannot silently bypass cancel_agent.
         abortIfCancelled();
         const artifact = prior.artifact as string;
         store.append({
@@ -451,14 +420,12 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           return `STAGE 1 FAIL — not verifier-backed. Audit saved: ${audit.artifact}\n\n${audit.text}`;
         }
 
-        // Bundle certification (contract): a fresh agent shown both the
-        // candidate and the bundle certifies no element is a stepwise
-        // paraphrase of — or contains — the candidate argument. The certifier
-        // sees the candidate, so a new revision needs its own cert; only a
-        // byte-identical re-run (same candidate, same bundle) reuses a PASS.
-        // statementHash is over-strict — the certifier sees only candidate +
-        // bundle — but a statement change invalidates all verification
-        // evidence anyway (amend flow), so the extra key only ever refuses.
+        // Bundle certification (contract): a fresh agent shown both candidate
+        // and bundle certifies that no element is a stepwise paraphrase of, or
+        // contains, the candidate argument. statementHash in the key is
+        // over-strict — the certifier never sees the statement — but a statement
+        // change invalidates all verification evidence anyway, so it only ever
+        // refuses.
         const certInputHashes = { candidateHash, statementHash: stmtHash, bundleHash };
         const priorCert = priorReusableRecord(store, dir, "bundle-cert", certInputHashes, { requireStranded: true });
         const cert = priorCert
@@ -487,27 +454,18 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           );
         }
 
-        // Stage 2a — blind reconstruction (no verdict; the PASS belongs to
-        // the comparison).
+        // Stage 2a — blind reconstruction (no verdict; the PASS belongs to the
+        // comparison).
         //
-        // Reuse is allowed ONLY for the identical candidate — a re-run after a
-        // protocol or infrastructure failure. The contract is explicit for a
-        // repaired candidate: "Invalidate both stages; rerun a fresh hostile
-        // audit and then a fresh reconstruction. Never reuse a verifier
-        // response that influenced the repair." Keying reuse on the bundle
-        // alone broke exactly that: the comparator's FAIL is quoted verbatim
-        // into the coordinator's wake, the repair is written to address it,
-        // and the same reconstruction then judges the candidate written
-        // against it — independence in name only. Carrying stages forward for
-        // a *non-load-bearing* diff is legal, but the contract requires a
-        // fresh delta auditor's PASS to authorize it, and there is no delta
-        // auditor here yet (roadmap), so anything but identical bytes
-        // regenerates.
-        // requireStranded: false — deliberately broader than the verdict
-        // stages. The reconstructor never sees any candidate, so its output
-        // cannot have been influenced by a repair — reusing it across
-        // completed cadences is the whole point (it is the dominant cost of
-        // a clerical re-cadence). candidateHash stays in the keys as an
+        // Reuse is keyed on the identical candidate. The contract for a repaired
+        // one: "Invalidate both stages; rerun a fresh hostile audit and then a
+        // fresh reconstruction. Never reuse a verifier response that influenced
+        // the repair." Keying reuse on the bundle alone broke exactly that, so
+        // anything but identical bytes regenerates.
+        //
+        // requireStranded: false, deliberately broader than the verdict stages —
+        // the reconstructor never sees any candidate, so reuse across completed
+        // cadences is the point. candidateHash stays in the keys as an
         // influence-tracking bound, not a disclosed input.
         const priorRecon = priorReusableRecord(
           store,
@@ -523,8 +481,8 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           const carriedR = carriedRecord(
             "reconstruction",
             priorRecon,
-            // carriedStage stamps this; without it a carried reconstruction
-            // stays unjoinable to its cadence — systematically the cheap ones.
+            // Without dispatchId a carried reconstruction is unjoinable to its
+            // cadence — systematically the cheap ones.
             { bundleHash, provedHash, dispatchId: id },
             "carried forward (enforced): statement, bundle, and promoted premises byte-identical " +
               "to the prior reconstruction's inputs; the reconstructor never saw any candidate",
@@ -540,8 +498,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             { heading: "Promoted premises", name: "promoted premises (statements view)", text: proved },
           ]);
           // Platform-enforced blindness: the "(enforced)" claim below is a
-          // checked fact for whole-file interpolation, not testimony. Partial
-          // paraphrase remains the bundle certifier's judgment.
+          // checked fact for whole-file interpolation, not testimony.
           assertCandidateWithheld(reconCtx.prompt, candidate);
           // Resolved once: the spec the call requested is the spec the record
           // names and attributes tool visibility to.
@@ -565,10 +522,9 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           try {
           store.append({
             kind: "reconstruction",
-            // Every other stage carries this (verdictStage sets it); without
-            // it all 139 reconstruction records on file are unjoinable to
-            // their cadence, which is why the roll-up double-count could only
-            // be found by hand-matching. Pure addition.
+            // Without this a reconstruction record is unjoinable to its cadence,
+            // which is why the roll-up double-count could only be found by
+            // hand-matching.
             dispatchId: id,
             revision: rel,
             candidateHash,
@@ -587,8 +543,6 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             usage,
             promptChars,
             durationMs,
-            // The most expensive stage in the cadence, and until now the only
-            // one still unjoinable to the provider's rate-limit trajectory.
             ...defined({ providerSessionId, backendCwd, attempts, requests }),
           });
           } finally {
@@ -640,15 +594,11 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         // recording, which abortIfCancelled already enforces between stages.
         stop: () => cadenceStop.abort(),
         mechanism: `${VERIFICATION_MECHANISM_PREFIX}${rel}`,
-        // Passed as a thunk: with carried-forward stages the cadence's prefix
-        // is fully synchronous and checks abortIfCancelled(), so it must not
-        // start before registerHandle sets the handle — registerHandle
-        // guarantees that ordering for thunks.
-        // Every unwinding path flushes, not just cancellation: before 7bd75d5
-        // the roll-up meant persist()'s failure branch still carried a
-        // cadence's spend, so losing it here would be a regression against the
-        // aggregate that was deleted. flushUnrecordedSpend self-clears, so the
-        // cancel path's earlier call makes this a no-op.
+        // A thunk, not a promise: with carried-forward stages the cadence's
+        // prefix is fully synchronous and checks abortIfCancelled(), so it must
+        // not start before registerHandle sets the handle. Every unwinding path
+        // flushes, not just cancellation; flushUnrecordedSpend self-clears, so a
+        // second call is a no-op.
         promise: async () => {
           try {
             return await cadence();
@@ -659,12 +609,9 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             flushUnrecordedSpend("cadence failed after the provider returned, before the stage record");
           }
         },
-        // No `usage` here, deliberately. Every stage of this cadence already
-        // records its own, and a summary alongside them was a derived
-        // aggregate inside an append-only log: it cost 80.4M tokens of
-        // double-counting (27% of the 2026-08-09 study), took two ordering
-        // fixes in four commits, and nothing ever read it. Cadence cost is
-        // now GROUP BY dispatchId over leaves — which workers already require.
+        // No `usage` here, deliberately: every stage records its own, and a
+        // summary alongside them cost 80.4M tokens of double-counting (27% of
+        // the 2026-08-09 study). Cadence cost is GROUP BY dispatchId over leaves.
       });
       return toolText(
         `verification ${id} dispatched on ${rel} (${deps.liveCount()} live). The verdict arrives at a ` +

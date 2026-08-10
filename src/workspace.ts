@@ -1,11 +1,9 @@
-// The role tool surface — launcher-clause enforcement (design rule 1), because
-// the tool surface is where these clauses bite: append-only ledgers
-// (APPEND_ONLY_LEDGERS), preregistered-code-only writes (PROSE_EXTS),
-// literature-report provenance names, and the campaign read scope derived from
-// the user-frozen STATEMENT.md. Conformance rows live in docs/design.md.
-// The mechanics this lane stands on — sandboxing, supervision, scope
-// resolution — live in sandbox.ts; the import edge points that way only.
-// Role prompt text does NOT live here (LIBRARIAN_CHARGE is in roles.ts).
+// The role tool surface — launcher-clause enforcement (design rule 1): append-
+// only ledgers (APPEND_ONLY_LEDGERS), preregistered-code-only writes
+// (PROSE_EXTS), literature-report provenance names, and the campaign read scope
+// derived from the user-frozen STATEMENT.md. Conformance rows are in
+// docs/design.md; the mechanics beneath (sandboxing, supervision, scope
+// resolution) live in sandbox.ts, and role prompt text in roles.ts.
 import { fileURLToPath } from "node:url";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -76,9 +74,9 @@ export function runScriptTool(
       for (const r of runs) {
         const script = path.resolve(cwd, r.path);
         const label = [r.path, ...(r.args ?? [])].join(" ");
-        // The script must be one the role wrote in its own scope. Without
-        // this, `path` could name any host executable (/bin/sh -c ..., or
-        // python3 -c ...), handing back the general shell this tool removes.
+        // The script must be one the role wrote in its own scope: otherwise
+        // `path` could name any host executable (/bin/sh -c ...), handing back
+        // the general shell this tool removes.
         if (!inScope(scope, script)) {
           return toolText(
             `[error: ${r.path}: run_script executes only scripts inside your assigned directory; ` +
@@ -96,13 +94,10 @@ export function runScriptTool(
           }
         }
       }
-      // Sweep marks. The batch's own script paths are always safe to match.
-      // The working directory is added only when it belongs exclusively to
-      // this batch (a dispatched agent's own evidence directory): that is what
-      // catches a helper launched in a new session running a *different* file
-      // there. On a shared directory — vanilla pi opened on a project — the
-      // same match would adopt and kill other agents' processes, so it is
-      // omitted and that recall is given up deliberately.
+      // Sweep marks. The cwd is added only when it belongs exclusively to this
+      // batch, which catches a helper launched in a new session running a
+      // different file there. On a shared directory the same match would adopt
+      // and kill other agents' processes, so that recall is given up.
       const marks = jobs.map((j) => j.script);
       if (opts?.exclusiveDir) marks.push(cwd);
       const { outs, fate } = await supervise(
@@ -112,10 +107,8 @@ export function runScriptTool(
       const sections = jobs.map(({ label }, i) => {
         let out = [outs[i].stdout, outs[i].stderr].filter(Boolean).join("\n--- stderr ---\n");
         if (out.length > OUTPUT_LIMIT) {
-          // Tee before truncating (ecosystem review 2026-08-02, from hypa's
-          // pattern): the tail was the tool layer's one silently-lost data.
-          // The full output lands in the role's own directory as an ordinary
-          // retrievable artifact.
+          // Tee before truncating: the tail was the tool layer's one silently
+          // lost datum. The full output lands in the role's own directory.
           let ref = "";
           try {
             const teeName = `run_script-full-${Date.now()}-${i}.log`;
@@ -157,10 +150,9 @@ const literatureCmd = () =>
 
 /**
  * State directories the librarian CLI may write (token refresh, cache).
- * Deliberately narrow: `~/.claude`, `~/.codex`, and `~/.config` hold settings
- * and hook files that execute on a later run — and coverify's own OAuth store
- * lives in `~/.config/coverify` — so a role-authored prompt must not reach
- * them. Override for a different librarian binary with
+ * Deliberately narrow: `~/.claude`, `~/.codex` and `~/.config` hold hook files
+ * that execute on a later run, plus coverify's own OAuth store, so a
+ * role-authored prompt must not reach them. Override with
  * COVERIFY_LITERATURE_STATE_DIRS (colon-separated absolute paths).
  */
 const librarianStateDirs = () =>
@@ -170,9 +162,8 @@ const librarianStateDirs = () =>
   ).filter((d) => path.isAbsolute(d) && d !== os.homedir());
 
 /**
- * Delegated literature search: spawns the librarian CLI supervised (own
- * process group, killed on exit/timeout) and archives the full report as an
- * evidence artifact so citations remain auditable.
+ * Delegated literature search: spawns the librarian CLI supervised and archives
+ * the full report as an evidence artifact so citations remain auditable.
  */
 function literatureSearchTool(
   cwd: string,
@@ -194,11 +185,9 @@ function literatureSearchTool(
     executionMode: "sequential",
     execute: async (_id: string, params: unknown, signal?: AbortSignal) => {
       const { question } = params as { question: string };
-      // Sandboxed and supervised exactly like run_script — the librarian is a
-      // full coding agent (its default argv skips its own permission prompts)
-      // driven by a role-authored question, so it gets the same write
-      // confinement, memory cap, tree kill, and reaper. Its own state
-      // directories stay writable: a CLI that cannot refresh its OAuth token
+      // Sandboxed and supervised exactly like run_script: the librarian is a
+      // full coding agent driven by a role-authored question. Its own state
+      // directories stay writable, or a CLI that cannot refresh its OAuth token
       // fails as an opaque non-zero exit.
       const spec = sandboxedArgv([...literatureCmd(), LIBRARIAN_CHARGE + question], {
         allow: [...scope.allow, ...librarianStateDirs()],
@@ -208,14 +197,14 @@ function literatureSearchTool(
         cwd,
         signal,
         outputLimit: OUTPUT_LIMIT * 4,
-        // 7-day wall: hang protection, never a search-work limit (user
-        // decision, Chao 2026-08-09). The 10-minute batch cap is for
-        // host-protection of computation, not for a thinking librarian.
+        // 7-day wall: hang protection, never a work limit (user decision
+        // 2026-08-09). The 10-minute batch cap protects the host from
+        // computation, not from a thinking librarian.
         timeoutMs: 7 * 24 * 3_600_000,
       });
-      // Real spend, no measurement: agy's -p mode emits a plain report with no
-      // usage payload. Recorded as a gap whether it succeeded or failed —
-      // a failed librarian was still billed for whatever it searched.
+      // Real spend, no measurement: agy's -p mode emits no usage payload.
+      // Recorded as a gap whether it succeeded or failed — a failed librarian
+      // was still billed for whatever it searched.
       onUnmetered?.(
         "librarian",
         `literature_search via \`${literatureCmd()[0]}\` — external agent, no machine-readable usage`,
@@ -241,13 +230,10 @@ function literatureSearchTool(
 }
 
 /**
- * Read scope: a role may read only campaign content — the campaign tree plus
- * the prior-route paths its STATEMENT.md declares (both are model-written
- * campaign material; the statement is user-frozen). Nothing else: on
- * 2026-08-09 workers literature-hunted with grep over all of $HOME and other
- * agents' caches, blowing their sessions past the model context window
- * (issue #22) and leaking unrelated files into provider-bound prompts.
- * External questions belong to literature_search.
+ * Read scope: the campaign tree plus the prior-route paths its user-frozen
+ * STATEMENT.md declares, nothing else. On 2026-08-09 workers grepped all of
+ * $HOME and other agents' caches, blowing their sessions past the model context
+ * window (issue #22) and leaking unrelated files into provider-bound prompts.
  */
 export function readRoots(cwd: string): string[] {
   // The campaign root is the nearest ancestor holding STATEMENT.md — cwd is
@@ -284,11 +270,10 @@ export function readRoots(cwd: string): string[] {
 
 /** Mirror of pi's resolveToCwd (core/tools/path-utils.ts, 0.83.0): the read
  *  tools strip a leading '@', expand `~`, and accept file:// URLs BEFORE
- *  touching the filesystem — so the guard must judge the path the tool will
- *  actually use. Judging the raw param lets `grep {path: "~"}` resolve to
- *  `<evidenceDir>/~` for the check and to $HOME for the search — reopening
- *  the exact issue-#22 hole. (Deep-importing pi's helper is blocked by its
- *  package exports map; drift is pinned by tests/read-scope.test.ts.) */
+ *  touching the filesystem, so the guard must judge the path the tool will
+ *  actually use — judging the raw param lets `grep {path: "~"}` check
+ *  `<evidenceDir>/~` and search $HOME, reopening the issue-#22 hole. (pi's
+ *  helper is not importable; drift is pinned by tests/read-scope.test.ts.) */
 function normalizeLikePi(v: string, cwd: string): string {
   let s = v.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ");
   if (s.startsWith("@")) s = s.slice(1);
@@ -300,23 +285,19 @@ function normalizeLikePi(v: string, cwd: string): string {
 
 const COVERIFY_STATE_RE = /(^|\/)\.coverify(\/|$)/;
 
-/** Drop grep/ls result lines whose LEADING PATH sits under .coverify/:
- *  ripgrep runs with --hidden, so a pathless or campaign-root grep would
- *  otherwise return journal and session-transcript lines — a verification-
- *  blindness leak the param check alone cannot stop (the param was in
- *  scope). Anchored to the relpath prefix of grep's `path:line:` / `path-
- *  line-` and ls's bare-entry formats: a result line whose CONTENT merely
- *  mentions .coverify/ (after the separator) is legitimate and kept — which
- *  is also why the read tool (raw file content, no path prefix) is exempt. */
+/** Drop grep/ls result lines whose LEADING PATH sits under .coverify/: ripgrep
+ *  runs with --hidden, so a campaign-root grep returns journal and transcript
+ *  lines — a verification-blindness leak the in-scope param check cannot stop.
+ *  A line whose CONTENT merely mentions .coverify/ is legitimate and kept, which
+ *  is also why the read tool (raw file content) is exempt. */
 function dropCoverifyLines(text: string): string {
   const lines = text.split("\n");
   const kept = lines.filter((l) => {
-    // Extract the leading path structurally, then judge it segment-exact:
-    // grep match/context lines are "<path>:12: text" / "<path>-12- text"
-    // (pi builds both; the \d+ requirement keeps a ':' or '-' inside a
-    // directory name from ending the path early); anything else (ls
-    // entries) is judged whole. Character-class prefix guessing broke both
-    // ways — paths with spaces leaked, .coverify-* siblings were dropped.
+    // Extract the leading path structurally, then judge it segment-exact: grep
+    // lines are "<path>:12: text" / "<path>-12- text" (the \d+ keeps a ':' or
+    // '-' inside a directory name from ending the path early), anything else is
+    // judged whole. Character-class prefix guessing broke both ways — paths with
+    // spaces leaked, .coverify-* siblings were dropped.
     const m = /^(.*?)[:-]\d+[:-] /.exec(l);
     const prefix = m?.[1] ?? l.trimEnd();
     return !COVERIFY_STATE_RE.test(prefix);
@@ -357,14 +338,13 @@ function capResultText(result: Awaited<ReturnType<AgentTool["execute"]>>): typeo
 }
 
 function confineReads(tool: AgentTool, roots: string[], cwd: string): AgentTool {
-  // Result-side .coverify filtering applies to the directory-traversing tools
-  // (grep/ls, whose lines carry a path prefix); read returns raw file content
-  // where a .coverify mention is content, not a leak.
+  // .coverify filtering applies to the directory-traversing tools only; read
+  // returns raw file content where a .coverify mention is content, not a leak.
   const filterResults = tool.name !== "read";
   const guard = (r: Awaited<ReturnType<AgentTool["execute"]>>) =>
     capResultText(filterResults ? dropCoverifyResult(r) : r);
-  // Stated up front in the schema so roles do not discover the fence by
-  // bumping into it (63 refusal round-trips measured on the first night).
+  // Stated up front in the schema so roles do not discover the fence by bumping
+  // into it (63 refusal round-trips measured on the first night).
   const scopeNote =
     " Readable scope: this campaign's directory and the prior-route paths its STATEMENT.md " +
     "declares; .coverify/ is harness state and is never readable. Results are capped at " +
@@ -380,11 +360,9 @@ function confineReads(tool: AgentTool, roots: string[], cwd: string): AgentTool 
         return guard(await tool.execute(toolCallId, params, signal, onUpdate));
       }
       let real = realResolve(normalizeLikePi(v, cwd));
-      // Packets conventionally cite campaign-root-relative paths
-      // (EVIDENCE/rNNN/...), but a worker's cwd is its own evidence dir —
-      // five mandated reads ENOENT'd in one audited session before the
-      // worker guessed ../. Fall back to root-relative when the cwd-relative
-      // target does not exist (2026-08-09 session audit).
+      // Packets cite campaign-root-relative paths (EVIDENCE/rNNN/...) but a
+      // worker's cwd is its own evidence dir: five mandated reads ENOENT'd in
+      // one audited session before the worker guessed ../ (2026-08-09).
       if (!path.isAbsolute(v) && !fs.existsSync(real)) {
         const atRoot = realResolve(path.resolve(roots[0], v));
         if (fs.existsSync(atRoot)) real = atRoot;
@@ -397,10 +375,8 @@ function confineReads(tool: AgentTool, roots: string[], cwd: string): AgentTool 
             "out-of-scope attempts wastes your turn.",
         );
       }
-      // Harness state is never reasoning material: journals, session
-      // transcripts, and gate mirrors live under .coverify/, and reading a
-      // transcript would also breach verification blindness (another agent's
-      // reasoning must stay unseen).
+      // Harness state is never reasoning material, and reading a transcript
+      // under .coverify/ would also breach verification blindness.
       if (COVERIFY_STATE_RE.test(real)) {
         return toolText(
           `READ SCOPE REFUSED: ${v} is harness state (.coverify/ journals and transcripts), ` +
@@ -408,34 +384,13 @@ function confineReads(tool: AgentTool, roots: string[], cwd: string): AgentTool 
         );
       }
     }
-    // Result-side filtering as well: an in-scope directory grep/ls still
-    // traverses .coverify/ (ripgrep runs --hidden), so matched transcript
-    // lines are withheld even when the param was legal.
+    // An in-scope directory grep/ls still traverses .coverify/, so matched
+    // transcript lines are withheld even when the param was legal.
     return guard(await tool.execute(toolCallId, params, signal, onUpdate));
   };
   return { ...tool, description: `${tool.description}${scopeNote}`, execute };
 }
 
-/**
- * The role tool surface for a workspace: pi's read-only file tools
- * (read, ls, grep) — confined to readRoots(cwd) — and pi's write tool wrapped
- * with the role's write scope.
- * No general shell. Code is gated: only a role whose dispatch packet carried
- * a computation declaration (launcher: "preregistered finite domain and
- * stopping rule") gets run_script and the right to write non-prose files.
- */
-/**
- * Keyed access to FAILED.md, the check the contract requires before every
- * route (issue #28). Purely additive: the file stays readable in full by the
- * ordinary read tool, so this can only make the required check cheaper, never
- * hide an entry from it. That is what keeps it semantics-invisible mechanics
- * (rule 2) and out of contract territory — the filename stays meaningful and
- * the clause needs no rewording.
- *
- * A miss returns the full HEADING INDEX rather than nothing, because "no close
- * prior route" is an assertion the reasoner has to be able to make honestly.
- * Headings are a few hundred bytes against ~31 KB for the file.
- */
 /** Payload bound for a match list, below the 50 KB read-tool cap so the lookup
  *  is always cheaper than the read it replaces — the whole claim of the tool. */
 const FAILED_MATCH_LIMIT = 24_000;
@@ -450,6 +405,11 @@ function summarize(e: { heading: string; text: string }): string {
   return first === undefined ? e.heading : `${e.heading}\n    ${first.trim().slice(0, 200)}`;
 }
 
+/**
+ * Keyed access to FAILED.md, the check the contract requires before every route
+ * (issue #28). Purely additive — the file stays readable in full — so it only
+ * makes the required check cheaper and stays mechanics (rule 2).
+ */
 function failedRoutesTool(failedLedger: string): AgentTool {
   return {
     name: "failed_routes",
@@ -478,11 +438,10 @@ function failedRoutesTool(failedLedger: string): AgentTool {
       }
       const matches = matchFailedEntries(entries, query);
       if (matches.length === 0) {
-        // Headings ALONE are not enough to judge "close prior route": the
-        // obstruction and the retry bar live in the body, and a miss is
-        // lexical, so a route close in mechanism but differently worded lands
-        // here. Each heading gets its first body line, which is where those
-        // ledgers put the obstruction — still a fraction of the file.
+        // Headings ALONE cannot decide "close prior route": the obstruction
+        // lives in the body, and a lexical miss is where a differently worded
+        // but close route lands. First body line each, still a fraction of the
+        // ~31 KB file.
         return toolText(
           `No entry in FAILED.md matched "${query}". All ${entries.length} entries, heading and ` +
             `first line, so the judgement is yours on the evidence rather than on this tool's ` +
@@ -490,11 +449,10 @@ function failedRoutesTool(failedLedger: string): AgentTool {
             entries.map((e) => summarize(e)).join("\n"),
         );
       }
-      // Bounded, and it SAYS so when it bites. An unbounded result was a net
-      // regression: a query naming a revision id or a date matched every entry
-      // and returned the whole 86 KB ledger — more than the ordinary read tool,
-      // which caps at 50 KB and announces its offset. That re-opened the
-      // issue-#22 context overflow this layer exists to prevent.
+      // Bounded, and it SAYS so when it bites: unbounded, a query naming a
+      // revision id or date matched every entry and returned the whole 86 KB
+      // ledger, more than the read tool's 50 KB cap — reopening the issue-#22
+      // context overflow this layer prevents.
       const shown: string[] = [];
       let used = 0;
       for (const m of matches) {
@@ -525,10 +483,8 @@ export function workspaceTools(
      *  closed routes (issue #28). Omitted for roles with no such check. */
     failedLedger?: string;
     /** Called when a tool spawns a provider whose tokens this harness cannot
-     *  measure. The librarian is a full external agent with live web search
-     *  and no machine-readable usage output, so its spend is real and
-     *  invisible. Recording the GAP is the contract (measurement-protocol
-     *  rule 10): a silent omission reads as "this cost nothing". */
+     *  measure (the librarian). Recording the GAP is required by
+     *  measurement-protocol rule 10: a silent omission reads as "cost nothing". */
     onUnmetered?: (lane: string, detail: string) => void;
   },
 ): AgentTool[] {
@@ -537,9 +493,8 @@ export function workspaceTools(
     operations: {
       writeFile: async (absolutePath: string, content: string) => {
         assertInScope(scope, absolutePath);
-        // Every rule below judges the resolved path, never the typed one: a
-        // symlink named `notes.md` must not smuggle a write into a script or
-        // through to a ledger under another name.
+        // Every rule below judges the RESOLVED path: a symlink named `notes.md`
+        // must not smuggle a write into a script or a ledger.
         const real = realResolve(absolutePath);
         const base = path.basename(real).toLowerCase();
         if (!code && !PROSE_EXTS.has(path.extname(base))) {
