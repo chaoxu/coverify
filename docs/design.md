@@ -8,6 +8,10 @@ obedient harness-agent session running the skill and a coverify run should be
 semantically interchangeable — coverify's edge is that the rules which matter
 cannot be skipped, forgotten after compaction, or drifted away from.
 
+This file is the rationale and the audit surface: what is enforced, why, and
+what is honestly not enforced yet. To RUN a campaign, read `README.md` — the
+commands are there, not here.
+
 Three implementation rules follow:
 
 1. **Every enforcement traces to a launcher clause** (conformance table
@@ -75,7 +79,7 @@ before but whose gate history is missing is refused rather than adopted
 record — gate records and campaign events (wakes, usage, notes, replayed user
 guidance) — appends to the out-of-tree store, and the in-tree journal is a
 derived mirror written by the same append path, read only for observability
-(`status`, `trace`); nothing behavioral is ever read from the role-adjacent
+(`status`, `turns`); nothing behavioral is ever read from the role-adjacent
 journal (previously standing user guidance was, a forgeable channel on
 degraded-confinement platforms). Audit,
 reconstruction, and comparison records are content-hash-bound (sha256 of the
@@ -83,23 +87,23 @@ candidate and of `STATEMENT.md` at verification time) — a file edited after
 its PASS is no longer verifier-backed, and a statement edit without
 `coverify amend` hard-stops the next run.
 
-### Layering: core vs. read-only consumers
+### Layering: core vs. the deletable measurement extension
 
-`src/view/` (trace rendering, session telemetry) holds **pure consumers**:
-they read durable state and render it, and NOTHING that runs a campaign may
-import them. `scripts/conformance-check.ts` fails the build on the reverse
-edge, so observation cannot drift into operations — which also means the two
-can be reasoned about, and counted, separately (2026-08-09, Chao: "observation
-should be pure consumer"). `cli.ts` is the operator surface and is the single
-module permitted to render a view.
+`src/telemetry/` holds **pure consumers**: they read durable state and report
+on it, and NOTHING that runs a campaign may import them.
+`scripts/conformance-check.ts` guards exactly that one edge — core must not
+import `src/telemetry/`, and `cli.ts` is the single module allowed to — so
+`rm -rf src/telemetry` plus its cli lines leaves a harness that still proves
+theorems and records verdicts, and stops counting tokens (2026-08-09, Chao:
+"observation should be pure consumer").
 
 The distinction that decides membership is WHO the noticing is for.
 `observe.ts` stays in core because its queries feed the coordinator's wake
 digest — noticing that changes what the campaign does next is operational.
-`view/` is noticing for humans, after the fact, with no path back into a
+`telemetry/` is noticing for humans, after the fact, with no path back into a
 decision.
 
-Current sizes: core 6,023 lines (4,348 code), view 1,008 lines (820 code).
+Current sizes: core 7,017 lines (5,240 code), telemetry 1,298 lines (1,013 code).
 
 ## Threat model
 
@@ -224,8 +228,9 @@ scheduler front door, per the launcher.
 ## Runtime shape
 
 ```
-cli.ts           prove / resume / stop / status / trace / turns / say / amend / login / logout
-                 (the operator surface — the one module allowed to render a view)
+cli.ts           prove / resume / stop / status / spend / outcomes / limits / turns /
+                 say / amend / config / login / logout
+                 (the operator surface — the one module allowed to read telemetry/)
 campaign.ts      state layer: init, revisions, append-only evidence, resume bundle
 launcher.ts      load + extract the fenced launcher contract (no fallback)
 roles.ts         role charges + LIBRARIAN_CHARGE (all coverify-authored role text; no re-exports)
@@ -243,10 +248,6 @@ harness.ts       handle table, event loop, wakes; the only persistent process
 observe.ts       records + noticing queries: run-config stamp, ledger history,
                  refusal events + unaddressed-refusal noticing, wake bookkeeping
                  (prompt-surfaced noticing; never gates, dispatches, or ledgers)
-view/trace.ts    journal -> self-contained HTML timeline (read-only observability)
-view/trace-page.ts  that page's markup, styles, and view code
-view/turns.ts    per-turn telemetry derived from the pi session trees
-view/shared.ts   the readers' shared load-and-filter, M and median
 pi-extension.ts  interactive-pi boundary layer: supervised run_script in
                  place of raw bash (phase 3; never writes trusted state)
 
@@ -263,15 +264,16 @@ telemetry/       THE MEASUREMENT EXTENSION — deletable. Core imports none of i
   outcomes.ts    what the spend bought; refuses the on-path fraction below 50%
                  premise coverage
   limits.ts      rate-limit occupancy and burn rate (the binding constraint)
-  corpus.ts      measurement-protocol rule 3b, executable
+  turns.ts       per-turn telemetry derived from the pi session trees
+  shared.ts      the readers' shared load-and-filter, M and median
 ```
 
-Observability layering (redesign phases 1–3): the **pi session JSONL trees**
+Observability layering: the **pi session JSONL trees**
 under `.coverify/sessions/` are the authoritative per-agent transcripts
 (full content, branchable, crash-survivable) and the single transcript
 store — per-turn telemetry (sizes/usage/gaps/stopReason) is a pure
 function of the stored messages, derived on demand by `coverify turns`
-(src/turns.ts, read-only) rather than maintained as a sidecar; the
+(src/telemetry/turns.ts, read-only) rather than maintained as a sidecar; the
 journal remains the event index. A campaign directory is now openable in
 three harnesses: coverify headless, the raw skill in Codex, and interactive
 pi with `src/pi-extension.ts` loaded.
@@ -431,7 +433,7 @@ stateDiagram-v2
 | Any content change ⇒ every stage reruns, reconstruction included: the contract says a load-bearing repair must "rerun a fresh hostile audit and then a fresh reconstruction. Never reuse a verifier response that influenced the repair", and the comparator's FAIL is quoted into the wake that prompts the repair. Reuse is limited to a re-run on the byte-identical candidate (a protocol or infrastructure failure): an audit or bundle-cert PASS carries forward (`priorReusableRecord`, requireStranded) only when every input hash (candidate, statement, promoted premises, declared dependencies / bundle) matches, its saved artifact is byte-unchanged, **and** its own cadence is stranded — a verification dispatch with no completion record, the journal's definition of an infrastructure failure (campaign 2026-08-01 v033/v035). A PASS from a completed cadence is never reused, so a rebuttal challenge or duplicate re-request reruns every stage fresh; the comparison, being the final verdict, is never reused at all. Carrying stages forward for a certified non-load-bearing diff is legal but needs a fresh delta auditor's PASS, which is not built (roadmap) | Revision-impact rules |
 | `record_promotion` is the sole writer of `PROVED.md` (direct writes OS-denied); legal only when both stage records exist for the exact revision with matching content hashes; entry carries dependency identities, audit-artifact citations, and the verified candidate's content hash. The promoted statement text itself is coordinator-authored and not machine-checked against the candidate — see the honesty ledger | "Promotion records the revision and dependency identities plus every audit…" |
 | Campaign ends only by explicit `declare_campaign_state`; "complete" refused with zero promotions on record; an idle wake gets a nudge, and 3 consecutive no-op wakes trigger an operational *pause* (never a completion) as spend protection | "Do not mark it complete until the final result passes the full cadence…"; "Failed attempts… are not permission to return"; "Pause is operational state" (pause stops further wakes; live agents are not force-aborted — use cancel_agent) |
-| Harvest before judgment: worker reports are saved to EVIDENCE/ and completion-recorded before any model sees them; checkpoint ordering itself is contract-instructed, not enforced (struck as over-constraint — see review record) | "Checkpoint and learning loop" |
+| Harvest before judgment: worker reports are saved to EVIDENCE/ and completion-recorded before any model sees them; checkpoint ordering itself is contract-instructed, not enforced (struck as over-constraint, 2026-07-31 review) | "Checkpoint and learning loop" |
 | Campaign loop persists across restarts until user stop or completion; `declare_campaign_state` interrupts live agents and cancels their computations unless `continueSupervised` is set (the contract's "explicitly authorized to continue under supervision"), then stops after the wake | "The initial resolution request remains authorization…" |
 | Journal records each audit's supplied inputs, visibility, model family, and instructed-vs-platform-enforced restrictions | "Every audit records the supplied inputs, workspace/tool visibility, model-family provenance…" |
 | No agent-count ceiling; budget gate enforces only user/workspace/runtime limits | "Do not impose a fixed agent-count ceiling… scaling to available concurrency and any explicit user, workspace, or runtime limits" |
@@ -506,6 +508,13 @@ FAILED/REGISTRY indexes stop re-funding dead routes; budgets enforced at
 dispatch; every role instance is fresh — workers get one packet each, and
 fresh instances are mandatory where they buy trust (critics, verifiers).
 
+Measured, not asserted: `failed_routes` (indexed lookup over FAILED.md, bounded
+at 24k) exists because a whole-ledger read is not paid once — a 31 KB FAILED.md
+read sits in the session and is re-presented on every later turn, which measured
+40.4M tokens presented in the reasoner lane, ~1.5% of credits (2026-08-10). It
+adds no channel, no file, and no contract surface: it is a cheaper way to read a
+ledger the role could already read.
+
 ## Observability
 
 Usage records tokens and model identity, never dollars (2026-08-09). Every
@@ -547,7 +556,9 @@ and leaves the judgment to the coordinator (rule 3).
 
 
 Four readers make the journal's measurement fields answerable rather than
-merely written. `coverify spend` reports per-lane and per-role token totals
+merely written; `docs/journal-shape.md` states the rules they enforce, by
+number, and the code cites them. `coverify spend` reports per-lane and
+per-role token totals
 and refuses, by construction, the three errors the 2026-08-09 study made:
 it never cross-sums meters (different provider accounts are not one
 currency), never counts a roll-up (flagged or historical), and never sums a
@@ -558,8 +569,8 @@ ratio rather than read as zero.
 
 `coverify outcomes` is the other half of that ledger, and the reason the
 cost tables mean anything: stage verdicts, repair-loop depth per revision,
-and spend split by whether the revision ever promoted. Rules 7 and 8 say a
-cost number alone is non-diagnostic; this is what it divides by. It computes issue #38's on-path fraction — the share of standing promotions
+and spend split by whether the revision ever promoted. A cost number alone is
+non-diagnostic; this is what it divides by. It computes issue #38's on-path fraction — the share of standing promotions
 on a terminal result's transitive premise path — but REFUSES to divide below
 50% premise coverage. Premises are optional and absent on 54 of 64 promotions
 across the seven campaigns, and a premise-less promotion is trivially its own
@@ -575,40 +586,21 @@ temp-dir signature within the campaign span, reported as the inference it is.
 On bet-transversal: peak 94% of a 7-day window, 16.0 points/hour at the
 fastest sustained burn, ~0.4h of headroom left.
 
-`coverify corpus-check` is `docs/measurement-protocol.md` rule 3b made
-executable: is this session corpus summable at all? Two of its four checks
-are stated for corpora logging a cumulative counter per event, and pi logs
-per-message deltas, so one declares itself inapplicable rather than quietly
-passing and one is restated with compaction spend — which belongs to no
-turn — added back explicitly. Run it before quoting a number off the
-session trees; the raw-skill corpus that failed it produced three defensible
-estimates spanning 27×.
+`coverify turns` derives per-turn telemetry — message sizes, per-request
+usage, inter-turn gaps, stopReason — directly from the pi session JSONL
+trees, as a pure function of the stored messages rather than a sidecar that
+could drift from them.
 
-`coverify trace [--dir campaign] [--out file.html]` renders the campaign
-journal as a self-contained HTML timeline: agent lifetimes as ranges,
-verification and gate verdicts as points, coordinator wakes as bands, plus
-summary tiles and a table view. The widget is vis-timeline, vendored and
-inlined at render time, so a trace opens offline and under a strict CSP.
-Clicking any bar or mark opens an inspector showing the whole record: the
-packet the agent was given (task, deliverable, context, FAILED.md check, and
-the computation or literature declaration), its model, evidence directory,
-and its report inlined. A trace can only show what the journal recorded, so
-dispatches now journal the full packet; fields a campaign predates are
-labelled "not recorded by the harness revision that ran this campaign"
-rather than rendered blank.
+An HTML timeline (`coverify trace`) and a corpus-summability checker
+(`coverify corpus-check`) existed and were removed 2026-08-10: the timeline
+was a second rendering of what `status` and the journal already say, and the
+corpus check was written against a foreign log shape. The four readers above
+are the whole measurement surface.
 
-The page leads with its own view — summary tiles, the timeline, the table —
-because that is the monitoring read: campaign-shaped, instant, offline. A
-Perfetto deep-dive surface (embedded ui.perfetto.dev + `--format perfetto`
-export) existed briefly and was removed 2026-08-02: campaign traces are
-dozens of events at minute granularity, and the offline timeline answers
-them. The trace is not a second state system: it is a projection of the
-journal.
-
-Both are read-only by construction — they consume harness audit metadata and
-write one file under `.coverify/`, never campaign state, so they cannot
-change campaign semantics (rule 2). They also work on a live campaign;
-in-flight dispatches simply show as "no completion recorded".
+All four are read-only by construction — they consume harness audit metadata
+and never write campaign state, so they cannot change campaign semantics
+(rule 2). They also work on a live campaign; in-flight dispatches simply show
+as "no completion recorded".
 
 ## Analytics: query in place
 
@@ -616,9 +608,13 @@ The authoritative event corpus is small by construction (~1.4 MB across
 all campaigns ever, measured 2026-08-08), so analytics is a convention,
 not infrastructure: DuckDB directly over the out-of-tree JSONL
 (`read_json_auto(..., format='newline_delimited', union_by_name=true,
-filename=true)` — drift-tolerant, cross-campaign by filename, zero sync,
-no second trust domain). Canonical queries live in the appendix below.
-Derived stores were reviewed and rejected (synced SQLite: schema drift
+filename=true, sample_size=-1)` — drift-tolerant, cross-campaign by filename,
+zero sync, no second trust domain; `sample_size=-1` is load-bearing, since
+schema detection samples only the first 20k rows per file and older campaigns
+predate fields like `usage.meter` and `runId`). The four readers above
+already compute the totals that matter, and they refuse the sums a hand-written
+query gets wrong, so reach for DuckDB for one-off questions, not for cost
+figures. Derived stores were reviewed and rejected (synced SQLite: schema drift
 yields confidently wrong answers; OTel-shaped events: a one-way projection
 if ever wanted, never the authoritative shape). House rule from the same
 review: every new record ships with the derived query that makes it
@@ -632,18 +628,10 @@ until this harness has run a real campaign; the only planned zero-risk edit
 is a note that a conformant harness exists and campaign directories are
 interchangeable.
 
-**Correction to the review record (2026-07-31):** the over-constraint audit's
-F2 struck "no inline proof work" from the coordinator charge as invented
-policy, but it had read only the launcher — the delegation rule lived in
-SKILL.md's thin-coordinator adapter. A subsequent spec audit (third
-adversarial review, 2026-07-31) folded that rule and the non-circular
-reduction gate natively into the launcher, rewrote verification stage 2
-(bundle certification → blind reconstruction → named comparison agent with
-explicit match semantics), added the anti-verdict-shopping rules, and
-slimmed both SKILL.md adapters to runtime-specific mechanics. The charge now
-cites the launcher directly. With a resident coordinator the delegation
-rationale is structural: inline proof work pollutes the long-lived judgment
-context and accelerates compaction.
+The coordinator's "no inline proof work" rule cites the launcher directly (it
+is a launcher clause, not harness policy). With a resident coordinator the
+rationale is also structural: inline proof work pollutes the long-lived
+judgment context and accelerates compaction.
 
 **Honesty notes from the 2026-08-02 runtime-migration review:** (1) the
 compaction summary is produced by pi's generic summarizer
@@ -662,133 +650,47 @@ both sandbox backends deny writes only, so against a script the block is
 uses the `systemPrompt` string verbatim with no hooks registered and empty
 resources — verified against pi source at 0.83.0; re-verify on pi upgrades.
 
-## Review record
+## What the design reviews settled
 
-Before the first campaign, the design and code were adversarially reviewed by
-two independent strong agents (2026-07-31): an over-constraint audit (found:
-invented wave-gate threshold, invented exit condition, invented "no inline
-proof work" rule, stage-2 verdict predicate error, reconstructor starved of
-allowed sources — all fixed) and an under-hardening audit (found: gate state
-forgeable via role workspace tools, promotion advisory-only, evidence/statement TOCTOU,
-spoofable verdict regex, missing comparison step, resume id collisions — all
-fixed except items noted "acceptable for now" in the audits: key-idea
-paraphrase risk and idea-gate mechanism-string keying remain model judgment,
-recorded honestly). Git auto-commit of campaigns was reviewed and **rejected**
-as a second versioning system; git remains a user convention. Mechanical
-checkpoint-ordering enforcement and coordinator-cache machinery were struck
-from the roadmap as over-constraint waiting to happen.
+Five adversarial/measured reviews (2026-07-31 through 2026-08-08) are in git
+history. What survives here is only what still binds.
 
-**Uniformity review (2026-08-02, three independent agents: altitude,
-conformance, implementation-shape).** A proposed "role-call descriptor +
-uniform runner" framework for the six single-shot roles was **rejected**: the
-three roles outside `verdictStage` differ in control flow and record schema,
-not parameters (gate: no artifact, 3-token contract, async handle, `gate:`
-mechanism prefix; reconstructor: no verdict by repaired design, content-bound
-carry-forward; CLI oracle: worker-journaled), so discriminators would exceed
-the ~50 duplicated lines; the implementation review catalogued 16 hidden
-couplings, the worst being that the `bundle` string's bytes key both the
-leaky-bundle refusal and reconstruction carry-forward. Unified verdict-token
-vocabularies were rejected (merging would let `IDEA PASS` satisfy a cadence
-stage). **Adopted in narrowed form:** (1) cadence prompts and their
-`suppliedInputs` derive from one section list (they can no longer drift;
-`blindness` stays hand-authored — it carries enforcement-modality and
-content-provenance claims a section list cannot express, and the
-carry-forward record keeps its hand-written provenance since no prompt
-exists); (2) an unparseable verdict reply is recorded `UNPARSEABLE`, never
-`FAIL` — a protocol failure must not arm anti-verdict-shopping nor
-permanently hash-block a legitimate bundle (previously a garbled certifier
-reply was a permanent trap); (3) a `toolVisibility` journal field on
-verification records (the launcher's previously-unrecorded honesty limb —
-CLI backends may expose their own tools, instructed-only, and a CLI role can
-be stopped but not steered); (4) reconstruction
-blindness is platform-enforced: `assertCandidateWithheld` refuses a rendered
-reconstructor prompt containing the candidate text (tests/blindness.test.ts),
-upgrading the journal's "(enforced)" from testimony to checked fact; (5) the
-user `--agent-limit` counts workers (r*/t*) only — judge handles (g*/v*)
-no longer consume the workers' budget.
+**Reuse soundness is information-flow control, not memoization.** A stage
+record is reusable iff its output provably could not have influenced the
+request now presenting these inputs. The reconstructor is structurally blind
+to candidates, so its reuse crosses completed cadences with `candidateHash` as
+an influence-tracking key (not a disclosed input); verdict stages see the
+candidate, so their reuse is confined to stranded cadences; the comparison IS
+the verdict, so it is never reused. A "verified computation cache" framing —
+every stage a memoized pure function of its disclosed inputs — was rejected as
+unsound on the contract's central example: pure input-memoization reuses a
+reconstruction across a repair, exactly the bug removed in 6997036. For the
+same reason there is no declarative stage table driving a generic runner: it
+would teach "reuse key = inputs", the wrong invariant.
 
-**Danus adoption review (2026-08-07, five independent measured
-evaluations).** Each major design element of frenzymath's Danus was
-evaluated for adoption against measured data from a real Danus campaign
-(`directed-cut-union`, 2026-07-22 on jupiter: 7 workers, 74 verified facts,
-~618M input tokens in ~4h, terminated by quota exhaustion) and the lin3cut
-coverify campaigns. **Rejected:** per-lemma admission verification with a
-fact DAG (composition already works at promotion grain — one lin3cut
-promotion is imported by 5 later ones with revision-exact prose citations;
-per-lemma cadence would have cost ~2.5–3× campaign 2's 91 verification
-calls, and 63/74 Danus facts (85%) lie outside the answer theorems'
-dependency ancestry); typed global-memory channels with search retrieval
-(Danus workers ran 2,175 `gm_search` calls, but only because
-fresh-per-round self-directed workers must rebuild context — coverify's
-resume bundle measured ~5k tokens, ~2% of peak coordinator context, zero
-strain; revisited 2026-08-10 BELOW that threshold — largest ledger on disk is 77
-entries — because the deferral priced the read and not its replay: a 31 KB
-FAILED.md read sits in the session and is re-presented on every later turn,
-which measured 40.4M tokens presented in the reasoner lane, ~1.5% of credits.
-Landed exactly as the deferral specified it should be if ever done — indexed
-search over the existing ledger, no new channel, no new file, contract
-untouched: `failed_routes`, workspace.ts);
-self-directed always-on workers (6 of 7 Danus workers independently
-formalized the same 4-label encoding; workers contributing zero answer
-ancestry burned 48% of worker spend); glossary mechanics (Danus's project
-glossary accumulated 103 conflicting symbol definitions and prevented no
-drift; zero of its 9 verifier rejections were notation-caused;
-reconstruction+comparison already verify convention agreement
-semantically). **Exposed about coverify:** campaign 2's journal shows
-workers idle ~59% of the worker window behind serialized coordinator
-judgment — measured on a run predating the async-verification handle, so
-re-measure via the idle metric (issue #15) before pipelining dispatch.
-**Adopted:** trace dead-weight and worker-idle metrics (issue #15);
-structured premise references in `record_promotion` for mechanical
-retraction-closure enumeration (issue #16). Launcher-shaped candidates
-(stalled-route dichotomy; stall-triggered different-family strategy
-consult) are filed in `docs/skill-feedback.md`.
+**An unparseable verdict reply is `UNPARSEABLE`, never `FAIL`.** A protocol
+failure must not arm anti-verdict-shopping nor permanently hash-block a
+legitimate bundle (a garbled certifier reply used to be a permanent trap).
 
-**Vanished-intentions audit (2026-08-08, Chao-prompted).** Do frontier
-rewrites ever silently drop open items? Audited every surviving frontier
-generation (3 campaigns, 26 snapshots + current): **zero real losses** —
-every candidate was a restart-stranded handle (already noticed and
-recovered), a result nickname that moved into the ledgers under its
-revision id, or tokenizer noise. The audit's own blind spot became a
-finding: the frontier archiver had been removed 2026-08-02 as "nothing
-reads it", leaving six days unauditable — reinstated generalized
-(content-addressed ledger-history for CURRENT_FRONTIER + REGISTRY,
-hash-bound events; observe.ts). The `--agent-limit 0` = unlimited
-sentinel introduced the same day deliberately REVERSES 2853c9b's
-rejection of `0` (which then meant "block everything", a silent footgun);
-the new meaning is explicit in the usage string and here, and any other
-non-positive value still hard-stops.
+**The user `--agent-limit` counts workers (r*/t*) only** — judge handles
+(g*/v*) do not consume the workers' budget; the handle-kind discriminator is
+load-bearing for both that and the wave gate.
 
-**Architecture review (2026-08-07, three independent strong agents: state
-model, verification machinery, execution surface).** A "verified computation
-cache" frame for the cadence — every stage record a memoized pure function
-of its disclosed inputs, reuse derivable from the input list — was
-**rejected as unsound on the contract's central example**: reuse soundness
-here is information-flow control, not memoization. A record is reusable iff
-its output provably could not have influenced the request now presenting
-these inputs — the reconstructor is structurally blind to candidates, so its
-reuse crosses completed cadences with `candidateHash` as an
-influence-tracking key (not a disclosed input); verdict stages see the
-candidate, so their reuse is confined to stranded cadences; the comparison
-is the verdict, so it is never reused. Pure input-memoization would reuse a
-reconstruction across a repair — exactly the bug removed in 6997036. A
-declarative stage table driving a generic runner was rejected on the same
-grounds (every interesting cell is an exception, and the table format
-teaches "reuse key = inputs", the wrong invariant); folding
-anti-verdict-shopping into per-stage policy data was rejected (two `if`
-blocks with different scopes, escapes, and launcher quotes are the clearer
-form). The handle-kind discriminator was confirmed load-bearing (worker
-budget and wave gate count workers only). Adopted and landed the same day
-(roadmap): one out-of-tree event log with the journal as a strictly derived
-mirror (standing-guidance replay previously read the in-tree journal — the
-wrong trust domain on degraded platforms), mirror-based `COVERIFY_ADOPT`
-recovery, the carry-forward unification behind
-`priorReusableRecord`/`carriedRecord` with the explicit `requireStranded`
-policy flag, the mechanics/semantics file splits (sandbox.ts/workspace.ts,
-providers.ts, cadence.ts), the PROVED.md checked view
-(`promotionsMissingFromProved`), and CLI backends as capability-flagged
-degenerate RoleSessions (one dispatch path; answer once, stoppable, not
-steerable).
+**Standing refusals.** No second proof-state system and no second memory
+store: the launcher's ledgers are the memory, and derived stores (synced
+SQLite, a daemon graph store, agent-memory packages) were each rejected on
+that ground. Git auto-commit of campaigns was rejected as a second versioning
+system; git stays a user convention. Per-lemma admission verification with a
+fact DAG was rejected on measurement (composition already works at promotion
+grain; 85% of the compared system's facts lay outside the answer's dependency
+ancestry). Glossary mechanics were rejected likewise — reconstruction plus
+comparison already verify convention agreement semantically.
+
+**Open, measured.** Campaign 2's journal showed workers idle ~59% of the
+worker window behind serialized coordinator judgment — measured before the
+async-verification handle, so re-measure via the idle metric (issue #15)
+before pipelining dispatch. Left honest rather than fixed: key-idea paraphrase
+risk and idea-gate mechanism-string keying remain model judgment.
 
 ## Planned capability: CLI coding agents (design reserved, not built)
 
@@ -810,22 +712,39 @@ harnesses directly — `claude -p` / `codex exec` — via a harness-provided
   STATEMENT DEPENDENCIES EVIDENCE_DIR) plugs into the EVIDENCE layout as-is
   for the Anthropic-side outside review.
 
-**Schema-forced role returns** (omp's typed subagent yields) were considered
-2026-08-02 and **rejected on measurement**. The parsing they would replace is
-`parseFirstLineVerdict`: 11 lines, two call sites, and an
-UNPARSEABLE-not-FAIL failure mode that already recovers by re-running. Across
-the first long campaign it misfired zero times in ~109 verdicts (73 artifacts,
-every verdict line exact; the journal records no UNPARSEABLE). Forcing schemas
-means a submit-tool per role, `RoleResult` becoming a union through every
-dispatch site, and a retry-exhaustion policy — while the CLI-oracle roles
-(critic, certifier, reconstructor, comparator, hostile auditor) have no tool
-loop, so the parser stays anyway and we maintain two verdict paths. Revisit on
-evidence: a single UNPARSEABLE in a journal, or a campaign where the
+**Schema-forced role returns** were rejected on measurement (2026-08-02):
+`parseFirstLineVerdict` is 11 lines with two call sites and misfired zero times
+in ~109 verdicts, and the CLI-oracle roles have no tool loop, so forcing schemas
+would add a second verdict path rather than replace the parser. Revisit on
+evidence — a single UNPARSEABLE in a journal, or a campaign where the
 coordinator repeatedly bounces workers for status-report output. The second is
-currently unmeasurable — coordinator rejections are not journaled — which is
-the cheaper thing to fix first.
+currently unmeasurable (coordinator rejections are not journaled), which is the
+cheaper thing to fix first.
 
 ## Status / roadmap
+
+- [ ] **Split the harness from its dev instruments.** `src/telemetry/` currently
+      holds two kinds of code separated by nothing but the word "telemetry":
+      `context.ts` and `schema.ts` RECORD, in-process, during a campaign, and
+      are part of the harness; `spend.ts`, `outcomes.ts`, `turns.ts` and
+      `shared.ts` READ, after the fact, and exist to make coverify better
+      rather than to make a campaign run. The recorder can never be a separate
+      program -- it has to live inside the process making the calls -- but the
+      readers could be, and a published journal format is what would let
+      anyone write their own.
+      The blocker is one import: `outcomes.ts` takes
+      `promotionsNeedingRetraction` from `gates.ts`, because "what counts as a
+      standing promotion" is a predicate BOTH layers ask -- the harness to
+      decide, the reader to count -- and duplicating it would let the two
+      answers drift. So the journal is not merely a log the harness writes; it
+      is a format with predicates over it, and that pair is the publishable
+      artifact. Sequence: declare the field table (writer and reader named per
+      field, `docs/journal-shape.md` is the start), move the journal predicates
+      to the format side, then the split costs nothing.
+      One caveat against a clean cut: `limits` is not a dev instrument. It
+      reports rate-limit headroom, which changes what an operator does mid
+      campaign, so it belongs with the harness even though it reads rather than
+      writes.
 
 - [x] Launcher loading with no-fallback rule; conformance token check (`bun run check`)
 - [x] Campaign state layer in the skill's format; append-only evidence
@@ -899,238 +818,30 @@ the cheaper thing to fix first.
       deny-default network for scripts on all platforms' landstrip path;
       loud instructed-only fallback when the binary is absent — pending
       first-run validation on a Linux fleet host)
-- [ ] Trigger + contract-adherence evals per `docs/evals.md` (toy campaign
-      + fresh-context contract judge); blind A/B reserved for real changes
+- [ ] Trigger + contract-adherence evals: does the skill fire when it should,
+      and does a toy campaign's artifacts pass a fresh-context judge given only
+      the campaign folder and the launcher? Neither is built; the arbiter that
+      is specified is the token-controlled A/B below
 - [x] First live campaign (2026-07-31 equivalence, resolved affirmatively;
       two complexity campaigns followed); `docs/skill-feedback.md` is an
       active ledger fed from each campaign's evidence
 
-## Appendix: Ecosystem adoption ledger
+## Appendix: buy-over-build
 
-Buy-over-build decisions, source-verified (six deep-dive reviews,
-2026-08-02; packages inspected from published tarballs, never installed).
-Standing rule: before writing anything ourselves, this ledger must show the
-named alternative was evaluated and why it lost. Re-check entries at the
-monthly upstream review.
+Standing rule: before writing a mechanism ourselves, check whether a
+maintained package already does it, and record why it lost. Six package
+deep-dives (2026-08-02, sources read from published tarballs) are in git
+history; the one adoption that landed is `@landstrip/landstrip` as the
+non-darwin write-sandbox backend (Landlock + seccomp, plus script-network
+deny-default on both platforms), described under confinement above. The
+disqualifier worth remembering: a tool that truncates or summarizes output by
+design cannot sit under an auditor who must check content outright.
 
-## Adopt / borrow — ordered by value
-
-| What | From | Decision | Status |
-| --- | --- | --- | --- |
-| **Linux write sandbox + network deny-default** | `@landstrip/landstrip` (standalone Rust CLI; Landlock+seccomp on Linux, Seatbelt on macOS, policy JSON ≈ our WriteScope verbatim; access-time glob denies cover the not-yet-existing-file case) | **Adopt the core binary** as the non-darwin backend inside `sandboxedArgv`, and gain script-network confinement on both platforms. Do NOT adopt the `pi-landstrip` extension (TUI-coupled; no wall/RSS caps, no survivor sweep, 1s settle — our supervision stays on top). Rollout gate: `landstrip doctor` on mars/aegir/tylos; fail-loud to instructed-only. Closes the design.md Linux-sandbox roadmap item. | **landed 2026-08-02** — enforcement live-verified (deny-forge + deny-network) via Seatbelt on saturn; Landlock path pending first run on a Linux host (`landstrip doctor` on mars/aegir/tylos), binary-missing degrades loudly to instructed-only |
-| **Tee-before-truncate in run_script** | hypa's pattern (`@hypabolic/pi-hypa` itself ignored — .NET dep) | Full output saved to the role's dir before slicing; marker names the file. Our one silent-loss point. | **landed 2026-08-02** |
-| **Quota-pause with reset-hint + capped auto-resume** | `@quintinshaw/pi-dynamic-workflows` `usage-limit-scheduler.ts` (routing/tier machinery ignored) | New operational pause cause: provider quota error → pause with the verbatim reset hint journaled → scheduler resumes after parsed delay (floor 1m, ceiling 6h, attempt cap). Fits "pause is operational state"; replaces the human model-swap scramble. | parked (Chao, 2026-08-02: not important yet) |
-| **Crash-resume discipline** | `@vigolium/piolium` (package ignored — fixed security-audit phases) | The pattern: idempotent re-entry, each step self-skips on recorded-status ∧ artifact-gate ∧ input-hash — no event replay. Plus verbatim tricks: corrupt-state rename-aside; in_progress outranks failed on resume choice. Composes with our hash-bound records; resolves the deferred two-transcript/crash-resume question in favor of landing resume. | parked (Chao, 2026-08-02: not important yet) |
-| **`coverify search` subcommand** | borrow from `pi-hermes-memory` (package inseparable from a memory product we contractually refuse; drops toolResult/thinking — the content we need most) | FTS5 external-content schema + trigger sync, FTS→NL→LIKE degradation ladder, size/mtime incremental backfill, anchor search returning path:line-ranges, `SECRET_PATTERNS` seed. ~200–300 lines over our own session format via `bun:sqlite`; we index what hermes can't (toolResults, thinking, tool inputs, branch/worker ids). | parked (Chao, 2026-08-02: not important yet) |
-| **OTel emitter (optional)** | schema + Grafana dashboard from `pi-otel-telemetry` (package stale, old-namespace, extension-coupled); subscriber pattern proven by `@raindrop-ai/pi-agent` | ~150 lines: `AgentHarness.subscribe` → OTLP → Tempo/Grafana on jupiter. Lab-internal, no SaaS. Composes with trace/turns, replaces nothing. | optional |
-| **Evals methodology** | omp.sh `snapcompact` (recall-vs-billed-tokens eval method); `metaharness` (experiment→run→trace store template); Braintrust (the only real experiments/datasets product) | Borrow the methods into the campaign-evals design. Braintrust is the candidate iff a hosted evals workbench is ever wanted (~300-line ExtensionAPI shim; self-hosting enterprise-gated). Core arbiter stays ours: fresh-context judges over campaign folders — no trace platform can be the judge, and all pi-side tracers are blind to CLI-backed verdict roles. | design input |
-| **Librarian re-platform candidate** | `pi-web-access` (tools are plain AgentTool-shaped; headless `workflow:"none"`; OpenAI search rides the Codex OAuth we already hold — no new keys) | Would upgrade provenance (per-call search/fetch journaling vs agy's single self-attested report) at the cost of vendoring a fast-moving 7k-line surface and re-auditing its network paths (incl. a GitHub-clone-to-disk path) under our sandbox. Decide by live A/B against `agy`. | hold — A/B when convenient |
-| **Attempt-linked promotions** | `@danypops/papyrus` "evidence-bearing tasks" (architecture ignored — a daemon graph store is the second proof-state system we refuse) | Marginal borrow: an `attemptId` tying a promotion record to the exact verification attempts that justified it. The journal nearly has this. | nice-to-have |
-
-## Ignore — with the disqualifier on record
-
-| Package | Why not |
-| --- | --- |
-| omp.sh / oh-my-pi (the fork runtime) | Hard fork at v17 vs upstream 0.83; same-named packages, diverged formats; adopting forfeits upstream tracking — the exact failure mode the redesign ended. Mine it (snapcompact/omp-stats/pi-iso ideas), never merge it. |
-| `pi-landstrip` (the extension) | TUI/interactive-escalation model wrong for a headless contract harness; supervision far weaker than ours. |
-| `context-mode` | MCP-coupled; its core technique (code-against-data) is already our technician role in stronger, preregistered form. |
-| `pi-rtk-optimizer` | Lossy by design (own README: full output not preserved) — disqualifying where an auditor must outright-check content. The anti-pattern to remember. |
-| `@tangle-network/tcloud-agent` | Headline cap is wall-clock — forbidden on proof work; USD accounting weaker than our journal. |
-| `pi-memory`, `open-zk-kb`, `pi-mnemopi` | Agent-memory products; the launcher's ledgers are our memory. A second memory store is a second proof-state system. |
-| Subagent orchestrators (`pi-subagents` ×2, `pi-crew`, `pi-orchestrator`, …) | Our fleet layer is launcher-bound and more specific; vocabulary noted (asyncDependency joins, review gates), machinery redundant. |
-| `@gotgenes/pi-permission-system` | In-process permissions; ours is OS-enforced. |
-| CoW-clone isolation (omp `pi-iso`) | Not a sandbox (reflink/overlayfs clone-and-diff). Recorded as plan B for technician isolation if Landlock proves unavailable somewhere. |
-
-2026-08-09 recheck (pi 0.83.0 survey): coverify already uses every importable pi surface (harness, compaction internals, token estimation, retry, session repos, file tools). The mirrors that look deletable (path normalization, tee/truncate, process-tree kill) are blocked by pi-coding-agent's exports map — upstream PR candidates: root-export path-utils, OutputAccumulator, killProcessTree. One adoption open: isContextOverflow classification in providers.ask() (issue #24).
-
-## Appendix: Canonical analytics queries
-
-Query in place (design.md "Analytics"): DuckDB over the authoritative
-out-of-tree JSONL. No sync, no derived store; `meta.json` beside each
-`gates.jsonl` names the campaign. All queries take seconds at any
-realistic scale.
-
-```sh
-duckdb -c "SELECT ..."   # brew install duckdb; nothing else
-```
-
-Shared prelude (all campaigns; `filename` is the campaign column):
-
-```sql
-CREATE VIEW ev AS SELECT * FROM read_json_auto(
-  '~/.local/state/coverify/*/gates.jsonl',
-  format='newline_delimited', union_by_name=true, filename=true,
-  sample_size=-1);
-```
-
-`sample_size=-1` is load-bearing, not a flourish. Schema detection samples the
-first 20,480 rows per file; every campaign on disk predates `usage.meter` and
-`runId`, so a file whose first 20k events lack them infers a struct without
-them and the field then fails to resolve for that file. Scan everything.
-
-Two queries every cost total needs, because the record shapes now allow both
-errors to be refused rather than merely documented:
-
-```sql
--- All spend, leaves only, per meter. EVERY campaign currently on disk predates
--- 7bd75d5, so the usageRollup exclusion is not historical housekeeping — drop
--- it and this query reproduces the exact 80.4M-token (27%) double count the
--- roll-up was deleted for. Grouping by meter is not optional either: `input`
--- is the uncached part on every lane, but the lanes bill against different
--- accounts, so one total across them is not a currency.
-SELECT usage.meter, sum(usage.input) AS fresh_in,
-       sum(usage.cacheRead) AS cached_in, sum(usage.output) AS out
-FROM ev WHERE usage IS NOT NULL AND usageRollup IS NULL
-GROUP BY usage.meter;
-
--- Coordinator spend. Since 2026-08-09 these are LEAF records — what each wake
--- spent — so they sum like every other role's and need no epoch grouping and
--- no reset detection. Records before that carry a `cumulative` snapshot
--- instead; take max() per (runId, sessionId) for those.
-SELECT runId, sessionId, sum(usage.input + usage.output) AS billed
-FROM ev WHERE kind = 'usage' AND usage IS NOT NULL GROUP BY runId, sessionId;
-
--- Never sum `input` across meters: it is the uncached part everywhere, but pi
--- folds cache-write into it while the codex and claude lanes keep it separate.
-SELECT usage.meter, sum(usage.input), sum(usage.cacheRead), sum(usage.output)
-FROM ev WHERE usage IS NOT NULL GROUP BY usage.meter;
-```
-
-Worker outcomes (ok vs infra-failed) per campaign:
-
-```sql
-SELECT filename, count(*) FILTER (failed IS NULL) AS ok,
-       count(*) FILTER (failed IS NOT NULL) AS failed
-FROM ev WHERE kind='completion' AND regexp_matches(id, '^[rt]')
-GROUP BY filename;
-```
-
-Turn durations (dispatch→completion, minutes):
-
-```sql
-SELECT d.id, round(epoch(c.ts::TIMESTAMP - d.ts::TIMESTAMP)/60, 1) AS min
-FROM ev d JOIN ev c ON d.id=c.id AND d.filename=c.filename
-WHERE d.kind='dispatch' AND c.kind='completion' ORDER BY min DESC LIMIT 20;
-```
-
-Billable tokens by verdict stage:
-
-```sql
--- reasoning is a SUBSET of output (pi's Usage contract), so adding it
--- double-counts. measurement-protocol.md rule 1; this query used to get it
--- wrong on this very page while the protocol forbade it two files away.
--- `role-call` is any spend with no stage record of its own, and since the
--- compaction leaf landed that includes coordinator compactions — which are
--- not a verdict stage. Filter them out by role, or this table silently grows
--- a coordinator column.
-SELECT kind, sum(usage.input + usage.output) AS billable
-FROM ev WHERE kind IN ('audit','bundle-cert','reconstruction','comparison','role-call')
-  AND role IS DISTINCT FROM 'coordinator'
-GROUP BY kind;
-```
-
-Verification verdict tallies:
-
-```sql
-SELECT kind, verdict, count(*) FROM ev
-WHERE kind IN ('audit','comparison') GROUP BY kind, verdict;
-```
-
-Refused work and follow-ups (see observe.ts refusalsWithoutFollowup for
-the authoritative in-harness version surfaced at wakes):
-
-```sql
-SELECT ts, refusal, mechanism, revision, reason FROM ev
-WHERE refusal IS NOT NULL ORDER BY ts;
-```
-
-Ledger-history sequence (frontier/registry evolution; snapshots by hash
-under each campaign's .coverify/ledger-history/):
-
-```sql
-SELECT ts, ledgerRevision, wake, hash FROM ev
-WHERE ledgerRevision IS NOT NULL ORDER BY ts;
-```
-
-Run-config stamps (which policy governed which period):
-
-```sql
-SELECT ts, harnessRev, gitDirty, roleSpecs, retry, sandbox FROM ev
-WHERE runStart = true ORDER BY ts;
-```
-
-Note (2026-08-09): record kinds added since these examples — rebuttal, family/model on dispatches, reportSha256 on completions, refusal notes — query the same way.
-
-## Appendix: Skill and harness evals
-
-How we evaluate the `math-proof-search` skill and this harness, adapted from
-the 2026 skill-eval methodology (blind A/B against baseline; grade the
-contracts, not the final answer; fresh-context judges). One-shot capability
-matrices are not decision input.
-
-## Three layers, cheapest first
-
-### 1. Trigger evals (cheap, automatable now)
-
-Does the skill fire when it should and stay quiet when it shouldn't?
-Cases: "resolve this conjecture end-to-end" (fire), "quick: is 91 prime?"
-(don't), "edit my proof of X" (don't — paper-editing), "keep exploring
-overnight" on an existing campaign (fire, resume). Run each in a fresh
-session, record fired/not. No mathematics involved; pure dispatch
-correctness.
-
-### 2. Contract-adherence evals (the load-bearing layer)
-
-Run a **toy campaign** — a statement provable in minutes (e.g. a competition
-lemma) — to completion or a wake cap, then grade the *artifacts* against the
-contract with a fresh-context judge given only the campaign folder and the
-launcher:
-
-- ledgers exist, entries carry the launcher's required fields
-- claim labels literal at every point; no inflation anywhere in the ledgers
-- every dispatched route has its FAILED-check record; gated waves have
-  verdicts on file
-- verification artifacts (audit / certification / reconstruction /
-  comparison) present and cited for anything above `candidate`
-- no wall-clock interruptions in the journal; struggle rulings cite evidence
-- final report states literal labels
-
-The judge returns a per-clause pass/fail checklist, not a score. This is the
-"grade the contract" principle: a campaign that proves the toy lemma but
-lies about labels FAILS; one that honestly runs out of budget PASSES.
-
-### 3. Blind A/B (expensive; run on real statement changes)
-
-Same statement run twice — raw skill in a stock harness session vs coverify
-(or: skill revision N vs N+1) — then a blind comparator judge receives both
-campaign folders with identities stripped (and journal/`.coverify`
-removed, since its presence identifies the harness) and answers: which
-campaign found more real routes, killed dead ends earlier, promoted honestly,
-spent fewer tokens per promoted claim? The shared campaign-file format is
-what makes this comparison mechanical to set up. This is the arbiter for
-every deferred skill-feedback item.
-
-## Standing gauges (free, every campaign)
-
-From the journal, per campaign: tokens per promoted claim (*measurable for
-API-shaped providers and for claude-cli/codex-cli, which parse usage from
-their JSON output; only chatgpt-cli and env-overridden CLI templates without
-JSON output report none and are gaps in the gauge*) · gate-veto rate ·
-dispatch-refusal reasons · re-dispatches of registered-failed mechanisms
-(should be ~0) · first-attempt verification pass rate · share of spend in
-verification vs exploration. Gauges diagnose the machine; they are not
-success metrics.
-
-## Rules
-
-- Every skill/harness upgrade names, in advance, the observable it should
-  move (the activation-test discipline from `docs/skill-feedback.md`).
-- Judges run in fresh contexts and never see which configuration produced
-  what.
-- Toy statements are disposable: once used for tuning, a statement is
-  burned for grading (overfitting to the toy is the failure mode).
-- Layer 2 runs before any skill edit lands and after; layer 3 only when a
-  change is worth its cost.
+A 2026-08-09 survey of pi 0.83.0 found coverify already uses every importable
+pi surface; the mirrors that look deletable (path normalization, tee/truncate,
+process-tree kill) are blocked by pi-coding-agent's exports map, and one
+adoption stays open: isContextOverflow classification in providers.ask()
+(issue #24).
 
 ## Token-controlled A/B (the arbiter, Chao's metric 2026-08-08)
 
@@ -1145,11 +856,18 @@ Protocol:
    `math-proof-search` skill, whose SKILL.md points at this repository's
    `contract/` file, no harness. One copy of the contract in existence is what
    makes this comparison valid: a pinned second copy would reintroduce drift.
-2. **One shared budget B** of billable tokens: fresh input + output +
-   reasoning, summed over every model call the arm makes. Cache reads are
-   metered separately and reported, not charged (they are the mechanism,
-   not the spend). Coverify's meter is the journal's per-call usage
-   records; the raw arm's is codex's JSONL turn usage.
+2. **One shared budget B** of billable tokens: `fresh input + output`,
+   summed over every model call the arm makes, per lane and never summed
+   across lanes. `reasoning` is a SUBSET of `output`
+   (`reasoning_output_tokens`) — adding it double-counts, which this section
+   used to do; `docs/journal-shape.md` rule 1 states the unit conventions and
+   `src/telemetry/spend.ts` already computes the budget correctly. Cache
+   reads are BILLED (at a reduced rate, not zero): they are reported on their
+   own line rather than folded into fresh input, because the two lanes differ
+   on whether `input` already includes them, but a protocol that treats them
+   as free would score a cache-heavy arm as spending nothing. Coverify's
+   meter is the journal's per-call usage records; the raw arm's is codex's
+   JSONL turn usage.
 3. **Stop each arm at B.** Coverify: watch the journal cumulative and
    pause. Raw: end the session when its rollout usage crosses B.
 4. **Grade blind, outside the budget.** Every claim either arm labels
@@ -1171,10 +889,17 @@ judge, not the method).
 
 Raw-launcher corpus (`~/playground/research/explore/`, 12 campaigns,
 Jul 25–Aug 2, plain Codex sessions, usage from codex rollout JSONL;
-billable = input − cached + output): **~3.29B billable tokens, 291 PROVED
-entries, 4–5/12 problems resolved** → ~11.3M billable per self-labeled
-PROVED entry; resolved-easy campaigns 1.6M–39M each; hard-unresolved ones
-119M–2.3B each. Known ledger defects: one explicit retraction
+billable = input − cached + output): ~~**~3.29B billable tokens** → ~11.3M
+billable per self-labeled PROVED entry; resolved-easy campaigns 1.6M–39M
+each; hard-unresolved ones 119M–2.3B each.~~ **WITHDRAWN 2026-08-09.** That
+corpus is not summable: one session id owns up to 109 rollout files which
+replay each other's prefixes, so three defensible methods over it span 27×,
+and the figure was computed by the naive method. Reproducing it does not
+rescue it — the study's 3,323.9M "confirmation" was the same mistake made
+twice. Nothing may be concluded from this number until the corpus is
+re-derived (`~/kb/notes/agents/token-measurement.md`, rule 3b). What stands
+from this corpus is only the countable part: **291 PROVED entries, 4–5/12
+problems resolved.** Known ledger defects: one explicit retraction
 (bounded-hedge-cut, loop-counting), one audit-forced correction
 (ttp2-hardness), one whole-campaign novelty misclassification (67M billable
 on re-derived prior art). No systematic re-verification of the 291 entries
@@ -1182,9 +907,13 @@ exists, so the per-verified-TRUE-claim cost is higher by an unknown factor.
 
 Coverify arm (lin-3-cut campaign 3, full accounting): 30.7M billable /
 0 promotions before the candidate-scope discipline; **33.6M / 4 promotions
-(≈8.4M per verified theorem) after**, verification ≈35% of spend.
-Campaign 2 partial accounting: ≈1.2M per (lemma-scale) promotion,
-undercounted.
+(≈8.4M per verified theorem) after**. Campaign 2 partial accounting: ≈1.2M
+per (lemma-scale) promotion, undercounted. Corrected 2026-08-09: this
+section said "verification ≈35% of spend"; re-verified per-lane, with
+umbrella records excluded, the cadence is **10.6%** across the coverify
+corpus (1,947 calls, 90.4% cache hit). The coverify accounting is the arm
+that survived re-verification — it cross-checked against the durable session
+trees to 0.2% on presented, output and reasoning.
 
 External prompt-family system (Danus directed-cut-union, design.md):
 618M input / 74 facts, 85% off the answer's dependency path → ≈56M per
@@ -1195,13 +924,21 @@ one-shot): ChatGPT Pro 6/10, direct Codex 5/10, coverify-1.0+Codex 5/10 —
 the old wrapper added nothing; and self-attested artifact scores (9/10)
 collapsed to 2–6/10 under verified grading.
 
-Reading: token cost per claimed result is at PARITY between coverify and
-the raw skill (8.4M vs ~11.3M) — the cadence's ~35% share is offset by
-gate-killed retreads — while coverify's claims carry enforced (not
-instructed) blindness and hash binding. Problem difficulty, not harness
-choice, dominates total cost (raw corpus spans three orders of magnitude
-per campaign). The single biggest measured economy lever is candidate
-scope discipline, worth 30M+ tokens on one campaign — a skill lesson, not
-a harness feature.
+Reading: **there is no supported cross-system cost comparison.** The earlier
+reading here — "PARITY between coverify and the raw skill (8.4M vs ~11.3M)" —
+rested entirely on the withdrawn raw-skill figure and is RETRACTED, along with
+every other claim built on that corpus ("30× more expensive", "8× cheaper per
+claim"). Coverify's own accounting survived re-verification; the raw arm's did
+not, so the two cannot be divided by each other until a raw arm is re-run
+under the token-controlled protocol above. That A/B has never actually been
+run — this section is retrospective, and retrospective corpora are exactly
+what rule 3b says cannot be compared.
+
+What does survive: coverify's claims carry enforced (not instructed)
+blindness and hash binding, which is a property, not a price. Problem
+difficulty dominates total cost far more than harness choice (single
+campaigns span three orders of magnitude). And the single biggest measured
+economy lever is candidate scope discipline, worth 30M+ tokens on one
+campaign — a skill lesson, not a harness feature.
 
 Evals gap note update (2026-08-09, issue #20): chatgpt-cli now reports the server-attested served model on both /v1 and oracle paths; gate records for CLI-backed verdict roles stamp modelFamily from the attestation when present. Token usage remains unavailable on the browser bridge.

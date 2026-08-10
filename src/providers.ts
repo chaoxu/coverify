@@ -719,7 +719,7 @@ export async function createHarnessRoleSession(
         async () => {
           // One provider attempt. Not derivable from the transcript afterwards:
           // without it a 500k-token turn is indistinguishable from three 170k
-          // attempts (docs/measurement-protocol.md rule 13).
+          // attempts (docs/journal-shape.md rule 13).
           attempts++;
           try {
             return (await harness.prompt(prompt)) as AssistantMessage;

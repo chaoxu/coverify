@@ -21,7 +21,7 @@ const tokens = (description: string) =>
  *  part on every lane, `reasoning` is a SUBSET of `output`, and `meter` names
  *  the lane because lanes bill to different accounts and are never summed. An
  *  exporter flattening these into one "tokens" counter reintroduces the error
- *  docs/measurement-protocol.md exists to prevent. */
+ *  docs/journal-shape.md exists to prevent. */
 export const COVERIFY_TELEMETRY_SCHEMA = defineTelemetrySchema({
   version: 1,
   spans: {

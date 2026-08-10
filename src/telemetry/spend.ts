@@ -1,6 +1,6 @@
 // Read-only consumer: what a campaign's tokens went
 // on. Three refusals, each bought with an error from the 2026-08-09 study
-// (docs/measurement-protocol.md): never cross-sum meters (the lanes bill
+// (docs/journal-shape.md): never cross-sum meters (the lanes bill
 // different accounts, so one total is not a currency); never count a roll-up
 // (verification completions used to sum their own stage records, and counting
 // both inflated that study by 27%); never add reasoning to output (it is a
@@ -302,7 +302,7 @@ export function formatSpend(s: CampaignSpend): string {
   if (s.nonMonotone) {
     out.push("");
     out.push("WARNING: a record carried a clamped delta (nonMonotone). Real spend may be");
-    out.push("missing upstream of this reader — see docs/measurement-protocol.md rule 2.");
+    out.push("missing upstream of this reader — a cumulative counter that went backwards.");
   }
   out.push("");
   out.push("No grand total, deliberately: summing across lanes is not a currency.");

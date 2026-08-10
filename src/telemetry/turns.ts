@@ -90,7 +90,7 @@ export interface SessionTelemetry {
   usage: RoleUsage;
   /** The compaction half of `usage`, alone. Kept separable because it belongs
    *  to no turn: sum(turn deltas) legitimately differs from `usage` on any
-   *  session that compacted (telemetry/corpus.ts, rule 3b check 4). */
+   *  session that compacted (reconciling per-session deltas against the session's own total). */
   compaction?: RoleUsage;
   compactions: number;
 }

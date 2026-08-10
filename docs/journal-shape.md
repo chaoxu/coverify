@@ -100,7 +100,7 @@ same session's *cumulative* total, so summing them counts the worker twice.
 The writer now records usage only while the handle is live, but every journal
 written before that carries the duplicate — a reader must keep the LAST
 usage-bearing completion per `id`, which is the complete total and of which the
-earlier is a strict prefix. `view/spend.ts` does, and says so in `excluded`.
+earlier is a strict prefix. `src/telemetry/spend.ts` does, and says so in `excluded`.
 
 **`attempts` is the one count that cannot be derived after the fact.** A retry
 re-presents the whole context and is billed again while leaving no message

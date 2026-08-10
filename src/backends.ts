@@ -222,7 +222,7 @@ function codexJsonlUsage(stdout: string): RoleUsage | undefined {
     // cached_input_tokens and cache_write_input_tokens (verified over 50,152
     // records). Copying it through unsubtracted overstated fresh input by 30% in
     // the 2026-08-09 cost study. Journals predating this fix carry the nested
-    // convention; see docs/measurement-protocol.md rule 1.
+    // convention; see docs/journal-shape.md rule 1.
     const cr = event.usage.cached_input_tokens ?? 0;
     const cw = event.usage.cache_write_input_tokens ?? 0;
     if (event.usage.cache_write_input_tokens !== undefined) sawCacheWrite = true;

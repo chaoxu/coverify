@@ -50,7 +50,6 @@ bun run src/cli.ts prove "Exact statement to resolve." --dir campaign
 bun run src/cli.ts status --dir campaign
 bun run src/cli.ts resume --dir campaign
 bun run src/cli.ts amend --dir campaign    # accept an explicit user amendment of STATEMENT.md
-bun run src/cli.ts trace --dir campaign                     # self-contained HTML timeline
 bun run src/cli.ts turns --dir campaign                      # per-session telemetry summary
 bun run src/cli.ts turns --dir campaign --session <substr>   # TurnRecord JSONL for one session
 
@@ -58,19 +57,17 @@ bun run src/cli.ts turns --dir campaign --session <substr>   # TurnRecord JSONL 
 bun run src/cli.ts spend --dir campaign         # per-lane/role/model tokens; refuses cross-meter sums
 bun run src/cli.ts outcomes --dir campaign      # what the spend bought: verdicts, repair loops, promotions
 bun run src/cli.ts limits --dir campaign        # rate-limit occupancy and burn rate — what actually binds
-bun run src/cli.ts corpus-check --dir campaign  # is this session corpus summable at all?
-
-# what is this process actually configured to do? (A/B pre-flight: confirm the
-# arm before spending quota, rather than reading it out of the journal after)
-bun run src/cli.ts config
 ```
 
-`trace` writes `campaign/.coverify/trace.html` (override with `--out`): agent
-lifetimes, verification and gate verdicts, coordinator wakes, and summary
-tiles, in one offline page. Read-only, and safe to run against a live
-campaign. `turns` derives per-turn telemetry (sizes, per-request usage and
-cache-hit rate, gaps, stopReason — never prompt text) from the session
-trees on demand.
+`turns` derives per-turn telemetry (sizes, per-request usage and cache-hit
+rate, gaps, stopReason — never prompt text) from the session trees on demand.
+It reads the pi session JSONL directly rather than the journal, which makes it
+the independent cross-check on the other three readers.
+
+All four readers live in `src/telemetry/`, which is removable: delete the
+folder and its imports in `cli.ts` and the harness still proves theorems, with
+no token number left to read. `bun run check` fails if anything outside that
+folder imports it.
 
 Optional user limits (the harness imposes none of its own): `--agent-limit N`
 (concurrent workers), `--max-wakes N` (pause after N coordinator wakes).

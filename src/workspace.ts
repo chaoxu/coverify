@@ -484,7 +484,7 @@ export function workspaceTools(
     failedLedger?: string;
     /** Called when a tool spawns a provider whose tokens this harness cannot
      *  measure (the librarian). Recording the GAP is required by
-     *  measurement-protocol rule 10: a silent omission reads as "cost nothing". */
+     *  docs/journal-shape.md rule 10: a silent omission reads as "cost nothing". */
     onUnmetered?: (lane: string, detail: string) => void;
   },
 ): AgentTool[] {
