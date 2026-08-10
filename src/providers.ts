@@ -225,15 +225,19 @@ export function familyModelSpec(family: string): ModelSpec | undefined {
  *  docs/models.md recommends re-pointing the reasoner there when ChatGPT quota
  *  runs out, so this fires on a configuration the docs themselves suggest. */
 export function sameFamilyAsAuditor(): string[] {
-  const auditor = specKey(roleModelSpec("hostileAuditor"));
+  // specLabel, NOT specKey: specKey carries @thinking, so setting
+  // COVERIFY_EFFORT_AUDITOR made the auditor's key differ from the family's and
+  // silenced the warning entirely — while it remained literally the same model.
+  // Effort is not a second architecture.
+  const auditor = specLabel(roleModelSpec("hostileAuditor"));
   const clashes: string[] = [];
   for (const role of ROLE_NAMES) {
     if (role === "hostileAuditor") continue;
-    if (specKey(roleModelSpec(role)) === auditor) clashes.push(`role ${role}`);
+    if (specLabel(roleModelSpec(role)) === auditor) clashes.push(`role ${role}`);
   }
   for (const family of IDEATION_FAMILIES) {
     const spec = familyModelSpec(family);
-    if (spec !== undefined && specKey(spec) === auditor) clashes.push(`ideation family ${family}`);
+    if (spec !== undefined && specLabel(spec) === auditor) clashes.push(`ideation family ${family}`);
   }
   return clashes;
 }

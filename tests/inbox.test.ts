@@ -3,6 +3,7 @@
 // eat a message queued after the wake peeked.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 const {
@@ -18,7 +19,7 @@ const {
 const { GateStore } = await import("../src/gates.ts");
 
 function campaign(): string {
-  const dir = fs.mkdtempSync("/private/tmp/coverify-inbox-");
+  const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-inbox-`);
   fs.mkdirSync(path.join(dir, ".coverify"), { recursive: true });
   return dir;
 }
@@ -76,7 +77,7 @@ describe("adopted campaigns and damaged state", () => {
   test("a campaign with no .coverify/ can still be journaled and messaged", () => {
     // The interop path: a campaign created by a skill session has ledgers but
     // no harness directory, and the first thing every command does is append.
-    const dir = fs.mkdtempSync("/private/tmp/coverify-adopted-");
+    const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-adopted-`);
     fs.writeFileSync(path.join(dir, "STATEMENT.md"), "# STATEMENT\n\nX.\n");
     expect(() => appendJournal(dir, { kind: "note", note: "run-start" })).not.toThrow();
     expect(() => queueUserMessage(dir, "hello")).not.toThrow();
@@ -84,7 +85,7 @@ describe("adopted campaigns and damaged state", () => {
   });
 
   test("initCampaign refuses to overwrite surviving ledgers", () => {
-    const dir = fs.mkdtempSync("/private/tmp/coverify-damaged-");
+    const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-damaged-`);
     fs.mkdirSync(path.join(dir, ".coverify"), { recursive: true });
     fs.writeFileSync(path.join(dir, "PROVED.md"), "# PROVED\n\n## lemma.r1.md — promoted\n");
     // STATEMENT.md is missing (renamed, or a partial restore).
@@ -93,9 +94,9 @@ describe("adopted campaigns and damaged state", () => {
   });
 
   test("a torn gate line does not brick the campaign", () => {
-    const dir = fs.mkdtempSync("/private/tmp/coverify-torn-");
+    const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-torn-`);
     fs.mkdirSync(path.join(dir, ".coverify"), { recursive: true });
-    process.env.COVERIFY_STATE_DIR = fs.mkdtempSync("/private/tmp/coverify-torn-state-");
+    process.env.COVERIFY_STATE_DIR = fs.mkdtempSync(`${os.tmpdir()}/coverify-torn-state-`);
     const store = new GateStore(dir);
     store.append({ kind: "gate-verdict", mechanism: "m", verdict: "IDEA PASS" });
     const file = path.join(process.env.COVERIFY_STATE_DIR, fs.readdirSync(process.env.COVERIFY_STATE_DIR)[0], "gates.jsonl");
@@ -106,7 +107,7 @@ describe("adopted campaigns and damaged state", () => {
   });
 
   test("a corrupt journal line costs observability, not the campaign", () => {
-    const dir = fs.mkdtempSync("/private/tmp/coverify-journal-");
+    const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-journal-`);
     fs.mkdirSync(path.join(dir, ".coverify"), { recursive: true });
     appendJournal(dir, { kind: "note", note: "first" });
     fs.appendFileSync(path.join(dir, ".coverify", "journal.jsonl"), '{"torn\n');
@@ -122,8 +123,8 @@ describe("campaign identity travels with the campaign", () => {
   }
 
   test("moving a campaign keeps its gate history", () => {
-    process.env.COVERIFY_STATE_DIR = fs.mkdtempSync("/private/tmp/coverify-idstate-");
-    const a = fs.mkdtempSync("/private/tmp/coverify-move-");
+    process.env.COVERIFY_STATE_DIR = fs.mkdtempSync(`${os.tmpdir()}/coverify-idstate-`);
+    const a = fs.mkdtempSync(`${os.tmpdir()}/coverify-move-`);
     fs.mkdirSync(path.join(a, ".coverify"), { recursive: true });
     fs.writeFileSync(path.join(a, "STATEMENT.md"), "# S\n\nX.\n");
     const store = new GateStore(a);
@@ -140,8 +141,8 @@ describe("campaign identity travels with the campaign", () => {
   });
 
   test("a campaign that ran before but has no gate history refuses to adopt", () => {
-    process.env.COVERIFY_STATE_DIR = fs.mkdtempSync("/private/tmp/coverify-idstate2-");
-    const dir = fs.mkdtempSync("/private/tmp/coverify-lost-");
+    process.env.COVERIFY_STATE_DIR = fs.mkdtempSync(`${os.tmpdir()}/coverify-idstate2-`);
+    const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-lost-`);
     fs.mkdirSync(path.join(dir, ".coverify"), { recursive: true });
     fs.writeFileSync(path.join(dir, "STATEMENT.md"), "# S\n\nX.\n");
     ranBefore(dir);
@@ -152,14 +153,14 @@ describe("campaign identity travels with the campaign", () => {
   });
 
   test("a fresh campaign is not mistaken for lost state", () => {
-    process.env.COVERIFY_STATE_DIR = fs.mkdtempSync("/private/tmp/coverify-idstate3-");
-    const dir = fs.mkdtempSync("/private/tmp/coverify-fresh-");
+    process.env.COVERIFY_STATE_DIR = fs.mkdtempSync(`${os.tmpdir()}/coverify-idstate3-`);
+    const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-fresh-`);
     initCampaign(dir, "a brand new statement");
     expect(() => new GateStore(dir)).not.toThrow();
   });
 
   test("evidence names are reserved, so two callers cannot take the same one", () => {
-    const dir = fs.mkdtempSync("/private/tmp/coverify-eviname-");
+    const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-eviname-`);
     fs.mkdirSync(path.join(dir, "EVIDENCE"), { recursive: true });
     const first = newEvidencePath(dir, "v001/report");
     const second = newEvidencePath(dir, "v001/report");
@@ -182,7 +183,7 @@ describe("campaign identity travels with the campaign", () => {
 
 describe("one writer per campaign", () => {
   test("a second run on a live campaign is refused", () => {
-    const dir = fs.mkdtempSync("/private/tmp/coverify-lock-");
+    const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-lock-`);
     fs.mkdirSync(path.join(dir, ".coverify"), { recursive: true });
     const release = acquireCampaignLock(dir);
     expect(() => acquireCampaignLock(dir)).toThrow(/already running/);
@@ -193,7 +194,7 @@ describe("one writer per campaign", () => {
   });
 
   test("a lock left by a dead process is taken over, not obeyed forever", () => {
-    const dir = fs.mkdtempSync("/private/tmp/coverify-stale-");
+    const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-stale-`);
     fs.mkdirSync(path.join(dir, ".coverify"), { recursive: true });
     // pid 999999 does not exist; a crashed run must not strand the campaign.
     fs.writeFileSync(
@@ -206,7 +207,7 @@ describe("one writer per campaign", () => {
   });
 
   test("a torn lock file does not strand the campaign", () => {
-    const dir = fs.mkdtempSync("/private/tmp/coverify-tornlock-");
+    const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-tornlock-`);
     fs.mkdirSync(path.join(dir, ".coverify"), { recursive: true });
     fs.writeFileSync(path.join(dir, ".coverify", "lock.json"), '{"pid":1');
     const release = acquireCampaignLock(dir);

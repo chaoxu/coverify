@@ -4,6 +4,7 @@
 // this journal used to claim knowledge it did not have (the removed costUSD
 // field did exactly that over millions of tokens before it was dropped).
 import { expect, test } from "bun:test";
+import * as os from "node:os";
 import type { RoleUsage } from "../src/providers.ts";
 
 const { addUsage, subUsage } = await import("../src/providers.ts");
@@ -149,7 +150,7 @@ test("a retried call is distinguishable from one long call", async () => {
   const { createCliRoleSession } = await import("../src/backends.ts");
   const fs = await import("node:fs");
   const path = await import("node:path");
-  const dir = fs.mkdtempSync("/private/tmp/coverify-attempts-");
+  const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-attempts-`);
   const stub = path.join(dir, "once.sh");
   fs.writeFileSync(stub, `#!/bin/sh\nprintf 'VERDICT: PASS' > "$1"\n`, { mode: 0o755 });
   process.env.COVERIFY_CODEX_CMD = `${stub} {out}`;
@@ -183,7 +184,7 @@ test("summing two lanes is a TYPE error, not merely discouraged", async () => {
   // version type-checked clean and looked like a guarantee.
   const fs = await import("node:fs");
   const path = await import("node:path");
-  const dir = fs.mkdtempSync("/private/tmp/coverify-xmeter-");
+  const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-xmeter-`);
   const probe = path.join(dir, "xmeter-probe.ts");
   fs.writeFileSync(
     probe,

@@ -3,6 +3,7 @@
 // reachable by an ordinary coordinator, not by deliberate evasion.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 const {
@@ -18,12 +19,12 @@ const {
 const { sha256File, sha256Text, danglingCitations } = await import("../src/campaign.ts");
 
 function campaign(label: string) {
-  const dir = fs.mkdtempSync(`/private/tmp/coverify-gates-${label}-`);
+  const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-gates-${label}-`);
   fs.mkdirSync(path.join(dir, "EVIDENCE"), { recursive: true });
   fs.mkdirSync(path.join(dir, ".coverify"), { recursive: true });
   fs.writeFileSync(path.join(dir, "STATEMENT.md"), "# statement\n");
   fs.writeFileSync(path.join(dir, "PROVED.md"), "");
-  process.env.COVERIFY_STATE_DIR = fs.mkdtempSync(`/private/tmp/coverify-state-${label}-`);
+  process.env.COVERIFY_STATE_DIR = fs.mkdtempSync(`${os.tmpdir()}/coverify-state-${label}-`);
   return { dir, store: new GateStore(dir) };
 }
 

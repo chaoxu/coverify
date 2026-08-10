@@ -8,6 +8,7 @@
 // return nothing on the other six — silently, and in the direction that makes
 // a reasoner assert "no close prior route" when there was one.
 import { expect, test } from "bun:test";
+import * as os from "node:os";
 
 const { parseFailedEntries, matchFailedEntries } = await import("../src/failed-index.ts");
 
@@ -138,7 +139,7 @@ test("the TOOL bounds its payload and says so — it must cost less than the rea
   const path = await import("node:path");
   const { workspaceTools } = await import("../src/workspace.ts");
 
-  const dir = fs.mkdtempSync("/private/tmp/coverify-failedtool-");
+  const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-failedtool-`);
   fs.writeFileSync(path.join(dir, "STATEMENT.md"), "# statement\n");
   const ledger = path.join(dir, "FAILED.md");
   // 60 entries of ~2 KB each: bigger than the bound, like every live ledger.

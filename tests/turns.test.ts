@@ -3,12 +3,13 @@
 // skipped) and never write anything.
 import { expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 const { campaignTurns } = await import("../src/telemetry/turns.ts");
 
 test("campaignTurns derives records and usage from a session tree", () => {
-  const dir = fs.mkdtempSync("/private/tmp/coverify-turns-");
+  const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-turns-`);
   const sess = path.join(dir, ".coverify", "sessions", "--camp--");
   fs.mkdirSync(sess, { recursive: true });
   fs.writeFileSync(
@@ -46,7 +47,7 @@ test("pi's nested cost block never reaches a record", () => {
   // Every lane is subscription-billed, so the CLI/pi price is notional list
   // price. It is dropped at the boundary rather than journalled as spend —
   // and it must not survive into the per-turn JSON either.
-  const dir = fs.mkdtempSync("/private/tmp/coverify-turns-cost-");
+  const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-turns-cost-`);
   const sess = path.join(dir, ".coverify", "sessions", "s");
   fs.mkdirSync(sess, { recursive: true });
   fs.writeFileSync(
@@ -77,7 +78,7 @@ test("both sides of the cross-check apply one accumulation rule", async () => {
   // and this pins the behaviour that used to differ: a NON-assistant message
   // carrying usage is billed by neither side.
   const { sumMessagesUsage } = await import("../src/providers.ts");
-  const dir = fs.mkdtempSync("/private/tmp/coverify-turns-drift-");
+  const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-turns-drift-`);
   const sess = path.join(dir, ".coverify", "sessions", "--camp--");
   fs.mkdirSync(sess, { recursive: true });
   fs.writeFileSync(

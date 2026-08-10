@@ -3,7 +3,7 @@
 // result caps, write-scope resolution and checks. The launcher-clause
 // enforcement lane (the role tool surface) is workspace.ts, which imports this
 // module; the edge never points back. Role prompt text is in roles.ts.
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs";
@@ -97,18 +97,41 @@ export function sandboxMode(): "seatbelt" | "landlock" | "instructed-only" {
   return landstripAvailable() ? "landlock" : "instructed-only";
 }
 
+/** Whether the sandbox can ACTUALLY confine, not whether a file is present.
+ *
+ *  `LANDSTRIP_BIN` is the JS shim, which `bun install` puts on every platform
+ *  including macOS and Windows. The enforcing part is a per-platform optional
+ *  dependency, and behind that is a kernel feature that may be absent
+ *  (a container without Landlock, an unsupported arch). Testing only for the
+ *  shim reported `landlock` — and stamped it into the run config as a
+ *  threat-model fact — while every technician script actually died with "the
+ *  landstrip binary package is not installed", read inside the campaign as a
+ *  script failure rather than as lost confinement. `landstrip doctor` exists
+ *  precisely to answer this, so ask it. */
 function landstripAvailable(): boolean {
   if (!landstripChecked) {
     landstripChecked = true;
-    landstripUsable = fs.existsSync(LANDSTRIP_BIN);
+    landstripUsable = fs.existsSync(LANDSTRIP_BIN) && landstripDoctorPasses();
     if (!landstripUsable) {
       console.error(
-        "[coverify] landstrip binary not found — non-darwin write confinement is " +
-          "INSTRUCTED-ONLY for this run (bun install to restore the sandbox)",
+        "[coverify] landstrip cannot confine on this host — non-darwin write confinement is " +
+          "INSTRUCTED-ONLY for this run (missing binary, unsupported platform, or no kernel " +
+          "Landlock support; `bun install` restores the binary, the kernel feature it cannot)",
       );
     }
   }
   return landstripUsable;
+}
+
+/** Ask landstrip whether the platform sandbox is usable. A failure here is
+ *  always "cannot confine": this must never throw, because reporting confinement
+ *  optimistically is the failure it exists to prevent. */
+function landstripDoctorPasses(): boolean {
+  try {
+    return spawnSync(LANDSTRIP_BIN, ["doctor"], { stdio: "ignore", timeout: 10_000 }).status === 0;
+  } catch {
+    return false;
+  }
 }
 
 /** WriteScope → landstrip policy JSON. Reads stay unrestricted (fields

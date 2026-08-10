@@ -129,6 +129,19 @@ function parseFlags(args: string[]): { flags: Map<string, string>; positional: s
   }
 }
 
+// Refusals are messages, not crashes. Every deliberate hard stop in this
+// codebase throws — the copy-corruption guard, the statement freeze, "campaign
+// already exists", a read-only campaign directory — and without this they
+// reached the user as six lines of source, a caret and a stack trace, at
+// exactly the moments they are already worried something is wrong. An
+// unexpected error still shows its stack, because that one is a bug report.
+process.on("uncaughtException", (e) => {
+  const known = e instanceof Error && e.message.length > 0 && !("code" in e && e.code === "ERR_ASSERTION");
+  if (known) console.error(e.message);
+  else console.error(e);
+  process.exit(1);
+});
+
 const [command, ...rest] = process.argv.slice(2);
 // An explicit help request is not a usage error: it exits 0 on stdout, so
 // `coverify --help | less` shows something and `coverify --help && ...` runs on.

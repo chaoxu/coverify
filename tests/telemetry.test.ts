@@ -3,6 +3,7 @@
 // campaign concludes.
 import { afterEach, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { InMemoryTelemetryContext, NOOP_TELEMETRY_CONTEXT } from "@earendil-works/pi-telemetry";
 import { FIXTURE_ENVS, campaign, runCadence } from "./cadence-fixture.ts";
@@ -13,7 +14,7 @@ const { JournalTelemetryContext } = await import("../src/telemetry/context.ts");
 const { runRole, setTelemetrySink, telemetrySink } = await import("../src/providers.ts");
 const { GateStore } = await import("../src/gates.ts");
 
-const stubDir = fs.mkdtempSync("/private/tmp/coverify-telemetry-");
+const stubDir = fs.mkdtempSync(`${os.tmpdir()}/coverify-telemetry-`);
 afterEach(() => {
   for (const e of FIXTURE_ENVS) delete process.env[e];
   delete process.env.COVERIFY_CODEX_CMD;

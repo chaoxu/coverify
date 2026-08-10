@@ -4,6 +4,7 @@
 // --max-wakes — ran UNBOUNDED and silently. That is the same failure class
 // optionalInt() guards, which covers a bad VALUE and left a bad flag NAME open.
 import { expect, test } from "bun:test";
+import * as os from "node:os";
 import * as path from "node:path";
 
 const CLI = path.resolve("src/cli.ts");
@@ -11,7 +12,7 @@ const CLI = path.resolve("src/cli.ts");
 /** Run the CLI and hand back what an operator would see. */
 function run(...args: string[]): { code: number; err: string } {
   const r = Bun.spawnSync(["bun", "run", CLI, ...args], {
-    env: { ...process.env, COVERIFY_STATE_DIR: "/private/tmp/coverify-cliargs-state" },
+    env: { ...process.env, COVERIFY_STATE_DIR: `${os.tmpdir()}/coverify-cliargs-state` },
   });
   return {
     code: r.exitCode,

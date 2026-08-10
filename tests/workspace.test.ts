@@ -3,6 +3,7 @@
 // panic (see docs/design.md "Workspace tools and confinement").
 import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 // Module-scope env, restored afterwards. `bun test` runs every file in ONE
@@ -35,7 +36,7 @@ function tools(ws: string, opts?: { code?: boolean; literature?: boolean }) {
   const list = workspaceTools(ws, { allow: [ws], deny: [] }, opts);
   return Object.fromEntries(list.map((t: any) => [t.name, t]));
 }
-const tmp = (label: string) => fs.mkdtempSync(`/private/tmp/coverify-test-${label}-`);
+const tmp = (label: string) => fs.mkdtempSync(`${os.tmpdir()}/coverify-test-${label}-`);
 
 describe("dispatch gate", () => {
   test("plain reasoner allowed", () => expect(dispatch("reasoner").allowed).toBe(true));

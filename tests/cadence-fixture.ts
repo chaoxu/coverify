@@ -5,6 +5,7 @@
 // telemetry case must NOT live in cadence.test.ts: a core test that imports
 // src/telemetry/ breaks the property that the folder is deletable.
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 const { requestVerificationTool } = await import("../src/cadence.ts");
@@ -25,13 +26,13 @@ export const FIXTURE_ENVS = [...VERIFIER_ENVS, "COVERIFY_CODEX_CMD", "COVERIFY_S
  *  CLI that answers the stages in order. Each stub call reports 10 input / 1
  *  output tokens, so "counted exactly once" is checkable by arithmetic. */
 export function campaign(label: string, verdicts: string[]) {
-  const dir = fs.mkdtempSync(`/private/tmp/coverify-cadence-${label}-`);
+  const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-cadence-${label}-`);
   fs.mkdirSync(path.join(dir, "EVIDENCE"), { recursive: true });
   fs.mkdirSync(path.join(dir, ".coverify"), { recursive: true });
   fs.writeFileSync(path.join(dir, "STATEMENT.md"), "# statement\n\nA fixture target.\n");
   fs.writeFileSync(path.join(dir, "PROVED.md"), "");
   fs.writeFileSync(path.join(dir, "EVIDENCE", "cand.r1.md"), "# candidate\n\nA proof.\n");
-  process.env.COVERIFY_STATE_DIR = fs.mkdtempSync(`/private/tmp/coverify-cadstate-${label}-`);
+  process.env.COVERIFY_STATE_DIR = fs.mkdtempSync(`${os.tmpdir()}/coverify-cadstate-${label}-`);
 
   // Answers come from a sequence file, one per call, because the four stages
   // run through the same backend and must return different verdicts.

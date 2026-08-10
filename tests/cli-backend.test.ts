@@ -6,11 +6,12 @@
 // the 2026-08-07 smoke campaign.
 import { afterEach, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 const { createCliRoleSession } = await import("../src/backends.ts");
 
-const stubDir = fs.mkdtempSync("/private/tmp/coverify-cli-stub-");
+const stubDir = fs.mkdtempSync(`${os.tmpdir()}/coverify-cli-stub-`);
 afterEach(() => {
   delete process.env.COVERIFY_CODEX_CMD;
   delete process.env.COVERIFY_CLAUDE_CMD;

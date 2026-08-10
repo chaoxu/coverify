@@ -4,6 +4,8 @@
 #   - `bun install` first; tsc resolves without it but the tests spawn
 #     ./node_modules/.bin/tsc and die on a bare ENOENT.
 #   - a writable HOME: one test builds a temp dir under $HOME directly.
+#   - os.tmpdir(), not /private/tmp: the fixtures hardcoded a macOS path, so
+#     this workflow could not have passed on Linux when it was first written.
 #   - network on the first run: pi-coding-agent downloads ripgrep into
 #     ~/.cache/vscode-ripgrep, so an offline runner fails in read-scope tests.
 name: check
@@ -12,6 +14,9 @@ on:
   push:
     branches: [main]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   check:

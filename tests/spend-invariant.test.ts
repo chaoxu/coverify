@@ -12,6 +12,7 @@
 // that starts stamping tokens beside a leaf again must fail here.
 import { afterEach, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { NOOP_TELEMETRY_CONTEXT } from "@earendil-works/pi-telemetry";
 import { FIXTURE_ENVS, campaign } from "./cadence-fixture.ts";
@@ -195,7 +196,7 @@ test("a single-shot role on a session backend writes one leaf, not two", async (
   // stages when they are not routed to a CLI) emitted the same tokens twice.
   // The CLI lane hid it: a CLI session had no span of its own at all.
   const { createHarnessRoleSession, runRole } = await import("../src/providers.ts");
-  const dir = fs.mkdtempSync("/private/tmp/coverify-onecall-");
+  const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-onecall-`);
   fs.writeFileSync(path.join(dir, "STATEMENT.md"), "# s\n");
   const store = new GateStore(dir);
   setTelemetrySink(new JournalTelemetryContext(store));

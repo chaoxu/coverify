@@ -80,9 +80,9 @@ You need four things:
 - **[Bun](https://bun.sh)** — the only runtime.
 - **The `codex` CLI**, logged in to a ChatGPT subscription.
 - **The `claude` CLI**, logged in to a Claude subscription. (`agy` too, if you
-  use the `gemini` ideation family.) The hostile audit
-  runs on a different vendor's model from the one that wrote the candidate, so
-  the defaults span both. You can point every role at one provider (see
+  use the `gemini` ideation family.) The defaults span both vendors so the
+  hostile audit runs on a different model family from the one that wrote the
+  candidate — a default, not an enforced property; see below. You can point every role at one provider (see
   `docs/models.md`) and lose the cross-family check by doing so.
 - **`coverify login openai-codex`** — OAuth for the API-transport roles, stored
   in `~/.config/coverify/auth.json`.
@@ -186,11 +186,12 @@ round twelve times is the kind of thing that changes how you set up the next
 campaign.
 
 These four readers live in `src/telemetry/`, which is severable. Removing it
-means: delete the folder; delete the six test files that import it (`grep -l
-telemetry tests/*.ts`); in `src/cli.ts` delete its imports, its four `case`
-blocks, and the `telemetry:` option passed to `runCampaign`; and delete the
+means: delete the folder; delete the six test files that import it (`grep -l 'telemetry/' tests/*.ts`
+— note the slash; without it the grep also matches files that only mention
+telemetry in a comment); in `src/cli.ts` delete its imports, its four `case`
+blocks, and the `telemetry:` option passed to `runCampaign`; delete the
 `src/telemetry/limits.ts` line from `HOME_PATH_ALLOWED` in
-`scripts/conformance-check.ts`. What is left still
+`scripts/conformance-check.ts`; and drop those four verbs from the usage text. What is left still
 proves theorems and still records spend on worker and gate lanes; it loses
 these four commands, the per-stage attribution, and verification-stage token
 counts (see `docs/journal-shape.md`). A conformance check fails if anything

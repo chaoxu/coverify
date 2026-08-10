@@ -3,6 +3,7 @@
 // prior-route paths. Results are capped at the 50k read budget.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 const { workspaceTools, readRoots } = await import("../src/workspace.ts");
@@ -12,9 +13,9 @@ function text(result: { content: { type: string; text?: string }[] }): string {
 }
 
 function campaign() {
-  const prior = fs.mkdtempSync("/private/tmp/coverify-readscope-prior-");
+  const prior = fs.mkdtempSync(`${os.tmpdir()}/coverify-readscope-prior-`);
   fs.writeFileSync(path.join(prior, "FAILED.md"), "# FAILED\n\nroute X closed.\n");
-  const dir = fs.mkdtempSync("/private/tmp/coverify-readscope-");
+  const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-readscope-`);
   fs.writeFileSync(
     path.join(dir, "STATEMENT.md"),
     `Prove X.\n\nPrior routes. The campaign at ${prior} binds as prior-route records.\n`,
@@ -47,7 +48,7 @@ describe("read scope", () => {
     const read = tool(tools, "read");
     expect(text(await read.execute("t1", { path: path.join(dir, "STATEMENT.md") }))).toContain("Prove X");
     expect(text(await read.execute("t2", { path: path.join(prior, "FAILED.md") }))).toContain("route X");
-    const outside = fs.mkdtempSync("/private/tmp/coverify-readscope-outside-");
+    const outside = fs.mkdtempSync(`${os.tmpdir()}/coverify-readscope-outside-`);
     fs.writeFileSync(path.join(outside, "secret.md"), "not yours\n");
     expect(text(await read.execute("t3", { path: path.join(outside, "secret.md") }))).toContain(
       "READ SCOPE REFUSED",
@@ -104,8 +105,8 @@ describe("read scope", () => {
   });
 
   test("statement paths with trailing punctuation still grant; bare top-level dirs never do", () => {
-    const prior = fs.mkdtempSync("/private/tmp/coverify-readscope-punct-");
-    const dir = fs.mkdtempSync("/private/tmp/coverify-readscope-p2-");
+    const prior = fs.mkdtempSync(`${os.tmpdir()}/coverify-readscope-punct-`);
+    const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-readscope-p2-`);
     fs.writeFileSync(
       path.join(dir, "STATEMENT.md"),
       `Prove Y. Prior work is recorded at ${prior}. Mentions of /tmp and https://x.test/private in prose.\n`,

@@ -3,16 +3,17 @@
 // never enforced (auto-refusing would invent policy, design rule 3).
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 const { GateStore } = await import("../src/gates.ts");
 const { modelSubstitutions } = await import("../src/observe.ts");
 
 function campaign(label: string) {
-  const dir = fs.mkdtempSync(`/private/tmp/coverify-modelid-${label}-`);
+  const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-modelid-${label}-`);
   fs.mkdirSync(path.join(dir, ".coverify"), { recursive: true });
   fs.writeFileSync(path.join(dir, "STATEMENT.md"), "# statement\n\nProve X.\n");
-  process.env.COVERIFY_STATE_DIR = fs.mkdtempSync(`/private/tmp/coverify-modelid-state-${label}-`);
+  process.env.COVERIFY_STATE_DIR = fs.mkdtempSync(`${os.tmpdir()}/coverify-modelid-state-${label}-`);
   return new GateStore(dir);
 }
 

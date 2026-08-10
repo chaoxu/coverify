@@ -2,16 +2,17 @@
 // and the unaddressed-refusal noticing, plus the ledger-history archive.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 const { GateStore } = await import("../src/gates.ts");
 const { archiveLedgerHistory, gateFailStreak, refuse, refusalsWithoutFollowup } = await import("../src/observe.ts");
 
 function campaign(label: string) {
-  const dir = fs.mkdtempSync(`/private/tmp/coverify-observe-${label}-`);
+  const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-observe-${label}-`);
   fs.mkdirSync(path.join(dir, ".coverify"), { recursive: true });
   fs.writeFileSync(path.join(dir, "STATEMENT.md"), "# statement\n\nProve X.\n");
-  process.env.COVERIFY_STATE_DIR = fs.mkdtempSync(`/private/tmp/coverify-observe-state-${label}-`);
+  process.env.COVERIFY_STATE_DIR = fs.mkdtempSync(`${os.tmpdir()}/coverify-observe-state-${label}-`);
   return { dir, store: new GateStore(dir) };
 }
 

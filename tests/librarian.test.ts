@@ -2,6 +2,7 @@
 // its tokens belong to no session's own meter and need a leaf of their own.
 import { afterEach, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { NOOP_TELEMETRY_CONTEXT } from "@earendil-works/pi-telemetry";
@@ -17,9 +18,9 @@ afterEach(() => {
 });
 
 function fixture(label: string) {
-  const dir = fs.mkdtempSync(`/private/tmp/coverify-${label}-`);
+  const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-${label}-`);
   fs.writeFileSync(path.join(dir, "STATEMENT.md"), "# statement\n\nA fixture.\n");
-  process.env.COVERIFY_STATE_DIR = fs.mkdtempSync(`/private/tmp/coverify-${label}-state-`);
+  process.env.COVERIFY_STATE_DIR = fs.mkdtempSync(`${os.tmpdir()}/coverify-${label}-state-`);
   const store = new GateStore(dir);
   const sink = new JournalTelemetryContext(store);
   setTelemetrySink(sink);
@@ -92,8 +93,8 @@ test("with telemetry OFF a metered call still records its spend, not silence", a
   // span sink alone meant a 22,000-token librarian call left neither spend nor
   // gap on a harness with src/telemetry/ removed. Exactly one writer still
   // fires — the sink when installed, this channel when not.
-  const dir = fs.mkdtempSync("/private/tmp/coverify-librarian-off-");
-  process.env.COVERIFY_STATE_DIR = fs.mkdtempSync("/private/tmp/coverify-librarian-off-state-");
+  const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-librarian-off-`);
+  process.env.COVERIFY_STATE_DIR = fs.mkdtempSync(`${os.tmpdir()}/coverify-librarian-off-state-`);
   setTelemetrySink(NOOP_TELEMETRY_CONTEXT);
   stubLibrarian(dir, { input_tokens: 22711, output_tokens: 63, cache_read_tokens: 0 });
 
