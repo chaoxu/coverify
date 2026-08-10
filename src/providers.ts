@@ -253,7 +253,14 @@ export interface RoleRun {
   prompt: string;
   /** Give the role the workspace tools (read/ls/grep, scoped write; run_script iff code;
    *  librarian search iff literature). */
-  workspace?: { cwd: string; scope: WriteScope; code?: boolean; literature?: boolean };
+  workspace?: {
+    cwd: string;
+    scope: WriteScope;
+    code?: boolean;
+    literature?: boolean;
+    /** Campaign FAILED.md, enabling keyed lookup of closed routes (#28). */
+    failedLedger?: string;
+  };
   extraTools?: AgentTool[];
   spec: ModelSpec;
   models: Models;
@@ -596,6 +603,7 @@ export async function createHarnessRoleSession(
     ? workspaceTools(run.workspace.cwd, run.workspace.scope, {
         code: run.workspace.code,
         literature: run.workspace.literature,
+        failedLedger: run.workspace.failedLedger,
         onUnmetered: (lane, detail) => unmetered.push({ lane, detail }),
       })
     : [];

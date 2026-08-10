@@ -12,6 +12,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { type AgentTool } from "@earendil-works/pi-agent-core";
 import { campaignExists } from "./campaign.js";
+import { matchFailedEntries, parseFailedEntries } from "./failed-index.js";
 import { LIBRARIAN_CHARGE } from "./roles.js";
 import {
   OUTPUT_LIMIT,
@@ -423,12 +424,74 @@ function confineReads(tool: AgentTool, roots: string[], cwd: string): AgentTool 
  * a computation declaration (launcher: "preregistered finite domain and
  * stopping rule") gets run_script and the right to write non-prose files.
  */
+/**
+ * Keyed access to FAILED.md, the check the contract requires before every
+ * route (issue #28). Purely additive: the file stays readable in full by the
+ * ordinary read tool, so this can only make the required check cheaper, never
+ * hide an entry from it. That is what keeps it semantics-invisible mechanics
+ * (rule 2) and out of contract territory — the filename stays meaningful and
+ * the clause needs no rewording.
+ *
+ * A miss returns the full HEADING INDEX rather than nothing, because "no close
+ * prior route" is an assertion the reasoner has to be able to make honestly.
+ * Headings are a few hundred bytes against ~31 KB for the file.
+ */
+function failedRoutesTool(failedLedger: string): AgentTool {
+  return {
+    name: "failed_routes",
+    label: "Closed routes",
+    description:
+      "Look up closed routes in FAILED.md by mechanism label or keywords — the check the contract " +
+      "requires before every route, materially changed retry, or variant. Returns the matching " +
+      "entries verbatim, or, when nothing matches, the full list of entry headings so you can say " +
+      "'no close prior route' on the evidence. Prefer this to reading FAILED.md whole: the file is " +
+      "append-only and grows all campaign, and a full read is re-presented on every later turn of " +
+      "this dispatch. Read the whole file when you need it; this is a lookup, not a restriction.",
+    parameters: Type.Object({
+      query: Type.String({
+        description: "Mechanism label and/or keywords describing the route you are about to take",
+      }),
+    }),
+    executionMode: "sequential",
+    execute: async (_id: string, params: unknown) => {
+      const { query } = params as { query: string };
+      if (!fs.existsSync(failedLedger)) {
+        return toolText("FAILED.md does not exist yet — no closed routes recorded in this campaign.");
+      }
+      const md = await fs.promises.readFile(failedLedger, "utf8");
+      const entries = parseFailedEntries(md);
+      if (entries.length === 0) {
+        return toolText("FAILED.md has no `## ` entries yet — no closed routes recorded.");
+      }
+      const matches = matchFailedEntries(entries, query);
+      if (matches.length === 0) {
+        return toolText(
+          `No entry in FAILED.md matched "${query}". All ${entries.length} entry heading(s), so you ` +
+            `can confirm this yourself:\n\n${entries.map((e) => e.heading).join("\n")}\n\n` +
+            "If none is a close prior route, record `no close prior route` per the contract.",
+        );
+      }
+      // Every nonzero match is returned. Truncating here would recreate, one
+      // layer down, the "you cannot see what you did not fetch" problem this
+      // tool exists to remove; capResultText already bounds the payload, and
+      // it says so when it bites.
+      return toolText(
+        `${matches.length} of ${entries.length} entr(y/ies) in FAILED.md matched "${query}", ` +
+          `best first.\n\n${matches.map((m) => m.text).join("\n\n")}`,
+      );
+    },
+  } as AgentTool;
+}
+
 export function workspaceTools(
   cwd: string,
   scope: WriteScope,
   opts?: {
     code?: boolean;
     literature?: boolean;
+    /** Absolute path to the campaign's FAILED.md, enabling keyed lookup of
+     *  closed routes (issue #28). Omitted for roles with no such check. */
+    failedLedger?: string;
     /** Called when a tool spawns a provider whose tokens this harness cannot
      *  measure. The librarian is a full external agent with live web search
      *  and no machine-readable usage output, so its spend is real and
@@ -485,5 +548,6 @@ export function workspaceTools(
   ] as AgentTool[];
   if (code) tools.push(runScriptTool(cwd, scope, { exclusiveDir: true }));
   if (opts?.literature === true) tools.push(literatureSearchTool(cwd, scope, opts.onUnmetered));
+  if (opts?.failedLedger !== undefined) tools.push(failedRoutesTool(opts.failedLedger));
   return tools;
 }

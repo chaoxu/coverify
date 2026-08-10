@@ -249,6 +249,10 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
               scope: { allow: [evidenceDir], deny: [] },
               code: isTechnician,
               literature: literature !== undefined,
+              // The launcher requires a prior-route check before every route;
+              // this makes it a lookup instead of a 31 KB read that is then
+              // re-presented on every later turn of the dispatch (#28).
+              failedLedger: path.join(dir, "FAILED.md"),
             },
             spec,
             models,
