@@ -443,7 +443,18 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
       }) => {
         // A cancelled gate must not record a verdict (mirrors verification):
         // an unseen verdict could later unlock concurrent workers nobody reviewed.
-        if (!handles.has(id)) return `[gate ${id} cancelled; verdict not recorded]`;
+        if (!handles.has(id)) {
+          // Cancelled after the critic returned: the verdict must not be
+          // recorded (an unseen PASS could unlock concurrent workers), but the
+          // tokens were spent. Leaf them, exactly as the cadence does.
+          store.append({
+            kind: "role-call",
+            dispatchId: id,
+            orphaned: "gate cancelled after the critic returned; verdict deliberately not recorded",
+            ...defined({ usage: criticUsage, attempts, requests }),
+          });
+          return `[gate ${id} cancelled; verdict not recorded]`;
+        }
         const verdict = recordGateVerdict(store, p.mechanism, text, criticUsage, {
           promptChars,
           durationMs,
@@ -590,7 +601,19 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
       const queued = settledQueue.findIndex((s) => s.h.id === p.id);
       if (queued >= 0) settledQueue.splice(queued, 1);
       handle.stop?.();
-      store.append({ kind: "completion", id: p.id, cancelled: true, reason: p.reason });
+      store.append({
+        kind: "completion",
+        id: p.id,
+        cancelled: true,
+        reason: p.reason,
+        // The provider was paid for whatever ran before the cancel. Dropping
+        // it recorded a multi-hour worker as zero tokens.
+        ...defined({
+          usage: handle.usage?.(),
+          attempts: handle.attempts?.(),
+          requests: handle.requests?.(),
+        }),
+      });
       deps.bumpActivity();
       return toolText(`cancelled ${p.id}. Record the route state in the ledgers per the contract.`);
     },
@@ -670,7 +693,17 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
       if (!p.continueSupervised) {
         for (const [id, handle] of [...handles]) {
           handle.stop?.();
-          store.append({ kind: "completion", id, cancelled: true, reason: `campaign ${p.state}` });
+          store.append({
+            kind: "completion",
+            id,
+            cancelled: true,
+            reason: `campaign ${p.state}`,
+            ...defined({
+              usage: handle.usage?.(),
+              attempts: handle.attempts?.(),
+              requests: handle.requests?.(),
+            }),
+          });
           handles.delete(id);
           interrupted++;
         }

@@ -13,6 +13,7 @@ import {
 } from "./campaign.js";
 import {
   acceptedStatementHash,
+  defined,
   recordStatement,
   GateStore,
   statementHash,
@@ -492,6 +493,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   // series, so this resets with it — the one place the epoch boundary is now
   // used, and it is known here rather than inferred at read time.
   let prevCoordUsage: RoleUsage | undefined;
+  let prevCoordAttempts = 0;
   // Per-wake context growth, surfaced when large (issue #17): the measured
   // campaign grew 29–55k tokens per wake, ~90% of it the coordinator's own
   // reads and output, invisible to the coordinator itself. Telemetry plus a
@@ -612,6 +614,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       fresh = true;
       coordinatorEpoch++;
       prevCoordUsage = undefined;
+      prevCoordAttempts = 0;
       coordinator = await createHarnessRoleSession(
         {
           contract,
@@ -763,6 +766,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       }
       coordinator = undefined;
       prevCoordUsage = undefined; // the next turn rebuilds; a new series starts
+      prevCoordAttempts = 0;
       wakeCount--; // a failed turn is not a wake the user asked to spend
       if (turnFailures >= TURN_FAILURE_LIMIT) {
         store.event({
@@ -802,13 +806,18 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     const sessionTotal = coordinator.usage();
     const spent = sessionTotal && subUsage(sessionTotal, prevCoordUsage);
     prevCoordUsage = sessionTotal;
+    // Cumulative per session, exactly like usage, so it is journalled as a
+    // delta too. This is the lane where retryAssistantCall actually fires.
+    const attemptsNow = coordinator.attempts?.() ?? 0;
+    const attempts = attemptsNow - prevCoordAttempts;
+    prevCoordAttempts = attemptsNow;
     store.event({
       kind: "usage",
       role: "coordinator",
       sessionId: `coordinator-${coordinatorEpoch}`,
       wake: wakeCount,
       modelSpec: specKey(coordinatorSpec),
-      ...(spent !== undefined ? { usage: spent } : {}),
+      ...defined({ usage: spent, attempts, requests: coordinator.requests?.() }),
       approxContextTokens: contextNow,
       ...(growth !== undefined ? { contextGrowthTokens: growth } : {}),
     });
