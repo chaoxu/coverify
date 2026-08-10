@@ -204,6 +204,14 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
       const id = deps.mintVerificationId();
       const cadenceStop = new AbortController();
       let cancelled: () => boolean = () => cadenceStop.signal.aborted;
+      /** Spend attached to a thrown error by a CLI backend that failed after
+       *  the provider had already been paid (backends.ts attaches `usage` to
+       *  the rejection). Leafed like any other unrecorded spend. */
+      const flushErrorSpend = (e: unknown, why: string) => {
+        const u = (e as { usage?: RoleUsage }).usage;
+        if (!u) return;
+        store.append({ kind: "role-call", dispatchId: id, revision: rel, orphaned: why, usage: u });
+      };
       /** The provider was paid for a stage whose record was never written.
        *  Emit that spend as its own leaf so it is on file rather than lost.
        *  Idempotent, and called from BOTH the cancellation path and the
@@ -637,6 +645,9 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         promise: async () => {
           try {
             return await cadence();
+          } catch (e) {
+            flushErrorSpend(e, "provider call failed after being billed (CLI reported a nonzero exit)");
+            throw e;
           } finally {
             flushUnrecordedSpend("cadence failed after the provider returned, before the stage record");
           }

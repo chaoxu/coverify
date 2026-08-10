@@ -219,6 +219,12 @@ function codexJsonlUsage(stdout: string): RoleUsage | undefined {
  *  verbatim the `session_id` of the rollout under ~/.codex/sessions/ — which
  *  carries `rate_limits.primary.used_percent`, the meter that actually ends
  *  campaigns and that nothing in this journal could previously join to. */
+export function codexTurns(stdout: string): number {
+  let n = 0;
+  for (const line of stdout.split("\n")) if (line.includes('"turn.completed"')) n++;
+  return n;
+}
+
 export function codexThreadId(stdout: string): string | undefined {
   for (const line of stdout.split("\n")) {
     if (!line.includes('"thread.started"')) continue;
@@ -256,6 +262,9 @@ function runCliRole(
    *  holds when stdout was lost or the event name changes upstream. */
   providerSessionId?: string;
   backendCwd?: string;
+  /** Provider requests this call made — a codex tool loop emits one
+   *  turn.completed per request, so it is derived, never assumed to be 1. */
+  requests?: number;
 }> {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "coverify-cli-"));
   const outFile = path.join(cwd, "last-message.txt");
@@ -359,7 +368,19 @@ function runCliRole(
         const detail = err.trim()
           ? err.slice(0, 500)
           : `no stderr; signal=${String(signalName)}; stdout head: ${out.slice(0, 300).trim() || "(empty)"}`;
-        return reject(new Error(`${provider} exited ${code}: ${detail}`));
+        // The provider was paid before it failed — for codex, stdout already
+        // holds turn.completed usage. Rejecting before parsing threw away a
+        // measured number, which is the one thing this journal must not do.
+        const spent = backend.usage?.(out);
+        const err2 = new Error(`${provider} exited ${code}: ${detail}`) as Error & {
+          usage?: RoleUsage;
+          providerSessionId?: string;
+          backendCwd?: string;
+        };
+        if (spent) err2.usage = spent;
+        err2.providerSessionId = codexThreadId(out);
+        err2.backendCwd = cwd;
+        return reject(err2);
       }
       if (backend.output === "claude-json") {
         try {
@@ -414,6 +435,10 @@ function runCliRole(
           usage: backend.usage?.(out),
           providerSessionId: codexThreadId(out),
           backendCwd: cwd,
+          // Provider requests in this call: codex runs a tool loop and emits
+          // one turn.completed per request, so this is derived from the
+          // stream rather than assumed to be 1.
+          requests: codexTurns(out),
         });
       }
       resolve({ text: out.trim() });

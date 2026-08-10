@@ -200,3 +200,17 @@ test("codexThreadId finds the rollout join key, and tolerates its absence", asyn
   expect(codexThreadId(`{"type":"turn.completed"}\n`)).toBeUndefined();
   expect(codexThreadId("not json at all\n")).toBeUndefined();
 });
+
+test("codex requests are counted from the stream, not assumed to be one", async () => {
+  // codexJsonlUsage explicitly SUMS every turn.completed event, so a tool loop
+  // records N turns of usage. Stamping requests:1 alongside that made
+  // `GROUP BY requests` meaningless — a record could report four turns of
+  // tokens against one claimed request.
+  const { codexTurns } = await import("../src/backends.ts");
+  const three =
+    `{"type":"turn.completed","usage":{"input_tokens":1}}\n` +
+    `{"type":"turn.completed","usage":{"input_tokens":2}}\n` +
+    `{"type":"turn.completed","usage":{"input_tokens":3}}\n`;
+  expect(codexTurns(three)).toBe(3);
+  expect(codexTurns(`{"type":"thread.started"}\n`)).toBe(0);
+});

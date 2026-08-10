@@ -595,6 +595,20 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
           // Compaction is a real LLM call and can fail (quota, provider);
           // the campaign must not die with workers live — fall back to the
           // infallible restart-rule rebuild (review 2026-08-02).
+          // The failed summarization call was already billed, and the session
+          // holding its cost is about to be discarded. Leaf it first.
+          const preRebuild = coordinator?.usage();
+          if (preRebuild) {
+            store.event({
+              kind: "usage",
+              role: "coordinator",
+              sessionId: `coordinator-${coordinatorEpoch}`,
+              wake: wakeCount,
+              compactionFailed: true,
+              modelSpec: specKey(coordinatorSpec),
+              usage: subUsage(preRebuild, prevCoordUsage),
+            });
+          }
           store.event({
             kind: "note",
             note: `compaction failed (${String(e).slice(0, 200)}); rebuilding via restart rule`,

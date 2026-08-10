@@ -740,6 +740,10 @@ export async function createHarnessRoleSession(
     // can drift from the first.
     requests: () => allMessages.filter((m) => (m as { role?: string }).role === "assistant").length,
     async compact(customInstructions?: string): Promise<void> {
+      // A real provider call with its own retry policy, and its tokens are
+      // already inside usage() — so not counting it here made usage and
+      // attempts disagree by construction on every compacted session.
+      attempts++;
       await harness.compact(customInstructions);
       await refresh();
     },
