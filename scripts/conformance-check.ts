@@ -51,15 +51,34 @@ if (missing.length > 0) {
 // surface and is the one module allowed to render a view.
 // A view may read core; core may not read a view — only the reverse edge
 // needs guarding.
+/** Every .ts under a root, recursively — a `src/anything/` subdirectory added
+ *  later must not become invisible to a check. */
+const tsFiles = (root: string): string[] =>
+  fs.existsSync(root)
+    ? fs
+        .readdirSync(root, { recursive: true, encoding: "utf8" })
+        .filter((p) => p.endsWith(".ts"))
+        .map((p) => path.join(root, p))
+    : [];
+
+// Both consumer folders are guarded the same way, for two different reasons
+// that want the same edge: view/ is read-only observability, and telemetry/ is
+// the deletable measurement extension. `rm -rf src/telemetry` must leave a
+// working harness (design rule 2), which is true only while no core file
+// imports it — a property that was verified by hand in a commit message until
+// this check started enforcing it.
 const violations: string[] = [];
-for (const f of fs.readdirSync(path.join(repoRoot(), "src"))) {
-  if (!f.endsWith(".ts") || f === "cli.ts") continue;
-  const text = fs.readFileSync(path.join(repoRoot(), "src", f), "utf-8");
-  if (/from "\.\/view\//.test(text)) violations.push(`src/${f}`);
+for (const abs of tsFiles(path.join(repoRoot(), "src"))) {
+  const rel = path.relative(repoRoot(), abs);
+  if (rel === "src/cli.ts" || rel.startsWith("src/view/") || rel.startsWith("src/telemetry/")) continue;
+  const text = fs.readFileSync(abs, "utf-8");
+  for (const layer of ["view", "telemetry"]) {
+    if (new RegExp(`from "\\.[./]*/?${layer}/`).test(text)) violations.push(`${rel} -> src/${layer}/`);
+  }
 }
 if (violations.length > 0) {
-  console.error("LAYER VIOLATION — operational code imported a read-only view:");
-  for (const v of violations) console.error(`  ${v} imports src/view/*`);
+  console.error("LAYER VIOLATION — operational code imported a read-only consumer:");
+  for (const v of violations) console.error(`  ${v}`);
   console.error("Views are pure consumers: move the shared logic into core, or read it from cli.ts.");
   process.exit(1);
 }
@@ -79,18 +98,30 @@ const HOME_PATH_ALLOWED = new Set([
   "src/credentials.ts", // ~/.config/coverify/auth.json — the user's credentials
   "src/gates.ts", // ~/.local/state/coverify — XDG state (COVERIFY_STATE_DIR)
   "src/workspace.ts", // ~/.gemini, ~/.antigravity — read-scope DENIALS, plus ~ expansion
-  "src/view/limits.ts", // ~/.codex/sessions — codex's own rollouts, absent = reported absent
+  "src/telemetry/limits.ts", // ~/.codex/sessions — codex's own rollouts, absent = reported absent
 ]);
 const hidden: string[] = [];
-for (const dir of ["src", "src/view"]) {
-  for (const f of fs.readdirSync(path.join(repoRoot(), dir))) {
-    if (!f.endsWith(".ts")) continue;
-    const rel = `${dir}/${f}`;
-    if (HOME_PATH_ALLOWED.has(rel)) continue;
-    const text = fs.readFileSync(path.join(repoRoot(), rel), "utf-8");
-    // A homedir() join, or an absolute path into someone's checkout.
-    if (/homedir\(\)\s*,/.test(text) || /"\/Users\/|"\/home\//.test(text)) hidden.push(rel);
+const allowlistHits = new Set<string>();
+for (const abs of tsFiles(path.join(repoRoot(), "src"))) {
+  const rel = path.relative(repoRoot(), abs);
+  if (HOME_PATH_ALLOWED.has(rel)) {
+    allowlistHits.add(rel);
+    continue;
   }
+  const text = fs.readFileSync(abs, "utf-8");
+  // A homedir() join, or an absolute path into someone's checkout.
+  if (/homedir\(\)\s*,/.test(text) || /"\/Users\/|"\/home\//.test(text)) hidden.push(rel);
+}
+// An allowlist entry that matches nothing is a check that quietly narrowed:
+// `src/view/limits.ts` sat here after the file moved to `src/telemetry/`, and
+// because the scan was a hardcoded two-directory list rather than a recursive
+// walk, the whole telemetry folder went unchecked without anything turning red.
+const stale = [...HOME_PATH_ALLOWED].filter((e) => !allowlistHits.has(e));
+if (stale.length > 0) {
+  console.error("STALE ALLOWLIST — HOME_PATH_ALLOWED names a file that does not exist:");
+  for (const s of stale) console.error(`  ${s}`);
+  console.error("Delete the entry, or fix the path it was meant to exempt.");
+  process.exit(1);
 }
 if (hidden.length > 0) {
   console.error("HIDDEN DEPENDENCY — a clean clone would not have this:");
@@ -109,15 +140,6 @@ if (hidden.length > 0) {
 // which is exactly how that fails.
 const declared = new Set(KNOBS.map((k) => k.name));
 const seen = new Set<string>();
-/** Every .ts under a root, recursively — a `src/anything/` subdirectory added
- *  later must not become invisible to this check. */
-const tsFiles = (root: string): string[] =>
-  fs.existsSync(root)
-    ? fs
-        .readdirSync(root, { recursive: true, encoding: "utf8" })
-        .filter((p) => p.endsWith(".ts"))
-        .map((p) => path.join(root, p))
-    : [];
 for (const root of ["src", "scripts", "bin"]) {
   for (const p of tsFiles(path.join(repoRoot(), root))) {
     if (path.basename(p) === "knobs.ts") continue;
