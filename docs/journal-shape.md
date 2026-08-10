@@ -5,12 +5,13 @@ rules gate code in this repository -- `src/telemetry/spend.ts`,
 `outcomes.ts`, `providers.ts` and `cadence.ts` all cite them by number, and
 `scripts/conformance-check.ts` enforces the structural half.
 
-They were extracted from a longer document written after the 2026-08-09
-three-system study. The rest of that study -- credit pricing, collinearity,
-corpus attribution, the comparison-design habits -- is a research artifact,
-not a constraint on this harness, and lives in
-`~/kb/notes/agents/token-measurement.md`. Rule numbers are kept as they were
-so the code comments that cite them still resolve.
+They were extracted from a longer document written after a 2026-08-09
+three-system measurement study. The rest of that study -- credit pricing,
+collinearity, corpus attribution, the comparison-design habits -- constrains a
+person writing a cost report rather than a line of this harness, and is kept
+outside the repository. Rule numbers are unchanged from that document, so the
+code comments citing them still resolve; the gaps in the numbering are the
+rules that stayed behind.
 
 
 ## 1. Fix the units before summing anything

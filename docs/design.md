@@ -897,7 +897,7 @@ replay each other's prefixes, so three defensible methods over it span 27×,
 and the figure was computed by the naive method. Reproducing it does not
 rescue it — the study's 3,323.9M "confirmation" was the same mistake made
 twice. Nothing may be concluded from this number until the corpus is
-re-derived (`~/kb/notes/agents/token-measurement.md`, rule 3b). What stands
+re-derived (the 2026-08-09 measurement study, rule 3b). What stands
 from this corpus is only the countable part: **291 PROVED entries, 4–5/12
 problems resolved.** Known ledger defects: one explicit retraction
 (bounded-hedge-cut, loop-counting), one audit-forced correction

@@ -1,208 +1,173 @@
 # Coverify
 
-Coverify is a math proof-search campaign engine: the `math-proof-search`
-skill's launcher contract, compiled onto pi (`@earendil-works/pi-agent-core`).
-The skill is the spec; coverify is a mechanical referee for it. It adds no
-mathematical policy of its own — its edge over running the skill in a frontier
-harness is that the rules that matter are enforced in code and cannot drift.
+Coverify attacks one precise mathematical statement with a team of language
+models, and leaves behind a record you can check.
 
-The goal is **cost-efficient proof search**: verified mathematical results for
-as few tokens as possible, measured as verified-true output per billable token
-and arbitrated by a budget-matched A/B against the raw skill (`docs/design.md`,
-"Token-controlled A/B"). Efficiency is pursued in harness mechanics — what each
-role reads, how ledgers are addressed, what survives a compaction — never by
-searching less or verifying less: the harness imposes no agent ceiling and no
-wall-clock timeout on proof work, and verification spend counts inside the
-budget.
+It exists because a language model asked for a proof will produce one, and the
+wrong ones read exactly like the right ones. Coverify's answer is not a better
+prover — it is an adversarial process around the prover, and a record of what
+that process actually did.
 
-A project is a folder. There is no server, no worker daemon, and no deploy
-pipeline. The campaign directory uses the launcher's exact
-file layout (`STATEMENT.md`, `CURRENT_FRONTIER.md`, `REGISTRY.md`,
-`FAILED.md`, `PROVED.md`, `PROCESS_LESSONS.md`, `EVIDENCE/`), so a Claude Code or
-Codex session running the skill can resume a coverify campaign and vice versa.
+You write the statement in a file. Coverify runs a search: instances propose
+routes, work them out, and record what failed and why. When a candidate proof
+looks finished, four fresh instances try to break it — one of them working
+blind, reconstructing the result from the statement alone without ever seeing
+the candidate. A candidate that survives all four is written to `PROVED.md`,
+with the exact bytes it was verified against.
 
-## Use
+The search does not stop on its own. It runs until you stop it, or until it
+declares itself finished with at least one result on record.
 
-Everything coverify needs to run is in this repository, including the launcher
-contract it enforces (`contract/math-proof-search-launcher.md`). A clean clone
-runs `bun install && bun run check` with no external file and no configuration.
+## What this is not
 
-What you supply is model access, and nothing else:
+**Nothing here is machine-checked.** There is no Lean, no Coq, no proof
+assistant. Verification is adversarial reading by language models. The
+strongest honest description of a promoted result is: *four fresh instances
+tried to break this and failed, one of them without being allowed to see it.*
+That is a real filter — it catches the confident nonsense that a single model
+reviewing its own work does not — and it is not a proof of correctness.
 
-- **Bun.** No other runtime.
-- **Provider access for the roles you use.** The defaults route almost
-  everything through the `codex` CLI on a ChatGPT subscription
-  (`coverify login openai-codex`) and the hostile auditor through the `claude`
-  CLI on a Claude subscription. Both are the vendors' own binaries; coverify
-  spawns them. API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-  `GEMINI_API_KEY`) are needed only for api-provider role overrides.
-- **Nothing else.** Campaign state lives under the campaign directory and
-  `$XDG_STATE_HOME`-style `~/.local/state/coverify` (override:
-  `COVERIFY_STATE_DIR`); credentials in `~/.config/coverify/auth.json`.
+Two specific things to distrust, both recorded in `docs/design.md`'s honesty
+ledger rather than hidden:
+
+- **The promoted statement text is not checked against the proof.** The
+  coordinator writes the `PROVED.md` entry, and nothing mechanically verifies
+  that the sentence it wrote is what the candidate actually establishes. An
+  over-claim is *auditable* — the entry carries the verified artifact and its
+  content hash — not prevented. Read the artifact before you believe the
+  entry.
+- **The dependency list is instructed, not enforced.** A candidate declares
+  what it relies on. The hostile auditor is shown `PROVED.md` so it can catch
+  a false declaration, but nothing stops one from being made.
+
+What *is* enforced by the operating system rather than by instruction: the
+blind reconstructor genuinely cannot read the candidate, and every role can
+only write inside the directory it was given. Those are filesystem
+permissions, not promises in a prompt.
+
+## Running one
+
+You need [Bun](https://bun.sh) and a subscription to at least one model
+provider. The defaults spawn the vendors' own CLIs — `codex` on a ChatGPT
+subscription for most roles, `claude` on a Claude subscription for the hostile
+audit, so that every candidate gets read by a model family that did not write
+it.
 
 ```bash
 bun install
+bun run src/cli.ts login openai-codex        # ChatGPT subscription
 
-# default routing needs `coverify login openai-codex` (ChatGPT subscription) plus the
-# `codex` and `claude` binaries (the hostile auditor stays on Claude);
-# API-key env vars are needed only for api-provider role overrides
-bun run src/cli.ts prove "Exact statement to resolve." --dir campaign
-bun run src/cli.ts status --dir campaign
-bun run src/cli.ts resume --dir campaign
-bun run src/cli.ts amend --dir campaign    # accept an explicit user amendment of STATEMENT.md
-bun run src/cli.ts turns --dir campaign                      # per-session telemetry summary
-bun run src/cli.ts turns --dir campaign --session <substr>   # TurnRecord JSONL for one session
-
-# measurement readers — the journal's usage fields are read, not just written
-bun run src/cli.ts spend --dir campaign         # per-lane/role/model tokens; refuses cross-meter sums
-bun run src/cli.ts outcomes --dir campaign      # what the spend bought: verdicts, repair loops, promotions
-bun run src/cli.ts limits --dir campaign        # rate-limit occupancy and burn rate — what actually binds
+bun run src/cli.ts prove "Every 3-connected planar graph has a ..." --dir campaign
 ```
 
-`turns` derives per-turn telemetry (sizes, per-request usage and cache-hit
-rate, gaps, stopReason — never prompt text) from the session trees on demand.
-It reads the pi session JSONL directly rather than the journal, which makes it
-the independent cross-check on the other three readers.
-
-All four readers live in `src/telemetry/`, which is removable: delete the
-folder and its imports in `cli.ts` and the harness still proves theorems, with
-no token number left to read. `bun run check` fails if anything outside that
-folder imports it.
-
-Optional user limits (the harness imposes none of its own): `--agent-limit N`
-(concurrent workers), `--max-wakes N` (pause after N coordinator wakes).
-
-**Interacting with a running campaign.** `coverify say "<message>"` (from any
-shell) sends guidance the coordinator receives verbatim — steered into its
-running turn within about a second, or at the next wake if it is idle: the
-headless analog of typing to an interactive skill session. `status` lists
-pending messages. Ctrl-C is always safe (state is durable, supervised compute
-is reaped) and `resume` continues; `--max-wakes` chunks a campaign into
-supervised sittings; `amend` accepts a statement change. The campaign folder
-is the skill's own format, so you can also open it in an interactive
-Claude Code/Codex session running the raw skill — full conversational
-control over the same state — or in vanilla pi with `src/pi-extension.ts`
-loaded for read-only inspection plus supervised script runs.
-
-**Models are per-role.** Specs are `provider/model[@thinking]`. API
-providers: `anthropic`, `openai`, `openai-codex`, `google` (Gemini via
-`GEMINI_API_KEY`). CLI-backed providers, all riding official-CLI logins:
-`claude-bridge` (the pi-claude-bridge provider — a full tool loop through
-the Claude Agent SDK on the Claude subscription; **coordinator-only**,
-because concurrent bridge sessions cross-contaminate — enforced at
-preflight), `claude-cli` (`claude -p`, Claude-subscription billed),
-`codex-cli` (official `codex exec`, ChatGPT-subscription billed, read-only
-sandbox), and `chatgpt-cli` (the chatgpt.com daemon CLI from gitea
-`chaoxu/chatgpt-cli` — the only road to ChatGPT-Pro-only models like
-`gpt-5.6-pro`; its daemon picks the model, the spec's modelId is a
-provenance label). A single-shot-CLI-backed **reasoner** runs as an oracle:
-one deep attempt, no tools, the reply is the deliverable — e.g.
-`COVERIFY_MODEL_REASONER=chatgpt-cli/gpt-5.6-pro` turns reasoners into GPT-5.6
-Pro deep provers (technicians need tools, so a CLI oracle backend is refused there). Defaults (all subscription billed, user decision 2026-08-01 — OpenAI
-everywhere except the independent audit): coordinator, reasoners, and technicians
-`openai-codex/gpt-5.6-sol@max` — Sol at maximum effort as full pi agents
-on the ChatGPT-subscription OAuth (`coverify login openai-codex`);
-the single-shot verdict roles critic, certifier, reconstructor, and
-comparator `codex-cli/gpt-5.6-sol`; the hostile auditor `claude-cli/opus`,
-so every candidate still gets one cross-family (Claude) audit; the journal
-records the model family per call. When ChatGPT quota is exhausted,
-`COVERIFY_MODEL_REASONER=claude-cli/opus` falls back to all-Anthropic, and
-`COVERIFY_MODEL_RECONSTRUCTOR=google/gemini-3.6-flash` remains the cheap
-third-family trial candidate. Override per role with
-`COVERIFY_MODEL_{COORDINATOR,REASONER,TECHNICIAN,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}`
-(the only model override).
-Auth per provider: the logged-in `claude` binary for `claude-bridge`/
-`claude-cli`, env API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-`GEMINI_API_KEY`), or
-OAuth via `coverify login anthropic|openai-codex`
-(`~/.config/coverify/auth.json`, auto-refresh). **Billing caution:**
-third-party OAuth against Anthropic reportedly draws Extra Credits, not the
-subscription allowance — only the official `claude` CLI paths
-(`claude-bridge`, `claude-cli`) are subscription-billed, which is why they
-are the defaults. `prove`/`resume` preflight that every configured role's
-provider has usable auth. `COVERIFY_CLAUDE_CMD`/`COVERIFY_CODEX_CMD`
-override the CLI templates ({model}/{out} substituted).
-
-The launcher contract ships in this repository at
-`contract/math-proof-search-launcher.md`, and coverify is canonical for it —
-a clean clone runs with no external file. `COVERIFY_LAUNCHER_PATH` overrides
-it for testing an edited contract, and hard-fails when set but missing, so you
-can never silently get the shipped text while believing you are testing yours.
-If the contract is missing, coverify stops — it never falls back to a
-remembered version.
-
-Invocation from another harness is the same CLI: a Codex or Claude Code
-session treats `coverify` as an ordinary tool and reads the campaign files.
-
-## How it works
-
-The harness (TypeScript, the only persistent process) owns the scheduler and
-the gates; ephemeral model calls own the judgment:
-
-- **Coordinator** — a resident session across wakes (as when the skill runs
-  live in Codex/Claude Code); at the context cap it compacts in place — the
-  launcher's anticipated "context compaction", with kill-and-rebuild from
-  the campaign files as the fallback; sole ledger writer; tools:
-  `dispatch_reasoner`, `dispatch_technician`, `dispatch_gate_critic`,
-  `request_verification`, `record_promotion`, `cancel_agent`, `steer_agent`,
-  `declare_campaign_state`, plus read/ls/grep and a scoped prose write tool
-  for ledger edits (no shell, no code, no web).
-- **Reasoners** — fresh instances, one packet with one finite mathematical
-  deliverable, prose tools only, write access limited to their assigned
-  `EVIDENCE/` directory; a `literature` packet also grants a delegated
-  librarian search tool.
-- **Technicians** — fresh instances dispatched with a preregistered
-  computation; the only role that writes and runs code, via `run_script`
-  (supervised batches, shared time and memory caps).
-- **Verification** — the launcher's two-stage cadence as four fresh calls:
-  hostile audit; bundle certification (a fresh agent shown candidate + bundle
-  certifies the coordinator-authored key ideas/sources leak nothing; a leaky
-  bundle is hash-blocked from retry); blind reconstruction (the harness
-  withholds the candidate); then a comparison mapping the reconstruction to
-  the candidate's conclusions and dependencies, which carries stage 2's
-  verdict. All four outputs are saved as citable EVIDENCE artifacts; verdicts
-  are content-hash-bound, and `record_promotion` (the only writer of
-  PROVED.md) re-checks everything.
-- **Gates in code** — packet schema + FAILED.md check field on every
-  dispatch; idea-gate (`IDEA PASS` on file) before a second concurrent worker
-  on a mechanism (sequential retries get an advisory — that judgment is the
-  coordinator's); user limits at dispatch; no wall-clock timeouts on proof work,
-  ever.
-
-## Project layout convention
-
-A research project is a folder containing campaigns (convention only — no
-machinery reads this):
-
-```
-myproject/                git repo (committing/pushing is your call; the
-  PROJECT.md              harness never runs git)
-  notes/                  free-form thinking — not campaign state
-  tools/                  domain checkers, search scripts (technicians copy what they need)
-  campaigns/
-    2026-07-31-some-statement/    one frozen statement each, launcher layout
-  papers/
-```
-
-Cross-campaign citation: a promoted result from another campaign is an
-**imported theorem** — cite it by path and verify its exact hypotheses in the
-importing campaign, like any external source. There is deliberately no
-project-level promoted-results index; that would be a second proof-state
-system. Keep campaigns out of the system temp tree (the write sandbox
-blanket-allows temp).
-
-**Interactive inspection:** load `src/pi-extension.ts` in a vanilla pi
-session (extensions dir or `extensionFactories`) to get coverify's
-supervised `run_script` in place of raw bash; pi's own read/ls/grep cover
-the ledgers. Manual poking only; gates, cadence, and promotion always
-require this CLI.
-
-See `docs/design.md` for the full conformance table (each enforcement →
-launcher clause) and the adversarial review record, and
-`docs/skill-feedback.md` for the skill-improvement ledger.
-
-## Checks
+That creates `campaign/` and starts working. It will run for hours. Ctrl-C is
+always safe — state is on disk, and any compute it spawned is killed with it.
 
 ```bash
-bun run check   # typecheck + launcher-token conformance check + enforcement tests in tests/
+bun run src/cli.ts status --dir campaign     # where it is now
+bun run src/cli.ts resume --dir campaign     # continue after a stop
+bun run src/cli.ts say "the LP relaxation route is a dead end" --dir campaign
+```
+
+`say` reaches the coordinator inside its current turn, usually within a
+second. Use it the way you would interrupt a student at a whiteboard.
+
+Two optional brakes, both off unless you set them: `--agent-limit N` caps
+concurrent workers, `--max-wakes N` stops after N coordinator turns so you can
+inspect before spending more. Coverify imposes no limits of its own — no agent
+ceiling, and no wall-clock timeout on thinking.
+
+## What you get
+
+The campaign directory is plain Markdown, readable without coverify:
+
+```
+campaign/
+  STATEMENT.md          the frozen target — changing it takes an explicit `amend`
+  PROVED.md             results that survived verification, with content hashes
+  FAILED.md             routes that died, and why — the most useful file here
+  CURRENT_FRONTIER.md   what it is attacking now
+  REGISTRY.md           every claim and its status
+  PROCESS_LESSONS.md    what the search learned about itself
+  EVIDENCE/             every artifact: candidates, audits, reconstructions
+```
+
+`FAILED.md` is worth reading even when nothing is proved. A campaign that
+spends a day killing six plausible routes has told you something, and told it
+in a form you can check.
+
+The statement is frozen on purpose. Every verification record is bound to the
+statement's hash, so a verdict cannot silently become a verdict about a
+different question. Changing your mind about the target is an explicit act:
+`coverify amend`.
+
+## Cost
+
+Runs bill against your model subscriptions, not a metered API account, so the
+constraint you hit is a rate-limit window rather than a bill.
+
+```bash
+bun run src/cli.ts limits --dir campaign     # how much of the window is left
+bun run src/cli.ts spend --dir campaign      # where the tokens went
+bun run src/cli.ts outcomes --dir campaign   # what the tokens bought
+```
+
+`limits` is the one to watch during a campaign. The others are for working out
+whether the search is spending well — on a recent campaign, `outcomes` showed
+34 revisions entering verification and 5 promoted, at a median of 4 repair
+rounds each, which is the kind of thing that changes how you set a campaign up
+next time.
+
+These readers live in `src/telemetry/` and can be deleted outright. The
+harness runs without them; you just stop getting token numbers.
+
+## Why it is built this way
+
+You can already point a frontier model at a hard statement and ask it to prove
+something. What you get back is a confident write-up whose errors are exactly
+as fluent as its correct steps, and no way to tell which is which.
+
+The usual answer is to ask a second model to check the first. That is weaker
+than it sounds: a reviewer shown a finished proof tends to follow its
+narrative, and models from the same family share the same blind spots. So
+coverify does three things instead.
+
+**It withholds the proof from one verifier.** The reconstructor is given the
+statement and the declared dependencies, and asked to derive the result
+independently. It is not asked to agree — it cannot see anything to agree
+with. A comparison step then maps its route against the candidate's. This is
+the only stage that can catch an error the candidate's own framing makes
+invisible.
+
+**It crosses model families.** The hostile audit runs on a different vendor's
+model from the one that wrote the candidate, so a shared failure mode has to
+survive two architectures rather than one.
+
+**It writes the rules down and enforces them in code.** The protocol coverify
+follows is a document in this repository —
+`contract/math-proof-search-launcher.md` — covering what a verifier may see,
+when a verdict may be reused, what a promotion requires. Every enforcement in
+the code maps to a clause in that document, and `docs/design.md` carries the
+table mapping them. A check fails if the two drift apart. Rules written only
+into prompts erode; these cannot.
+
+The goal is verified results per token spent, not results per hour. Efficiency
+here means not re-reading a ledger the coordinator already has, not re-paying
+for a verification stage whose inputs are byte-identical. It never means
+searching less or verifying less — verification spend counts inside the
+budget, and shipping a false theorem costs more than shipping nothing.
+
+The campaign directory is the protocol's own layout, so a Claude Code or Codex
+session can open a campaign and continue it by hand, and coverify can pick up
+where a hand-run session left off.
+
+## For developers and agents
+
+`AGENTS.md` — working on coverify. `docs/agent-operator.md` — driving coverify
+from another agent. `docs/design.md` — every enforcement mapped to the
+contract clause it comes from, plus the state diagrams and threat model.
+`docs/models.md` — per-role model routing and provider auth.
+
+```bash
+bun run check    # typecheck, contract conformance, and the enforcement tests
 ```
