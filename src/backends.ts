@@ -178,6 +178,20 @@ export function cliBackendCommand(provider: keyof typeof CLI_BACKENDS): string {
   return process.env[backend.env] ?? backend.cmd;
 }
 
+/** The same template, safe to write into a record. A built-in default is
+ *  recorded verbatim — it carries no secret and IS the reproducibility fact a
+ *  reader wants. A user override is recorded as the fact that one exists,
+ *  because these are free-form shell strings that routinely carry auth flags
+ *  and the run stamp is mirrored into the campaign's in-tree journal, which
+ *  lives in a project repo and is plausibly committed.
+ *
+ *  Redacting only knobSnapshot() left this field leaking the same values
+ *  (found while reviewing the commit that added that redaction). */
+export function cliBackendCommandForRecord(provider: keyof typeof CLI_BACKENDS): string {
+  const backend = CLI_BACKENDS[provider];
+  return process.env[backend.env] === undefined ? backend.cmd : `<set: ${backend.env}>`;
+}
+
 export function systemText(run: Pick<RoleRun, "contract" | "charge">): string {
   return `The campaign contract below governs this work. Follow it exactly.\n\n<contract>\n${run.contract}\n</contract>\n\n${run.charge}`;
 }

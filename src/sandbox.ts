@@ -25,7 +25,15 @@ export function installReaperHooks(): void {
   if (reaperHooksInstalled) return;
   reaperHooksInstalled = true;
   const reapAll = () => {
-    for (const reap of [...liveReapers]) {
+    // Drained, not iterated: process.exit() inside the signal and crash
+    // handlers fires the `exit` listener, which reaps a second time. Every
+    // reaper is idempotent by contract so that was harmless, but a
+    // double-kill on a pid that has since been reused would not be, and
+    // "harmless because everything downstream is idempotent" is a property
+    // that decays. Draining makes the second pass a no-op structurally.
+    const pending = [...liveReapers];
+    liveReapers.clear();
+    for (const reap of pending) {
       try {
         reap();
       } catch {

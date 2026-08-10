@@ -21,7 +21,7 @@ import {
   promotionsMissingFromProved,
   retractionClosure,
 } from "./gates.js";
-import { cliBackendCommand } from "./backends.js";
+import { cliBackendCommandForRecord } from "./backends.js";
 import {
   codexTransport,
   retryPolicy,
@@ -96,8 +96,8 @@ export function recordRunConfig(
     ...(patches && Object.keys(patches).length > 0 ? { patches } : {}),
     roleSpecs: Object.fromEntries(ROLE_NAMES.map((r) => [r, specKey(roleModelSpec(r))])),
     cliTemplates: {
-      "claude-cli": cliBackendCommand("claude-cli"),
-      "codex-cli": cliBackendCommand("codex-cli"),
+      "claude-cli": cliBackendCommandForRecord("claude-cli"),
+      "codex-cli": cliBackendCommandForRecord("codex-cli"),
     },
     // Every knob SET in this environment, so a campaign proves what governed
     // it. Six were previously stamped nowhere (#45); this cannot go stale,

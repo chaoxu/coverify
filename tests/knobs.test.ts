@@ -200,3 +200,24 @@ test("usage text carries the allowed values, read off the schema", () => {
   // A secret's default is never printed either.
   expect(text).not.toContain("dangerously-skip-permissions");
 });
+
+test("no run-stamp field carries a command template verbatim when it was overridden", async () => {
+  // Redacting knobSnapshot() alone was not enough: `cliTemplates` in the run
+  // stamp records the same values through a different field, and was still
+  // writing them verbatim. Found while reviewing the commit that added the
+  // redaction — the leak was half-closed and the message said closed.
+  const { cliBackendCommandForRecord, cliBackendCommand } = await import("../src/backends.ts");
+  try {
+    process.env.COVERIFY_CODEX_CMD = "codex --api-key sk-SECRET-VALUE {out}";
+    // The live command still resolves to the override — behaviour unchanged.
+    expect(cliBackendCommand("codex-cli")).toContain("sk-SECRET-VALUE");
+    // The RECORD does not.
+    expect(cliBackendCommandForRecord("codex-cli")).toBe("<set: COVERIFY_CODEX_CMD>");
+    expect(JSON.stringify(knobSnapshot())).not.toContain("sk-SECRET-VALUE");
+  } finally {
+    delete process.env.COVERIFY_CODEX_CMD;
+  }
+  // A built-in default carries no secret and IS the reproducibility fact, so
+  // it is recorded verbatim.
+  expect(cliBackendCommandForRecord("codex-cli")).toBe(cliBackendCommand("codex-cli"));
+});
