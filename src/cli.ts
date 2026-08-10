@@ -18,7 +18,6 @@ import {
   providerUsable,
   ROLE_NAMES,
   roleModelSpec,
-  specKey,
   specLabel,
 } from "./providers.js";
 import { runCampaign } from "./harness.js";
@@ -28,7 +27,7 @@ import { campaignTurns } from "./telemetry/turns.js";
 import { campaignSpend, formatSpend } from "./telemetry/spend.js";
 import { campaignOutcomes, formatOutcomes } from "./telemetry/outcomes.js";
 import { campaignLimits, formatLimits } from "./telemetry/limits.js";
-import { formatResolvedKnobs, knobUsage, resolvedKnobs, validateKnobs } from "./knobs.js";
+import { knobUsage, validateKnobs } from "./knobs.js";
 import { JournalTelemetryContext } from "./telemetry/context.js";
 
 function usage(): never {
@@ -59,15 +58,15 @@ function usage(): never {
   coverify login <provider>         subscription OAuth (anthropic = Claude Pro/Max,
                                     openai-codex = ChatGPT; credential -> ~/.config/coverify/auth.json)
   coverify logout <provider>
-  coverify config                   resolved value of every knob, with provenance (env vs default)
 
 auth: defaults need 'coverify login openai-codex' (ChatGPT subscription) plus the 'codex' and
        'claude' binaries — OpenAI GPT-5.6 Sol everywhere except the hostile auditor, which
        stays on claude-cli/opus; API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY)
        only for api-provider role overrides
 env: every knob below is generated from src/knobs.ts, so this list cannot drift from
-     the code the way a hand-written one did. \`coverify config\` shows the resolved
-     value of each and whether it came from the environment or its default.
+     the code the way a hand-written one did. Each knob's DEFAULT lives at its one
+     read site in the code; unset means that site's value governs the run, and the
+     run stamp records only the knobs you actually set.
 ${knobUsage()}`);
   process.exit(2);
 }
@@ -364,27 +363,6 @@ switch (command) {
   case "limits": {
     requireCampaign();
     console.log(formatLimits(campaignLimits(dir, flags.get("run"))));
-    break;
-  }
-  case "config": {
-    console.log(
-      formatResolvedKnobs(
-        resolvedKnobs(),
-        // Per role, defensively: resolving a role THROWS on an invalid effort
-        // (providers.ts effortOverride), and this command exists to DIAGNOSE a
-        // bad arm — it must not die on the thing it was run to find.
-        Object.fromEntries(
-          ROLE_NAMES.map((r) => {
-            try {
-              return [r, specKey(roleModelSpec(r))];
-            } catch (e) {
-              const why = e instanceof Error ? e.message.split(".")[0] : String(e);
-              return [r, `UNRESOLVED - ${why}`];
-            }
-          }),
-        ),
-      ),
-    );
     break;
   }
   case "outcomes": {

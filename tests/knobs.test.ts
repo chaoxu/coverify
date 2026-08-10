@@ -1,68 +1,55 @@
-// The env-knob registry (issue #45). Its value is that four things derive from
-// ONE table — the read, `coverify config`, the generated usage text, and the
-// run stamp — so these pin the properties that make that safe.
+// The env-knob registry (issue #45). It declares NAMES, never defaults: each
+// default lives at its one read site, and a copy here drifted (40c5e06 shipped
+// three wrong ones). What the table still buys is the two things a name list
+// can be right about — the generated usage text, and the run stamp's record of
+// what the operator actually set — plus the conformance check that no knob is
+// read without being declared. These pin the properties that make that safe.
 import { expect, test } from "bun:test";
 
-const { KNOBS, knobSnapshot, knobUsage, readKnob, resolvedKnobs, formatResolvedKnobs, validateKnobs } =
-  await import("../src/knobs.ts");
+const { KNOBS, knobSnapshot, knobUsage, validateKnobs } = await import("../src/knobs.ts");
+
+test("the registry declares no defaults, so it cannot disagree with a read site", () => {
+  // The defect this replaces: a second declaration of every default, policed by
+  // a script, which shipped three wrong values. A knob object carries a name, a
+  // shape for a PRESENT value, and prose — nothing that claims to know what the
+  // run does when the variable is unset.
+  for (const k of KNOBS) {
+    expect(Object.keys(k).sort()).toEqual(["detail", "name", "rule", ...(k.secret ? ["secret"] : [])].sort());
+  }
+});
 
 test("a present-but-invalid value hard-stops instead of falling back", () => {
-  // A declared default must not rescue a present-but-wrong value: a silently
-  // ignored effort setting makes #31's A/B compare an arm against itself.
+  // The read site's default must not rescue a present-but-wrong value: a
+  // silently ignored effort setting makes #31's A/B compare an arm against
+  // itself.
   try {
     process.env.COVERIFY_RUN_MEM_MB = "lots";
-    expect(() => readKnob("COVERIFY_RUN_MEM_MB")).toThrow(/is invalid/);
-    // Valid values still read back verbatim.
+    expect(() => validateKnobs()).toThrow(/COVERIFY_RUN_MEM_MB/);
     process.env.COVERIFY_RUN_MEM_MB = "8192";
-    expect(readKnob("COVERIFY_RUN_MEM_MB")).toBe("8192");
+    expect(() => validateKnobs()).not.toThrow();
   } finally {
     delete process.env.COVERIFY_RUN_MEM_MB;
   }
-  // Unset falls back to the declared default.
-  expect(readKnob("COVERIFY_RUN_MEM_MB")).toBe("4096");
 });
 
-test("reads are live, not parsed once and frozen", () => {
-  // Reads are live: the surveyed config libraries all parse once and freeze,
-  // which this codebase and its tests depend on not happening.
+test("reads are live, not parsed once and frozen", async () => {
+  // The surveyed config libraries all parse once and freeze, which this
+  // codebase and its tests depend on not happening: every read site consults
+  // process.env on each call, so a mid-campaign change takes effect.
+  const { runMemMb } = await import("../src/sandbox.ts");
   try {
-    process.env.COVERIFY_RETRY_MAX = "0";
-    expect(readKnob("COVERIFY_RETRY_MAX")).toBe("0");
-    process.env.COVERIFY_RETRY_MAX = "9";
-    expect(readKnob("COVERIFY_RETRY_MAX")).toBe("9");
+    process.env.COVERIFY_RUN_MEM_MB = "8192";
+    expect(runMemMb()).toBe(8192);
+    process.env.COVERIFY_RUN_MEM_MB = "2048";
+    expect(runMemMb()).toBe(2048);
   } finally {
-    delete process.env.COVERIFY_RETRY_MAX;
-  }
-});
-
-test("an undeclared knob is a programming error, not a silent undefined", () => {
-  expect(() => readKnob("COVERIFY_NOT_A_KNOB")).toThrow(/unknown knob/);
-});
-
-test("provenance distinguishes env from default from unset", () => {
-  // The point of `coverify config`: confirm an A/B arm is what you think it is
-  // BEFORE spending quota, rather than discovering it in the journal after.
-  try {
-    process.env.COVERIFY_EFFORT_REASONER = "xhigh";
-    const rows = resolvedKnobs();
-    const effort = rows.find((r) => r.name === "COVERIFY_EFFORT_REASONER");
-    expect(effort).toMatchObject({ source: "env", value: "xhigh" });
-    // Declared fallback, nothing set.
-    expect(rows.find((r) => r.name === "COVERIFY_RUN_MEM_MB")).toMatchObject({
-      source: "default",
-      value: "4096",
-    });
-    // No value and no declared default — the effective one is computed
-    // elsewhere (ROLE_DEFAULTS), which the report says rather than implying 0.
-    expect(rows.find((r) => r.name === "COVERIFY_MODEL_REASONER")?.source).toBe("unset");
-  } finally {
-    delete process.env.COVERIFY_EFFORT_REASONER;
+    delete process.env.COVERIFY_RUN_MEM_MB;
   }
 });
 
 test("the run stamp records only what was SET", () => {
-  // 31 rows of "unset" on every campaign would bury the signal; what a run
-  // must prove is what governed IT.
+  // 37 rows of "unset" on every campaign would bury the signal; what a run must
+  // prove is what governed IT.
   //
   // Asserted as a DELTA, not against an empty object: other tests in this
   // suite set COVERIFY_STATE_DIR and COVERIFY_LITERATURE_CMD and never unset
@@ -80,34 +67,31 @@ test("the run stamp records only what was SET", () => {
   expect(knobSnapshot()).toEqual(before);
 });
 
+test("a per-role effort knob is stamped, though nothing reads it by literal name", () => {
+  // providers.ts reads these through a computed key
+  // (`COVERIFY_EFFORT_${ROLE}`), so no static check sees the read. Dropping the
+  // declaration would not disable the knob — it would leave it working and
+  // unrecorded, which is the one failure the run stamp exists to prevent.
+  try {
+    process.env.COVERIFY_EFFORT_REASONER = "xhigh";
+    expect(knobSnapshot().COVERIFY_EFFORT_REASONER).toBe("xhigh");
+  } finally {
+    delete process.env.COVERIFY_EFFORT_REASONER;
+  }
+});
+
 test("usage text is generated from the table, so it cannot drift", () => {
   // The defect this replaces: a hand-written list naming 5 of 31 knobs.
   const text = knobUsage();
   for (const k of KNOBS) expect(text).toContain(k.name);
 });
 
-test("the config report names the effective role routing, not just the variables", () => {
-  // A model knob is "unset" as a VARIABLE while the run still has a model —
-  // rendering only the variable would be true and useless.
-  const text = formatResolvedKnobs(resolvedKnobs(), { reasoner: "openai-codex/gpt-5.6-sol@max" });
-  expect(text).toContain("Effective role routing");
-  expect(text).toContain("openai-codex/gpt-5.6-sol@max");
-});
-
-test("declared defaults match the real read sites", async () => {
-  // `coverify config` is the A/B pre-flight, so a wrong displayed default is
-  // read as ground truth. Three shipped wrong once, including a transport
-  // value that is not a member of pi's Transport union.
-  const { retryPolicy, codexTransport } = await import("../src/providers.ts");
-  const { runTimeoutMs, runMemMb } = await import("../src/sandbox.ts");
-  const declared = (n: string) => KNOBS.find((k) => k.name === n)?.fallback;
-
-  const retry = retryPolicy();
-  expect(declared("COVERIFY_RETRY_MAX")).toBe(String(retry.maxRetries));
-  expect(declared("COVERIFY_RETRY_BASE_MS")).toBe(String(retry.baseDelayMs));
-  expect(declared("COVERIFY_CODEX_TRANSPORT")).toBe(codexTransport());
-  expect(declared("COVERIFY_RUN_TIMEOUT_MS")).toBe(String(runTimeoutMs()));
-  expect(declared("COVERIFY_RUN_MEM_MB")).toBe(String(runMemMb()));
+test("usage text carries the allowed values, read off the rule", () => {
+  // The hand-written block spelled the effort ladder by hand; losing it in the
+  // generated version would be a regression the registry caused.
+  const text = knobUsage();
+  expect(text).toContain("off|minimal|low|medium|high|xhigh|max");
+  expect(text).toContain("sse|websocket|websocket-cached|auto");
 });
 
 test("a transport outside pi's union is rejected, not blind-cast", () => {
@@ -142,9 +126,8 @@ test("validateKnobs reports EVERY bad knob, not just the first", () => {
 });
 
 test("a lenient coercion does not bless a value the real readers turn into NaN", () => {
-  // typebox's Convert is generous: "true", "0x10" and "1e3" all satisfy
-  // Integer. Accepting them would hand the real readers strings that Number()
-  // maps to NaN or to a silently different value.
+  // "true", "0x10", "1e3" and "3.7" all reach a reader that Number()s them into
+  // NaN or into a silently different value. An integer knob takes digits only.
   for (const bad of ["true", "0x10", "1e3", "3.7"]) {
     try {
       process.env.COVERIFY_RETRY_MAX = bad;
@@ -153,18 +136,13 @@ test("a lenient coercion does not bless a value the real readers turn into NaN",
       delete process.env.COVERIFY_RETRY_MAX;
     }
   }
-});
-
-test("the pre-flight SHOWS an invalid value instead of reporting it healthy", () => {
-  // `coverify config` exists to confirm an arm before spending quota. Marking
-  // a typo'd knob as a healthy `env` value is the one thing it must not do.
+  // Zero is meaningful on this knob — it disables retries — and must not be
+  // swept up by a "falsy is missing" guard.
   try {
-    process.env.COVERIFY_EFFORT_REASONER = "maxx";
-    const row = resolvedKnobs().find((r) => r.name === "COVERIFY_EFFORT_REASONER");
-    expect(row?.source).toBe("env");
-    expect(row?.invalid).toContain("expected one of");
+    process.env.COVERIFY_RETRY_MAX = "0";
+    expect(() => validateKnobs()).not.toThrow();
   } finally {
-    delete process.env.COVERIFY_EFFORT_REASONER;
+    delete process.env.COVERIFY_RETRY_MAX;
   }
 });
 
@@ -180,20 +158,6 @@ test("a command template is stamped as set, never verbatim", () => {
   } finally {
     delete process.env.COVERIFY_CHATGPT_CMD;
   }
-});
-
-test("usage text carries the allowed values, read off the schema", () => {
-  // The hand-written block spelled the effort ladder by hand; losing it in the
-  // generated version would be a regression the registry caused.
-  const text = knobUsage();
-  expect(text).toContain("off|minimal|low|medium|high|xhigh|max");
-  expect(text).toContain("sse|websocket|websocket-cached|auto");
-  // A SHIPPED DEFAULT is printed, even on a knob marked secret: it carries no
-  // secret and it is the fact this help exists to convey. Redacting it
-  // rendered the incoherent "(default: <set>)" and hid the built-in librarian
-  // command from the only place it was documented. Only an ENV-supplied value
-  // can be a secret, and that redaction is asserted separately.
-  expect(text).toContain("dangerously-skip-permissions");
 });
 
 test("no run-stamp field carries a command template verbatim when it was overridden", async () => {
@@ -218,9 +182,10 @@ test("no run-stamp field carries a command template verbatim when it was overrid
 });
 
 test("a free-form string knob accepts surrounding whitespace", () => {
-  // The numeric re-serialization guard must not touch strings: for a plain
-  // string Convert is the identity, so it could only ever reject — and did,
-  // on any template with a trailing newline, refusing to start the campaign.
+  // The numeric digits-only guard must not touch strings: a command template
+  // pasted from a heredoc carries a trailing newline, and validateKnobs is the
+  // first statement of prove(), so rejecting it would refuse to start the
+  // campaign.
   try {
     process.env.COVERIFY_CLAUDE_CMD = " claude -p \n";
     expect(() => validateKnobs()).not.toThrow();
@@ -233,9 +198,9 @@ test("a free-form string knob accepts surrounding whitespace", () => {
 });
 
 test("no error message is ever empty about why", () => {
-  // The whitespace bug produced "is invalid." with no reason, because a valid
-  // string yields no Value.Errors and the knob has no choices. An operator
-  // cannot act on that.
+  // A previous whitespace bug produced "is invalid." with no reason, because a
+  // valid string yielded no schema errors and the knob had no choices. An
+  // operator cannot act on that.
   for (const [name, bad] of [
     ["COVERIFY_RETRY_MAX", "true"],
     ["COVERIFY_EFFORT", "maximum"],
@@ -256,18 +221,5 @@ test("no error message is ever empty about why", () => {
     } finally {
       delete process.env[name];
     }
-  }
-});
-
-test("an env-supplied secret is redacted where a shipped default is not", () => {
-  const plain = formatResolvedKnobs(resolvedKnobs());
-  expect(plain).toContain("dangerously-skip-permissions"); // the built-in
-  try {
-    process.env.COVERIFY_LITERATURE_CMD = "librarian --api-key sk-SECRET";
-    const set = formatResolvedKnobs(resolvedKnobs());
-    expect(set).not.toContain("sk-SECRET");
-    expect(set).toContain("<set>");
-  } finally {
-    delete process.env.COVERIFY_LITERATURE_CMD;
   }
 });

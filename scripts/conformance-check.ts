@@ -123,11 +123,12 @@ if (hidden.length > 0) {
   process.exit(1);
 }
 
-// Knob registry vs reality (#45). The registry is only worth having if it is
-// COMPLETE: its value is that the usage text, the run stamp and `coverify
-// config` all derive from one table, and a knob missing from the table is
-// silently missing from all three. The old hand-written list named 5 of 31,
-// which is exactly how that fails.
+// Knob registry vs reality (#45). The registry declares NAMES, not defaults —
+// each default lives at its one read site — and it is only worth having if that
+// name list is COMPLETE: the usage text and the run stamp both derive from it,
+// so a knob read but not declared is silently absent from both, and a campaign
+// cannot prove it was set. The old hand-written list named 5 of 31, which is
+// exactly how that fails.
 const declared = new Set(KNOBS.map((k) => k.name));
 const seen = new Set<string>();
 for (const root of ["src", "scripts", "bin"]) {
@@ -169,8 +170,9 @@ if (undeclared.length > 0) {
   console.error("UNDECLARED KNOB — read in src/ but missing from src/knobs.ts:");
   for (const n of undeclared) console.error(`  ${n}`);
   console.error(
-    "Add it to KNOBS. Undeclared means absent from `coverify config`, from the generated\n" +
-      "usage text, and from the run stamp — so a campaign cannot prove it was set.",
+    "Add it to KNOBS (the name, not its default — that stays at the read site). Undeclared\n" +
+      "means absent from the generated usage text and from the run stamp, so a campaign\n" +
+      "cannot prove it was set.",
   );
   process.exit(1);
 }
