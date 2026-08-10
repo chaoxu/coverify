@@ -1,11 +1,15 @@
 // Every environment knob, declared once (issue #45).
 //
-// The problem was never the count — 31 knobs against 6 CLI flags is a lot but
-// not wrong. It was that the truth lived in three hand-synced places: the read
-// site in code, the usage string in cli.ts, and the run stamp in observe.ts.
-// The usage string named 5 of 31, and six knobs were stamped nowhere, so a
+// The problem was never the count — this many knobs against 6 CLI flags is a
+// lot, but not wrong. It was that the truth lived in three hand-synced places:
+// the read site in code, the usage string in cli.ts, and the run stamp in
+// observe.ts. The usage string named 5 of them, six were stamped nowhere, so a
 // campaign could not prove what governed it. That is the same drift pattern as
 // issue #43, one layer up.
+//
+// Counts are deliberately not written down here. The first version of this
+// file said "31" in three places while declaring 37, inside the module whose
+// whole thesis is that a number kept by hand goes stale.
 //
 // Deliberately NOT a config file. Coverify just spent issue #44 removing an
 // ambient input that made runs unreproducible; a config file adds a new one —
@@ -33,6 +37,12 @@ export interface Knob {
   detail: string;
   /** Which module reads it — so a reader can go straight to the enforcement. */
   module: string;
+  /** A free-form shell command template, which routinely carries auth flags
+   *  (`--api-key sk-…`). The run stamp is mirrored into the campaign's in-tree
+   *  journal, which lives in a project repo and is plausibly committed, so
+   *  these are stamped as `<set>` rather than verbatim. Standing rule: never
+   *  put a secret value in code, logs, or issues. */
+  secret?: true;
 }
 
 const str = Type.String();
@@ -90,20 +100,21 @@ export const KNOBS: readonly Knob[] = [
 
   // Backend transports. Templates, not resolved argv: {model} and {out} are
   // substituted per call.
-  { name: "COVERIFY_CLAUDE_CMD", schema: str, detail: "claude-cli command template", module: "backends.ts" },
-  { name: "COVERIFY_CODEX_CMD", schema: str, detail: "codex-cli command template ({out})", module: "backends.ts" },
-  { name: "COVERIFY_CHATGPT_CMD", schema: str, detail: "chatgpt-cli oracle command template", module: "backends.ts" },
-  { name: "COVERIFY_AGY_CMD", schema: str, detail: "agy oracle command template ({repo}, {model})", module: "backends.ts" },
+  { name: "COVERIFY_CLAUDE_CMD", secret: true, schema: str, detail: "claude-cli command template", module: "backends.ts" },
+  { name: "COVERIFY_CODEX_CMD", secret: true, schema: str, detail: "codex-cli command template ({out})", module: "backends.ts" },
+  { name: "COVERIFY_CHATGPT_CMD", secret: true, schema: str, detail: "chatgpt-cli oracle command template", module: "backends.ts" },
+  { name: "COVERIFY_AGY_CMD", secret: true, schema: str, detail: "agy oracle command template ({repo}, {model})", module: "backends.ts" },
   {
     name: "COVERIFY_CODEX_TRANSPORT",
-    schema: str,
-    fallback: "responses",
+    schema: Type.Union(["sse", "websocket", "websocket-cached", "auto"].map((l) => Type.Literal(l))),
+    fallback: "auto",
     detail: "openai-codex wire transport",
     module: "providers.ts",
   },
   {
     name: "COVERIFY_LITERATURE_CMD",
     schema: str,
+    secret: true,
     fallback: "agy --dangerously-skip-permissions --print-timeout 168h -p",
     detail: "librarian CLI (external agent with live web search)",
     module: "workspace.ts",
@@ -119,8 +130,8 @@ export const KNOBS: readonly Knob[] = [
   // these bound resources, never proof work.
   { name: "COVERIFY_RUN_TIMEOUT_MS", schema: posInt, fallback: "600000", detail: "run_script batch wall limit", module: "sandbox.ts" },
   { name: "COVERIFY_RUN_MEM_MB", schema: posInt, fallback: "4096", detail: "run_script batch combined RSS cap", module: "sandbox.ts" },
-  { name: "COVERIFY_RETRY_MAX", schema: nonNegInt, fallback: "5", detail: "provider retry attempts; 0 disables", module: "providers.ts" },
-  { name: "COVERIFY_RETRY_BASE_MS", schema: posInt, fallback: "1000", detail: "provider retry backoff base", module: "providers.ts" },
+  { name: "COVERIFY_RETRY_MAX", schema: nonNegInt, fallback: "3", detail: "provider retry attempts; 0 disables", module: "providers.ts" },
+  { name: "COVERIFY_RETRY_BASE_MS", schema: posInt, fallback: "2000", detail: "provider retry backoff base", module: "providers.ts" },
   {
     name: "COVERIFY_COORDINATOR_CONTEXT_TOKENS",
     schema: posInt,
@@ -179,16 +190,59 @@ export function readKnob(name: string): string | undefined {
   if (!knob) throw new Error(`unknown knob ${name} — declare it in src/knobs.ts`);
   const raw = process.env[name];
   if (raw === undefined || raw === "") return knob.fallback;
-  if (!Value.Check(knob.schema, Value.Convert(knob.schema, raw))) {
-    const why = [...Value.Errors(knob.schema, Value.Convert(knob.schema, raw))]
-      .map((e) => e.message)
-      .join("; ");
-    throw new Error(
-      `${name}="${raw}" is invalid (${why || "does not match its declared shape"}). ` +
-        "Refusing to fall back to the default: a silently ignored setting is worse than a stop.",
-    );
-  }
+  const why = knobError(knob, raw);
+  if (why !== undefined) throw new Error(why);
   return raw;
+}
+
+/** Why this raw value is invalid for this knob, or undefined if it is fine.
+ *
+ *  Validates the CONVERTED value but reports the RAW one, because the raw
+ *  string is what the operator typed and what every real reader will see —
+ *  typebox's Convert is lenient enough that "true", "0x10" and "1e3" all
+ *  satisfy Integer, so a check that returned the converted value would bless
+ *  strings the actual readers then turn into NaN. */
+/** The literal values a union-schema knob accepts, read off the schema rather
+ *  than spelled in prose — the hand-written usage block used to list the
+ *  effort ladder by hand, which is precisely the drift this registry ends. */
+function knobChoices(knob: Knob): string[] | undefined {
+  const anyOf = (knob.schema as { anyOf?: { const?: string }[] }).anyOf;
+  const consts = anyOf?.map((s) => s.const).filter((c): c is string => c !== undefined);
+  return consts !== undefined && consts.length > 0 ? consts : undefined;
+}
+
+function knobError(knob: Knob, raw: string): string | undefined {
+  const converted = Value.Convert(knob.schema, raw);
+  if (Value.Check(knob.schema, converted) && String(converted) === raw.trim()) return undefined;
+  const detail = [...Value.Errors(knob.schema, converted)].map((e) => e.message).join("; ");
+  const choices = knobChoices(knob);
+  return (
+    `${knob.name}="${raw}" is invalid` +
+    (choices?.length ? ` (expected one of: ${choices.join(", ")})` : detail ? ` (${detail})` : "") +
+    ". Refusing to fall back to the default: a silently ignored setting is worse than a stop."
+  );
+}
+
+/**
+ * Validate every knob set in this environment, and throw listing ALL the bad
+ * ones. Called once at campaign start.
+ *
+ * This is where the "never silently falls back" property is actually
+ * enforced. The individual readers stay lenient on purpose — `runTimeoutMs()`
+ * is called while a tool is executing, and throwing there would kill a live
+ * campaign over a telemetry-shaped setting — so the check runs up front,
+ * before any spend, where a bad value costs nothing to reject. Without it the
+ * registry documents a guarantee nothing provides: `COVERIFY_RETRY_MAX=abc`
+ * silently became 3, and `COVERIFY_COORDINATOR_CONTEXT_TOKENS=abc` became
+ * NaN, which made `approxTokens() > NaN` false forever so compaction never
+ * fired and the coordinator's context grew unbounded.
+ */
+export function validateKnobs(): void {
+  const bad = KNOBS.map((k) => {
+    const raw = process.env[k.name];
+    return raw === undefined || raw === "" ? undefined : knobError(k, raw);
+  }).filter((e): e is string => e !== undefined);
+  if (bad.length > 0) throw new Error(bad.join("\n"));
 }
 
 export interface ResolvedKnob {
@@ -199,28 +253,44 @@ export interface ResolvedKnob {
   source: "env" | "default" | "unset";
   detail: string;
   module: string;
+  /** Set when the environment holds a value this knob's schema rejects. The
+   *  pre-flight has to SHOW this: a command whose stated purpose is "confirm
+   *  the arm before spending quota" would otherwise render a typo'd arm as a
+   *  healthy `env`-sourced value. */
+  invalid?: string;
 }
 
 export function resolvedKnobs(): ResolvedKnob[] {
   return KNOBS.map((k) => {
-    const set = process.env[k.name] !== undefined && process.env[k.name] !== "";
+    const raw = process.env[k.name];
+    const set = raw !== undefined && raw !== "";
+    const invalid = set ? knobError(k, raw) : undefined;
     return {
       name: k.name,
-      value: set ? process.env[k.name] : k.fallback,
+      value: set ? raw : k.fallback,
       source: set ? "env" : k.fallback !== undefined ? "default" : "unset",
       detail: k.detail,
       module: k.module,
+      ...(invalid !== undefined ? { invalid } : {}),
     };
   });
 }
 
 /** The run stamp's view: only what was actually SET, so the record says what
- *  governed this run without 31 rows of "unset" on every campaign. */
+ *  governed this run without a row of "unset" for every knob that was not.
+ *
+ *  Command templates are stamped as `<set>`. They are free-form shell strings
+ *  that routinely carry auth flags, and this record is mirrored into the
+ *  campaign's in-tree journal — a file inside a project repo that is
+ *  plausibly committed. Recording THAT a template was overridden is the part
+ *  that matters for reproducing a run; recording the flag that authenticated
+ *  it is a leak. */
 export function knobSnapshot(): Record<string, string> {
   return Object.fromEntries(
-    resolvedKnobs()
-      .filter((r) => r.source === "env")
-      .map((r) => [r.name, r.value as string]),
+    KNOBS.filter((k) => {
+      const raw = process.env[k.name];
+      return raw !== undefined && raw !== "";
+    }).map((k) => [k.name, k.secret ? "<set>" : (process.env[k.name] as string)]),
   );
 }
 
@@ -228,7 +298,15 @@ export function knobSnapshot(): Record<string, string> {
  *  table the way the hand-written list did. */
 export function knobUsage(): string {
   const w = Math.max(...KNOBS.map((k) => k.name.length));
-  return KNOBS.map((k) => `  ${k.name.padEnd(w)}  ${k.detail}`).join("\n");
+  return KNOBS.map((k) => {
+    const choices = knobChoices(k);
+    const suffix = choices
+      ? ` (${choices.join("|")})`
+      : k.fallback !== undefined
+        ? ` (default: ${k.secret ? "<set>" : k.fallback})`
+        : "";
+    return `  ${k.name.padEnd(w)}  ${k.detail}${suffix}`;
+  }).join("\n");
 }
 
 /**
@@ -259,7 +337,8 @@ export function formatResolvedKnobs(
   out.push("");
   const w = Math.max(...rows.map((r) => r.name.length));
   for (const r of rows) {
-    out.push(`  ${r.source.padEnd(7)} ${r.name.padEnd(w)}  ${r.value ?? "—"}`);
+    const shown = r.value === undefined ? "—" : KNOBS.find((k) => k.name === r.name)?.secret ? "<set>" : r.value;
+    out.push(`  ${(r.invalid ? "INVALID" : r.source).padEnd(7)} ${r.name.padEnd(w)}  ${shown}`);
   }
   out.push("");
   out.push(

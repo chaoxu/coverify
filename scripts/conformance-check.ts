@@ -108,17 +108,51 @@ if (hidden.length > 0) {
 // which is exactly how that fails.
 const declared = new Set(KNOBS.map((k) => k.name));
 const seen = new Set<string>();
-for (const dir of ["src", "src/view"]) {
-  for (const f of fs.readdirSync(path.join(repoRoot(), dir))) {
-    if (!f.endsWith(".ts") || f === "knobs.ts") continue;
-    const text = fs.readFileSync(path.join(repoRoot(), dir, f), "utf-8");
-    // Only genuine reads and backend-table declarations, not prose mentions in
-    // comments or error strings.
-    for (const m of text.matchAll(/process\.env\.(COVERIFY_[A-Z_]+)|env:\s*"(COVERIFY_[A-Z_]+)"/g)) {
-      seen.add(m[1] ?? m[2]);
+/** Every .ts under a root, recursively — a `src/anything/` subdirectory added
+ *  later must not become invisible to this check. */
+const tsFiles = (root: string): string[] => {
+  const out: string[] = [];
+  const walk = (d: string) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith(".ts")) out.push(p);
+    }
+  };
+  if (fs.existsSync(root)) walk(root);
+  return out;
+};
+for (const root of ["src", "scripts", "bin"]) {
+  for (const p of tsFiles(path.join(repoRoot(), root))) {
+    if (path.basename(p) === "knobs.ts") continue;
+    const text = fs.readFileSync(p, "utf-8");
+    // Every read FORM, not just the dot one. The first version matched only
+    // `process.env.NAME`, and the codebase's own idiomatic reads are bracket
+    // forms — providers.ts reads `process.env[`COVERIFY_EFFORT_${...}`]` and
+    // `process.env[env]` — so the check was vacuously green over the very
+    // sites it exists to police. Digits are allowed in names too.
+    for (const m of text.matchAll(
+      /process\.env\.(COVERIFY_[A-Z0-9_]+)|process\.env\[\s*"(COVERIFY_[A-Z0-9_]+)"|env:\s*"(COVERIFY_[A-Z0-9_]+)"|\{\s*(COVERIFY_[A-Z0-9_]+)[^}]*\}\s*=\s*process\.env/g,
+    )) {
+      seen.add(m[1] ?? m[2] ?? m[3] ?? m[4]);
     }
   }
 }
+// Honest limit: a read through a computed key — `process.env[someVariable]` —
+// cannot be resolved by static matching. providers.ts uses that form legitimately
+// (envSpec(env), and the COVERIFY_EFFORT_${ROLE} template), and those knobs are
+// declared, but a NEW dynamic read could introduce an undeclared one invisibly.
+// Counting the sites keeps the blind spot in view instead of implying coverage
+// the check does not have.
+let dynamicReads = 0;
+for (const root of ["src", "scripts", "bin"]) {
+  for (const p of tsFiles(path.join(repoRoot(), root))) {
+    if (path.basename(p) === "knobs.ts") continue;
+    const text = fs.readFileSync(p, "utf-8");
+    dynamicReads += [...text.matchAll(/process\.env\[\s*(?!")/g)].length;
+  }
+}
+
 const undeclared = [...seen].filter((n) => !declared.has(n));
 if (undeclared.length > 0) {
   console.error("UNDECLARED KNOB — read in src/ but missing from src/knobs.ts:");
@@ -146,5 +180,6 @@ if (missingRoles.length > 0) {
 
 console.log(
   `conformance ok: ${REQUIRED.length} launcher tokens present; view/ layer boundary intact; ` +
-    `no hidden home-path dependency; ${KNOBS.length} knobs declared, none undeclared`,
+    `no hidden home-path dependency; ${KNOBS.length} knobs declared, none undeclared ` +
+    `(${dynamicReads} computed-key read site(s) cannot be checked statically)`,
 );

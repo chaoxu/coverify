@@ -125,6 +125,15 @@ export function viewsOf<K extends keyof ViewByKind>(
  */
 /** The out-of-tree state root — one authority, shared with dev tooling
  *  (scripts/smoke.ts) so cleanup never guesses at this path. */
+/** Values that ENABLE journal-mirror adoption. Previously this was a bare
+ *  truthiness test, so `COVERIFY_ADOPT=0` and `COVERIFY_ADOPT=false` both
+ *  turned it ON — the opposite of what an operator typing them means, on the
+ *  one knob that crosses coverify's trust boundary (it rebuilds gate history
+ *  from the lower-trust in-tree mirror). Matches the schema declared in
+ *  knobs.ts; a value outside this set is rejected at startup by validateKnobs,
+ *  so an unrecognised spelling stops the run instead of silently enabling. */
+const ADOPT_ENABLED = new Set(["1", "true", "yes"]);
+
 export function stateRootDir(): string {
   return process.env.COVERIFY_STATE_DIR ?? path.join(os.homedir(), ".local/state/coverify");
 }
@@ -209,7 +218,7 @@ export class GateStore {
     const journalPath = path.join(this.campaignDir, ".coverify", "journal.jsonl");
     let recoveredFromMirror = 0;
     if (!fs.existsSync(this.file) && fs.existsSync(journalPath)) {
-      if (!process.env.COVERIFY_ADOPT) {
+      if (!ADOPT_ENABLED.has((process.env.COVERIFY_ADOPT ?? "").toLowerCase())) {
         throw new Error(
           `campaign at ${this.campaignDir} has ledgers but no gate history at ${dir}. Its verification ` +
             "records, statement freeze and FAIL history are not where its id points. Restore the state " +

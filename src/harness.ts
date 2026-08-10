@@ -33,7 +33,7 @@ import {
   type RoleSession,
   type RoleUsage,
 } from "./providers.js";
-import { type WriteScope } from "./sandbox.js";
+import { envNumber, type WriteScope } from "./sandbox.js";
 
 export interface CampaignOptions {
   campaignDir: string;
@@ -94,7 +94,11 @@ const TURN_FAILURE_LIMIT = 5;
  *  via the restart rule remains the fallback when compaction is unavailable
  *  or fails. Mechanics: the cap changes cost, not semantics, because
  *  every decision must be externalized to the ledgers regardless. */
-const COORDINATOR_CONTEXT_TOKENS = Number(process.env.COVERIFY_COORDINATOR_CONTEXT_TOKENS ?? 300_000);
+// Guarded, not bare Number(): a typo made this NaN, and `approxTokens() > NaN`
+// is false forever — so in-place compaction never fired and the coordinator
+// context grew unbounded. validateKnobs() rejects a bad value at startup; this
+// keeps the failure impossible rather than merely reported.
+const COORDINATOR_CONTEXT_TOKENS = envNumber(process.env.COVERIFY_COORDINATOR_CONTEXT_TOKENS, 300_000, 1);
 
 /**
  * The harness event loop — the only persistent process. Completions wake the
@@ -624,7 +628,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
   // campaign grew 29–55k tokens per wake, ~90% of it the coordinator's own
   // reads and output, invisible to the coordinator itself. Telemetry plus a
   // note — never a refusal.
-  const GROWTH_NOTE_TOKENS = Number(process.env.COVERIFY_WAKE_GROWTH_NOTE_TOKENS ?? 40_000);
+  const GROWTH_NOTE_TOKENS = envNumber(process.env.COVERIFY_WAKE_GROWTH_NOTE_TOKENS, 40_000, 1);
   let prevContextTokens: number | undefined;
   let growthNote = "";
   while (true) {

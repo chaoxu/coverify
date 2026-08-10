@@ -27,7 +27,7 @@ import { campaignSpend, formatSpend } from "./view/spend.js";
 import { campaignOutcomes, formatOutcomes } from "./view/outcomes.js";
 import { corpusChecks, formatCorpusChecks } from "./view/corpus.js";
 import { campaignLimits, formatLimits } from "./view/limits.js";
-import { formatResolvedKnobs, knobUsage, resolvedKnobs } from "./knobs.js";
+import { formatResolvedKnobs, knobUsage, resolvedKnobs, validateKnobs } from "./knobs.js";
 
 function usage(): never {
   console.error(`usage:
@@ -144,6 +144,17 @@ function requireCampaign(): void {
 }
 
 async function prove(resume: boolean): Promise<void> {
+  // Before anything is spent. The per-call readers stay lenient on purpose —
+  // runTimeoutMs() runs while a tool is executing and a throw there would kill
+  // a live campaign — so the hard-fail happens here, where a bad value costs
+  // nothing to reject. Without this the registry documented a guarantee
+  // nothing provided.
+  try {
+    validateKnobs();
+  } catch (e) {
+    console.error(String(e instanceof Error ? e.message : e));
+    process.exit(2);
+  }
   // Auth preflight: a provider is usable via an env API key or a stored
   // OAuth subscription credential (coverify login <provider>).
   const models = await buildModels();
@@ -349,7 +360,20 @@ switch (command) {
     console.log(
       formatResolvedKnobs(
         resolvedKnobs(),
-        Object.fromEntries(ROLE_NAMES.map((r) => [r, specKey(roleModelSpec(r))])),
+        // Per role, defensively: resolving a role THROWS on an invalid effort
+        // (providers.ts effortOverride), and this command exists to DIAGNOSE a
+        // bad arm. Dying on the very thing it was run to find would be the
+        // worst possible behaviour for a pre-flight.
+        Object.fromEntries(
+          ROLE_NAMES.map((r) => {
+            try {
+              return [r, specKey(roleModelSpec(r))];
+            } catch (e) {
+              const why = e instanceof Error ? e.message.split(".")[0] : String(e);
+              return [r, `UNRESOLVED - ${why}`];
+            }
+          }),
+        ),
       ),
     );
     break;
