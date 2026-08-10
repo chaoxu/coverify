@@ -253,7 +253,9 @@ export function formatSpend(s: CampaignSpend): string {
   out.push("by lane — lanes bill to different provider accounts, so they are never summed.");
   out.push("`fresh in` is the uncached part EXCEPT on rows marked (nested?), where the");
   out.push("pre-2026-08-09 record may fold cached tokens into it. Those are not comparable.");
-  out.push(`  ${"lane".padEnd(W)}${"calls".padStart(7)}${"fresh in".padStart(10)}${"cached in".padStart(11)}${"output".padStart(9)}${"reasoning".padStart(11)}${"cache wr".padStart(10)}`);
+  out.push(
+    `  ${"lane".padEnd(W)}${"calls".padStart(7)}${"fresh in".padStart(10)}${"cached in".padStart(11)}${"output".padStart(9)}${"reasoning".padStart(11)}${"cache wr".padStart(10)}`,
+  );
   for (const l of s.byLane) {
     out.push(
       `  ${lane(l.meter)}${String(l.calls).padStart(7)}${M(l.input).padStart(10)}` +
@@ -263,10 +265,38 @@ export function formatSpend(s: CampaignSpend): string {
   out.push("");
   out.push("by role");
   for (const r of s.byRole) {
+    // reasoning was accumulated per role and never rendered, which made the
+    // per-role table quietly less informative than the per-lane one it sits
+    // under — and reasoning share is the quantity most of the cost questions
+    // in docs/measurement-protocol.md turn on.
     out.push(
       `  ${r.role.padEnd(16)}${lane(r.meter)}${String(r.calls).padStart(6)}` +
-        `${M(r.input).padStart(10)}${M(r.cacheRead).padStart(11)}${M(r.output).padStart(9)}`,
+        `${M(r.input).padStart(10)}${M(r.cacheRead).padStart(11)}${M(r.output).padStart(9)}${opt(r.reasoning).padStart(11)}`,
     );
+  }
+
+  // Floors, named rather than left for the reader to infer from an em dash.
+  // A row whose lane never reports a field is a LOWER BOUND on that column,
+  // and rule 10 forbids presenting a gap as a measurement.
+  const noReasoning = s.byLane.filter((l) => l.reasoning === undefined).map((l) => String(l.meter));
+  const noCacheWrite = s.byLane.filter((l) => l.cacheWrite === undefined).map((l) => String(l.meter));
+  if (noReasoning.length > 0 || noCacheWrite.length > 0) {
+    out.push("");
+    out.push("floors — these rows are LOWER BOUNDS, not measurements:");
+    if (noReasoning.length > 0) {
+      out.push(`  reasoning unreported by: ${noReasoning.join(", ")}`);
+      out.push("    (the claude-cli result JSON carries no thinking-token field at all)");
+    }
+    if (noCacheWrite.length > 0) {
+      out.push(`  cacheWrite unreported by: ${noCacheWrite.join(", ")}`);
+      // The bracket is empirical, from the one lane that DOES report both, and
+      // it is an interval rather than an estimate on purpose: a point estimate
+      // here would be indistinguishable from a measurement in three months.
+      out.push("    Cache writes are real spend billed at 1.25x input on the API lane and are");
+      out.push("    absent upstream on the codex lanes (codex #32479, pi #6469). The audit lane,");
+      out.push("    which reports both, measured write/read between 0.25 and 2.5 — so bound an");
+      out.push("    unreported row by 0.25-2.5x its cached-in column rather than treating it as 0.");
+    }
   }
   if (s.excluded.length > 0) {
     out.push("");
@@ -277,6 +307,18 @@ export function formatSpend(s: CampaignSpend): string {
     out.push("");
     out.push("UNMETERED — real spend nobody can count, not spend that was zero:");
     for (const u of s.unmetered) out.push(`  ${String(u.calls).padStart(5)}  ${u.lane}`);
+  }
+  // Rule 1's diagnostic, reported rather than only used internally to label
+  // unstamped lanes. `cacheRead > input` is arithmetically impossible when
+  // input INCLUDES cached, so a role showing it is disjoint-convention — the
+  // test that located the 30% overstatement in the 2026-08-09 study, and the
+  // one to run first when a lane's numbers look wrong.
+  const disjoint = s.byRole.filter((r) => r.cacheRead > r.input);
+  if (disjoint.length > 0) {
+    out.push("");
+    out.push("convention diagnostic (rule 1): roles where cached in > fresh in, which is");
+    out.push("impossible unless `input` EXCLUDES cached — i.e. the disjoint convention:");
+    for (const r of disjoint) out.push(`  ${r.role.padEnd(16)}${String(r.meter)}`);
   }
   if (s.nonMonotone) {
     out.push("");

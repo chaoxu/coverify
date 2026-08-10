@@ -94,6 +94,13 @@ export interface SessionTelemetry {
   /** Message usage plus compaction entries' own spend (a summarization
    *  call's usage lives on the compaction entry, not on any message). */
   usage: RoleUsage;
+  /** The compaction half of `usage`, alone. Separable because it belongs to no
+   *  turn: without it, sum(turn deltas) legitimately differs from `usage` on
+   *  any session that compacted, and a reconciliation check cannot tell that
+   *  apart from corruption (view/corpus.ts, rule 3b check 4). */
+  compaction?: RoleUsage;
+  /** How many compactions this session performed. */
+  compactions: number;
 }
 
 function walkJsonl(root: string): string[] {
@@ -118,9 +125,10 @@ export function campaignTurns(campaignDir: string): SessionTelemetry[] {
     // pi's OWN session JSONL, so the provenance is known exactly as well as at
     // the stamped site in providers.ts.
     const billed: { role: string; usage: RoleUsage }[] = [];
-    const add = (raw: SessionUsage | undefined) => {
+    const compacted: { role: string; usage: RoleUsage }[] = [];
+    const add = (raw: SessionUsage | undefined, into = billed) => {
       if (!raw) return;
-      billed.push({ role: "assistant", usage: toRoleUsage(raw) });
+      into.push({ role: "assistant", usage: toRoleUsage(raw) });
     };
     for (const line of fs.readFileSync(file, "utf8").split("\n")) {
       if (!line.trim()) continue;
@@ -139,6 +147,7 @@ export function campaignTurns(campaignDir: string): SessionTelemetry[] {
         if (entry.message.role === "assistant") add(entry.message.usage);
       } else if (entry.type === "compaction") {
         add(entry.usage);
+        add(entry.usage, compacted);
       }
     }
     return {
@@ -146,6 +155,8 @@ export function campaignTurns(campaignDir: string): SessionTelemetry[] {
       id: path.basename(file, ".jsonl").split("_").at(-1) ?? path.basename(file, ".jsonl"),
       turns: messagesToTurns(messages),
       usage: sumMessagesUsage(billed),
+      compactions: compacted.length,
+      ...(compacted.length > 0 ? { compaction: sumMessagesUsage(compacted) } : {}),
     };
   });
 }

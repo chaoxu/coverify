@@ -24,6 +24,7 @@ import { writeTrace } from "./view/trace.js";
 import { campaignTurns } from "./view/turns.js";
 import { campaignSpend, formatSpend } from "./view/spend.js";
 import { campaignOutcomes, formatOutcomes } from "./view/outcomes.js";
+import { corpusChecks, formatCorpusChecks } from "./view/corpus.js";
 
 function usage(): never {
   console.error(`usage:
@@ -37,6 +38,8 @@ function usage(): never {
   coverify spend [--dir campaign] [--run <runId>]
                                     per-lane, per-role token totals from the journal;
                                     refuses cross-meter sums and roll-ups
+  coverify corpus-check [--dir campaign]
+                                    measurement-protocol rule 3b: is this session corpus summable?
   coverify outcomes [--dir campaign] [--run <runId>]
                                     what the spend bought: stage verdicts, repair-loop depth,
                                     and spend split by whether the revision ever promoted
@@ -325,6 +328,11 @@ switch (command) {
   case "spend": {
     requireCampaign();
     console.log(formatSpend(campaignSpend(dir, flags.get("run"))));
+    break;
+  }
+  case "corpus-check": {
+    requireCampaign();
+    console.log(formatCorpusChecks(corpusChecks(dir)));
     break;
   }
   case "outcomes": {
