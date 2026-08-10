@@ -231,6 +231,10 @@ return out;
 export class GateStore {
   private records: GateRecord[];
   private file: string;
+  /** The state directory this campaign's authoritative history resolved to.
+   *  Exposed because that resolution IS the identity logic's observable, and a
+   *  test asserting anything else (campaignDir, say) pins nothing. */
+  readonly stateDir: string;
   readonly campaignDir: string;
   /** Stamped on every record this process writes; older records are marked by
    *  its ABSENCE. The run-config `runStart` note carries harnessRev,
@@ -252,6 +256,7 @@ export class GateStore {
     // run must not create one.
     if (opts?.readOnly !== true) fs.mkdirSync(dir, { recursive: true });
     this.file = path.join(dir, "gates.jsonl");
+    this.stateDir = path.basename(dir);
     // meta.json names the opaque 16-hex state dir for cross-campaign analytics
     // (design.md, Appendix: Canonical analytics queries): campaign path plus the
     // statement's first line, best-effort, refreshed each construction.
@@ -662,6 +667,24 @@ const FAILED_CHECK_RE = /^(no close prior route|closest prior route is .+; this 
  * rules. Raw comparison fails both ways: a trailing space or capital letter
  * evades the wave gate AND discards an IDEA PASS the campaign already paid for.
  */
+/** Live WORKERS on a mechanism, for the launcher's wave gate. Lives here beside
+ *  `normalizeMechanism` and the IDEA-PASS lookup because it is the other half of
+ *  one rule: when this counted raw while the lookup normalized, retyping a
+ *  mechanism both evaded the gate and discarded the PASS it had earned.
+ *  Exported so a test can drive the real rule — the previous test passed the
+ *  count in as a literal, so it could only ever exercise the lookup half. */
+export function liveWorkersOnMechanism(
+  handles: Iterable<{ kind: string; mechanism?: string }>,
+  mechanism: string,
+): number {
+  const key = normalizeMechanism(mechanism);
+  let n = 0;
+  for (const h of handles) {
+    if (h.kind === "worker" && normalizeMechanism(h.mechanism ?? "") === key) n++;
+  }
+  return n;
+}
+
 export function normalizeMechanism(mechanism: string): string {
   return mechanism.trim().replace(/\s+/g, " ").toLowerCase();
 }

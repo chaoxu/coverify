@@ -15,10 +15,11 @@ import {
 import {
   acceptedStatementHash,
   defined,
-  recordStatement,
-  undeliveredCompletions,
   GateStore,
+  liveWorkersOnMechanism,
+  recordStatement,
   statementHash,
+  undeliveredCompletions,
 } from "./gates.js";
 import { type BilledFailure } from "./backends.js";
 import { requestVerificationTool } from "./cadence.js";
@@ -57,6 +58,29 @@ export function userDirective(note: string): string | undefined {
   if (note.startsWith(USER_MESSAGE_PREFIX)) return note.slice(USER_MESSAGE_PREFIX.length);
   if (note.startsWith(STEERED_MESSAGE_PREFIX)) return note.slice(STEERED_MESSAGE_PREFIX.length);
   return undefined;
+}
+
+/** How a FAILED settle is recorded, which depends on whether the handle was
+ *  still live. Mirrors the success branch, which already downgrades a
+ *  post-cancel artifact to a note.
+ *
+ *  A cancelled session resolves "" and lands in the failed branch as "empty
+ *  report", so recording a completion unconditionally told the coordinator its
+ *  own deliberate `cancel_agent` was an INFRASTRUCTURE FAILURE and that
+ *  redispatch was legitimate — the opposite of cancel semantics, and a section
+ *  of wake context every time. `declare_campaign_state` cancels every live
+ *  handle, so a pause made each interrupted worker come back that way at the
+ *  first wake of the next run.
+ *
+ *  Exported so the rule can be tested without driving the whole wake loop. */
+export function failedSettleRecord(
+  id: string,
+  failed: string,
+  live: boolean,
+): { kind: "completion" | "note"; id: string; failed?: string; note?: string } {
+  return live
+    ? { kind: "completion", id, failed }
+    : { kind: "note", id, note: `late failure after cancellation: ${failed}` };
 }
 
 export interface CampaignOptions {
@@ -239,7 +263,7 @@ async function runLockedCampaign(
   };
 
   const liveOnMechanism = (mechanism: string): number =>
-    [...handles.values()].filter((h) => h.kind === "worker" && h.mechanism === mechanism).length;
+    liveWorkersOnMechanism(handles.values(), mechanism);
 
   // --agent-limit caps concurrent WORKERS only. Judges (gate critics, cadences)
   // are handles too but must not consume the workers' budget: ten pending
@@ -323,9 +347,7 @@ async function runLockedCampaign(
           partial = path.relative(dir, p);
         }
         store.append({
-          kind: "completion",
-          id: handle.id,
-          failed,
+          ...failedSettleRecord(handle.id, failed, live),
           ...defined({ partial }),
           ...spend(),
         });

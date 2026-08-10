@@ -10,6 +10,7 @@ import { afterEach, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 
 const { GateStore } = await import("../src/gates.ts");
 const { Refusal } = await import("../src/refusal.ts");
@@ -90,17 +91,47 @@ test("an empty id file self-heals when nothing can be lost", () => {
 });
 
 test("an empty id file is a stop once the campaign has run", () => {
-  const { dir } = campaign({ id: "", journal: true });
-  expect(() => new GateStore(dir)).toThrow(Refusal);
+  // Must match the MALFORMED refusal specifically. Asserting only `Refusal`
+  // passed for the wrong reason: with the empty-id stop removed the campaign
+  // still throws, from the downstream "ledgers but no gate history" guard —
+  // after minting a fresh identity and overwriting the id file, which is the
+  // damage this test exists to prevent.
+  const { dir, state } = campaign({ id: "", journal: true });
+  expect(() => new GateStore(dir)).toThrow(/malformed/);
+  expect(fs.readFileSync(path.join(dir, ".coverify", "campaign-id"), "utf-8")).toBe("");
+  expect(stateDirs(state)).toEqual([]);
+});
+
+test("an empty id file adopts a legacy store rather than stranding it", () => {
+  // A pre-id-file campaign keeps its history at sha256(realpath(dir)). If the
+  // id file is truncated, refusing strands a store that is right there and
+  // would be adopted correctly two lines below — and no tool prints the legacy
+  // hash, so the operator cannot follow the advice to restore it.
+  const { dir, state } = campaign({ journal: true });
+  const legacy = createHash("sha256").update(fs.realpathSync.native(dir)).digest("hex").slice(0, 16);
+  fs.mkdirSync(path.join(state, legacy), { recursive: true });
+  fs.writeFileSync(
+    path.join(state, legacy, "gates.jsonl"),
+    `${JSON.stringify({ kind: "note", note: "legacy history" })}\n`,
+  );
+  fs.writeFileSync(path.join(dir, ".coverify", "campaign-id"), "");
+
+  const store = new GateStore(dir);
+  expect(store.all()).toHaveLength(1);
+  expect(stateDirs(state)).toEqual([legacy]);
 });
 
 test("a reader derives the same state directory on every invocation", () => {
   // A reader never persists the id it derived. Minting a random one per process
   // made `spend` print a different recovery path each run — advice that could
   // not be followed.
+  // Assert the STATE DIRECTORY, not campaignDir — campaignDir is a constant and
+  // is the same whatever the identity logic does, so asserting it tested nothing.
   const { dir } = campaign({ journal: true });
   const seen = new Set<string>();
-  for (let i = 0; i < 3; i++) seen.add(new GateStore(dir, { readOnly: true }).campaignDir);
+  for (let i = 0; i < 3; i++) {
+    seen.add(new GateStore(dir, { readOnly: true }).stateDir);
+  }
   expect(seen.size).toBe(1);
 });
 
