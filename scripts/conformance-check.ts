@@ -61,6 +61,46 @@ if (violations.length > 0) {
   console.error("Views are pure consumers: move the shared logic into core, or read it from cli.ts.");
   process.exit(1);
 }
+// Self-containment: coverify must run from a clean clone with no external
+// file. It used to read its own SPEC from ~/kb — a personal knowledge base
+// nobody else has — so no campaign ran and this very check failed on a fresh
+// checkout (#44). The contract now ships in the repo, and this stops that
+// regressing silently: a src/ file that reaches into a hand-written home path
+// is a hidden dependency, and the failure mode is invisible to anyone who
+// happens to have the file.
+//
+// The legitimate home paths are user-scoped state, not repo inputs: XDG-style
+// state and config, the vendors' own CLI data directories, and read-scope
+// denials. They are listed rather than pattern-matched, so adding one is a
+// deliberate edit here.
+const HOME_PATH_ALLOWED = new Set([
+  "src/credentials.ts", // ~/.config/coverify/auth.json — the user's credentials
+  "src/gates.ts", // ~/.local/state/coverify — XDG state (COVERIFY_STATE_DIR)
+  "src/workspace.ts", // ~/.gemini, ~/.antigravity — read-scope DENIALS, plus ~ expansion
+  "src/view/limits.ts", // ~/.codex/sessions — codex's own rollouts, absent = reported absent
+]);
+const hidden: string[] = [];
+for (const dir of ["src", "src/view"]) {
+  for (const f of fs.readdirSync(path.join(repoRoot(), dir))) {
+    if (!f.endsWith(".ts")) continue;
+    const rel = `${dir}/${f}`;
+    if (HOME_PATH_ALLOWED.has(rel)) continue;
+    const text = fs.readFileSync(path.join(repoRoot(), rel), "utf-8");
+    // A homedir() join, or an absolute path into someone's checkout.
+    if (/homedir\(\)\s*,/.test(text) || /"\/Users\/|"\/home\//.test(text)) hidden.push(rel);
+  }
+}
+if (hidden.length > 0) {
+  console.error("HIDDEN DEPENDENCY — a clean clone would not have this:");
+  for (const h of hidden) console.error(`  ${h} resolves a path under the user's home directory`);
+  console.error(
+    "Ship it in the repo (see contract/), or add it to HOME_PATH_ALLOWED with a note\n" +
+      "saying why it is user-scoped state rather than an input the repo owes the reader.",
+  );
+  process.exit(1);
+}
+
 console.log(
-  `conformance ok: ${REQUIRED.length} launcher tokens present; view/ layer boundary intact`,
+  `conformance ok: ${REQUIRED.length} launcher tokens present; view/ layer boundary intact; ` +
+    "no hidden home-path dependency",
 );

@@ -23,6 +23,23 @@ Codex session running the skill can resume a coverify campaign and vice versa.
 
 ## Use
 
+Everything coverify needs to run is in this repository, including the launcher
+contract it enforces (`contract/math-proof-search-launcher.md`). A clean clone
+runs `bun install && bun run check` with no external file and no configuration.
+
+What you supply is model access, and nothing else:
+
+- **Bun.** No other runtime.
+- **Provider access for the roles you use.** The defaults route almost
+  everything through the `codex` CLI on a ChatGPT subscription
+  (`coverify login openai-codex`) and the hostile auditor through the `claude`
+  CLI on a Claude subscription. Both are the vendors' own binaries; coverify
+  spawns them. API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+  `GEMINI_API_KEY`) are needed only for api-provider role overrides.
+- **Nothing else.** Campaign state lives under the campaign directory and
+  `$XDG_STATE_HOME`-style `~/.local/state/coverify` (override:
+  `COVERIFY_STATE_DIR`); credentials in `~/.config/coverify/auth.json`.
+
 ```bash
 bun install
 
@@ -36,6 +53,12 @@ bun run src/cli.ts amend --dir campaign    # accept an explicit user amendment o
 bun run src/cli.ts trace --dir campaign                     # self-contained HTML timeline
 bun run src/cli.ts turns --dir campaign                      # per-session telemetry summary
 bun run src/cli.ts turns --dir campaign --session <substr>   # TurnRecord JSONL for one session
+
+# measurement readers — the journal's usage fields are read, not just written
+bun run src/cli.ts spend --dir campaign         # per-lane/role/model tokens; refuses cross-meter sums
+bun run src/cli.ts outcomes --dir campaign      # what the spend bought: verdicts, repair loops, promotions
+bun run src/cli.ts limits --dir campaign        # rate-limit occupancy and burn rate — what actually binds
+bun run src/cli.ts corpus-check --dir campaign  # is this session corpus summable at all?
 ```
 
 `trace` writes `campaign/.coverify/trace.html` (override with `--out`): agent

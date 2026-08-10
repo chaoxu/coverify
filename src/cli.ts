@@ -162,8 +162,9 @@ async function prove(resume: boolean): Promise<void> {
   if (missing.size > 0) {
     console.error(
       `no usable auth for configured role providers:\n  ${[...missing].join("\n  ")}\n` +
-        "fix with an API key env var (fleet-secret get <app>/<name>), 'coverify login <provider>' " +
-        "for subscription OAuth, or re-point the role with COVERIFY_MODEL_*",
+        "fix with 'coverify login <provider>' for subscription OAuth, an API key env var " +
+        "(ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY), or re-point the role with " +
+        "COVERIFY_MODEL_<ROLE>",
     );
     process.exit(1);
   }
