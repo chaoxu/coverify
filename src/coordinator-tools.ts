@@ -481,7 +481,7 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
             kind: "role-call",
             dispatchId: id,
             orphaned: "gate cancelled after the critic returned; verdict deliberately not recorded",
-            ...defined(spendFields({ usage: criticUsage, attempts, requests })),
+            ...spendFields({ usage: criticUsage, attempts, requests }),
           });
           return `[gate ${id} cancelled; verdict not recorded]`;
         }
@@ -638,11 +638,11 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
         // records a multi-hour worker as zero tokens — unless the turn's own
         // span leafs it (the work keeps running and its leaf lands when the
         // turn settles), in which case this record carries the join key only.
-        ...defined(spendFields({
+        ...spendFields({
           usage: handle.usage?.(),
           attempts: handle.attempts?.(),
           requests: handle.requests?.(),
-        })),
+        }),
       });
       deps.bumpActivity();
       return toolText(`cancelled ${p.id}. Record the route state in the ledgers per the contract.`);
@@ -727,11 +727,11 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
             id,
             cancelled: true,
             reason: `campaign ${p.state}`,
-            ...defined(spendFields({
+            ...spendFields({
               usage: handle.usage?.(),
               attempts: handle.attempts?.(),
               requests: handle.requests?.(),
-            })),
+            }),
           });
           handles.delete(id);
           interrupted++;

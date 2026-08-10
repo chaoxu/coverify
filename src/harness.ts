@@ -41,6 +41,23 @@ import {
 } from "./providers.js";
 import { envNumber, type WriteScope } from "./sandbox.js";
 
+/** How a delivered `coverify say` is journaled. Spelled once on each side:
+ *  the writers and the replay reader used to carry four hand-written copies,
+ *  and a typo in any one silently stops a directive surviving the next context
+ *  rebuild — which is the failure `standingGuidance` exists to prevent. */
+const USER_MESSAGE_PREFIX = "user message: ";
+const STEERED_MESSAGE_PREFIX = "user message steered mid-turn: ";
+
+/** The directive inside a journal note, or undefined if it carries none.
+ *  Exported for the test that pins these two strings as an ON-DISK format:
+ *  every campaign's journal already contains them, so changing either constant
+ *  stops old guidance replaying rather than renaming anything. */
+export function userDirective(note: string): string | undefined {
+  if (note.startsWith(USER_MESSAGE_PREFIX)) return note.slice(USER_MESSAGE_PREFIX.length);
+  if (note.startsWith(STEERED_MESSAGE_PREFIX)) return note.slice(STEERED_MESSAGE_PREFIX.length);
+  return undefined;
+}
+
 export interface CampaignOptions {
   campaignDir: string;
   /** User-set limit only; the launcher forbids a fixed harness ceiling. */
@@ -153,7 +170,7 @@ async function runLockedCampaign(
   if (!store.all().some((e) => e.kind === "note" && e.journalGuidanceImport === true)) {
     for (const e of readJournal(dir) as unknown as Record<string, unknown>[]) {
       const note = typeof e.note === "string" ? e.note : "";
-      if (note.startsWith("user message: ") || note.startsWith("user message steered mid-turn: ")) {
+      if (userDirective(note) !== undefined) {
         store.event({ kind: "note", note, journalGuidanceImport: true, originalTs: e.ts });
       }
     }
@@ -386,10 +403,8 @@ async function runLockedCampaign(
     const out: string[] = [];
     for (const e of store.all()) {
       const note = typeof e.note === "string" ? e.note : "";
-      if (note.startsWith("user message: ")) out.push(note.slice("user message: ".length));
-      else if (note.startsWith("user message steered mid-turn: ")) {
-        out.push(note.slice("user message steered mid-turn: ".length));
-      }
+      const directive = userDirective(note);
+      if (directive !== undefined) out.push(directive);
     }
     return out.slice(-20);
   };
@@ -761,7 +776,7 @@ async function runLockedCampaign(
             );
             if (!delivered) break; // turn just ended; the wake boundary takes over
             steeredCount++;
-            store.event({ kind: "note", note: `user message steered mid-turn: ${m}` });
+            store.event({ kind: "note", note: `${STEERED_MESSAGE_PREFIX}${m}` });
           }
         } catch {
           /* transport only; never break the campaign */
@@ -789,7 +804,7 @@ async function runLockedCampaign(
           return coordinator!.ask(wakePrompt);
         },
       );
-      for (const m of userMessages) store.event({ kind: "note", note: `user message: ${m}` });
+      for (const m of userMessages) store.event({ kind: "note", note: `${USER_MESSAGE_PREFIX}${m}` });
       consumeUserMessages(dir, userMessages.length + steeredCount);
       if (pending.length > 0) store.append({ kind: "delivery", ids: pending.map((p) => p.id) });
     } catch (e) {

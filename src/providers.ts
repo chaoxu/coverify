@@ -290,21 +290,6 @@ export interface RoleRun {
  * createHarnessRoleSession. What an instance sees is decided by the bundle its
  * caller builds.
  */
-export async function runRole(
-  run: Omit<RoleRun, "workspace" | "extraTools">,
-  signal?: AbortSignal,
-  /** Parent span, when the caller has one: a TelemetrySpan IS a context, so
-   *  passing it makes this call a child structurally. Omitted, the span roots
-   *  under the process context (NOOP without an exporter). */
-  parent?: TelemetryContext,
-): Promise<RoleResult> {
-  // No span of its own, deliberately: the SESSION opens the provider_call span
-  // (a harness turn in `ask`, a CLI answer in the wrapper below), so this call
-  // has exactly one writer. Wrapping here as well made every single-shot role
-  // emit two leaves for one payment — an outer span carrying the session total
-  // and an inner one carrying the same delta.
-  return runRoleInner(run, signal, parent);
-}
 
 /** The measurement sink. Injected by cli.ts via runCampaign; NOOP until then,
  *  so core never imports src/telemetry/ and that folder stays deletable. */
@@ -424,11 +409,19 @@ export function leafDelegatedCall(
   );
 }
 
-async function runRoleInner(
+export async function runRole(
   run: Omit<RoleRun, "workspace" | "extraTools">,
   signal?: AbortSignal,
+  /** Parent span, when the caller has one: a TelemetrySpan IS a context, so
+   *  passing it makes this call a child structurally. Omitted, the span roots
+   *  under the process context (NOOP without an exporter). */
   parent?: TelemetryContext,
 ): Promise<RoleResult> {
+  // No span of its own, deliberately: the SESSION opens the provider_call span
+  // (a harness turn in `ask`, a CLI answer in the wrapper below), so this call
+  // has exactly one writer. Wrapping here as well made every single-shot role
+  // emit two leaves for one payment — an outer span carrying the session total
+  // and an inner one carrying the same delta.
   const started = Date.now();
   // One invocation surface: every role call is a session asked once. A CLI
   // backend is a degenerate session (answers once, stoppable, not steerable);
