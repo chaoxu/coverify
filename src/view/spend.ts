@@ -40,6 +40,13 @@ export interface CampaignSpend {
   unmetered: { lane: string; calls: number }[];
   byLane: LaneSpend[];
   byRole: RoleSpend[];
+  /** Per (model, thinking level) — `modelSpec`, which unlike `modelFamily`
+   *  keeps the @thinking suffix. Present so the field is not write-only:
+   *  rule 13b says ship the reader with the field, and every measurement
+   *  field in this journal was write-only for the project's whole history
+   *  precisely because nothing consumed it. This is also the grouping issue
+   *  #31's reasoning-effort A/B needs, which no reader could express before. */
+  byModel: RoleSpend[];
   /** Records whose usage was skipped, and why. Reported rather than silently
    *  dropped: a reader must be able to see that a total is partial. */
   excluded: { reason: string; records: number }[];
@@ -58,7 +65,7 @@ export interface CampaignSpend {
  *  a new prefix silently lands every record of that role in "other" instead of
  *  failing. Read-only view, so the cost is a mislabelled row, never a wrong
  *  campaign decision. */
-function roleOf(r: Record<string, unknown>): string {
+export function roleOf(r: Record<string, unknown>): string {
   if (typeof r.role === "string") return r.role;
   const kind = String(r.kind);
   if (kind === "gate-verdict") return "gate-critic";
@@ -120,7 +127,7 @@ export const bySpend = (a: LaneSpend, b: LaneSpend) => b.input + b.output - (a.i
  *  impossible when input INCLUDES cached, so one such record proves the whole
  *  role's lane disjoint. Measured: 0 of 925 codex-cli records versus 45/53
  *  coordinator and 193/193 auditor. */
-function inferLanes(records: readonly Record<string, unknown>[]): Map<string, string> {
+export function inferLanes(records: readonly Record<string, unknown>[]): Map<string, string> {
   const disjoint = new Set<string>();
   const seen = new Set<string>();
   for (const r of records) {
@@ -142,6 +149,7 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
   const store = new GateStore(campaignDir);
   const lanes = new Map<string, LaneSpend>();
   const roles = new Map<string, RoleSpend>();
+  const models = new Map<string, RoleSpend>();
   const excluded = new Map<string, number>();
   let nonMonotone = false;
   // A run filter makes `runId` readable; without one the edge added to every
@@ -240,14 +248,24 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
     // Not bumpLane: this bucket is keyed by role AND meter, and carries the
     // role on the row.
     const role = roleOf(r);
-    const key = `${role} ${meter}`;
+    const key = `${role} ${meter}`;
     const byRole = roles.get(key) ?? { role, meter, calls: 0, input: 0, cacheRead: 0, output: 0 };
     accumulate(byRole, u);
     roles.set(key, byRole);
+
+    // Same bucket shape, keyed by the model spec the record names. A record
+    // that names none is grouped as such rather than dropped, so the rows sum
+    // to the same total as byRole and the unattributed share is visible.
+    const spec = typeof r.modelSpec === "string" ? r.modelSpec : "(no modelSpec on record)";
+    const mKey = `${spec} ${meter}`;
+    const byModel = models.get(mKey) ?? { role: spec, meter, calls: 0, input: 0, cacheRead: 0, output: 0 };
+    accumulate(byModel, u);
+    models.set(mKey, byModel);
   }
 
   return {
     byLane: [...lanes.values()].sort(bySpend),
+    byModel: [...models.values()].sort(bySpend),
     byRole: [...roles.values()].sort(bySpend),
     excluded: [...excluded].map(([reason, records]) => ({ reason, records })),
     unmetered: [...unmetered].map(([lane, calls]) => ({ lane, calls })),
@@ -286,6 +304,15 @@ export function formatSpend(s: CampaignSpend): string {
     out.push(
       `  ${r.role.padEnd(16)}${lane(r.meter)}${String(r.calls).padStart(6)}` +
         `${M(r.input).padStart(10)}${M(r.cacheRead).padStart(11)}${M(r.output).padStart(9)}${opt(r.reasoning).padStart(11)}`,
+    );
+  }
+
+  out.push("");
+  out.push("by model spec (@thinking included — the grouping an effort A/B needs)");
+  for (const m of s.byModel) {
+    out.push(
+      `  ${m.role.padEnd(30)}${lane(m.meter)}${String(m.calls).padStart(6)}` +
+        `${M(m.input).padStart(10)}${M(m.cacheRead).padStart(11)}${M(m.output).padStart(9)}${opt(m.reasoning).padStart(11)}`,
     );
   }
 

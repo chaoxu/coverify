@@ -598,12 +598,27 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       compaction: true,
       modelSpec: specKey(coordinatorSpec),
       usage: subUsage(after, before),
+      // compact() is one provider request that leaves no assistant message
+      // behind, so `requests` (derived from the transcript) cannot see it and
+      // `attempts` is the only record it will ever have. Rule 13 requires both
+      // on every usage-bearing record, and calls attempts the one count no
+      // later reader can reconstruct.
+      attempts: 1,
+      requests: 0,
       contextTokensBefore: beforeTokens,
       contextTokensAfter: session.approxTokens(),
     });
-    // Baseline moves with it, so this wake's own leaf reports what the WAKE
-    // cost and the compaction is counted exactly once.
-    prevCoord = { ...prevCoord, usage: after };
+    // BOTH baselines move, not just usage. compact() increments the session's
+    // attempt counter, so advancing only `usage` left the wake's own leaf
+    // reporting a wake-only token delta beside an attempt count that still
+    // included this call — the same "usage and attempts disagree by
+    // construction on every compacted session" that providers.ts's attempts++
+    // was added to end, re-opened from the other side.
+    prevCoord = {
+      usage: after,
+      attempts: session.attempts?.() ?? prevCoord.attempts,
+      requests: session.requests?.() ?? prevCoord.requests,
+    };
   };
   // Per-wake context growth, surfaced when large (issue #17): the measured
   // campaign grew 29–55k tokens per wake, ~90% of it the coordinator's own

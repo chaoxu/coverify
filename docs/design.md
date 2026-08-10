@@ -979,8 +979,13 @@ Billable tokens by verdict stage:
 -- reasoning is a SUBSET of output (pi's Usage contract), so adding it
 -- double-counts. measurement-protocol.md rule 1; this query used to get it
 -- wrong on this very page while the protocol forbade it two files away.
+-- `role-call` is any spend with no stage record of its own, and since the
+-- compaction leaf landed that includes coordinator compactions — which are
+-- not a verdict stage. Filter them out by role, or this table silently grows
+-- a coordinator column.
 SELECT kind, sum(usage.input + usage.output) AS billable
 FROM ev WHERE kind IN ('audit','bundle-cert','reconstruction','comparison','role-call')
+  AND role IS DISTINCT FROM 'coordinator'
 GROUP BY kind;
 ```
 

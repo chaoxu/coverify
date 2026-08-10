@@ -11,9 +11,9 @@
 // premise edge it walks is `Type.Optional` and 54 of 64 promotions across all
 // seven campaigns carry none. Computing it anyway would return ~0 everywhere
 // and measure the unrecorded edge rather than the misdirected work.
-import { GateStore } from "../gates.js";
+import { GateStore, promotionsNeedingRetraction } from "../gates.js";
 import type { RoleUsage } from "../providers.js";
-import { type LaneSpend, bumpLane, bySpend } from "./spend.js";
+import { type LaneSpend, bumpLane, bySpend, inferLanes, roleOf } from "./spend.js";
 
 /** The four verification stages plus the pre-verification gate. A stage record
  *  carries `verdict`, so a FAIL rate is a count, not an inference. */
@@ -38,6 +38,10 @@ export interface CampaignOutcomes {
   /** Revisions that entered verification, and what became of them. */
   revisions: RevisionOutcome[];
   promoted: number;
+  /** Promotions contradicted by a later substantive FAIL. Excluded from
+   *  `promoted` and from the promoted-spend column, and reported here so the
+   *  exclusion is visible rather than a silently smaller number. */
+  retracted: string[];
   /** Verification spend on revisions that never promoted, per lane. Lanes are
    *  never summed, for the reason view/spend.ts refuses to sum them. */
   unpromotedSpend: LaneSpend[];
@@ -58,7 +62,26 @@ export function campaignOutcomes(campaignDir: string, run?: string): CampaignOut
     (r) => run === undefined || r.runId === run,
   );
 
-  const promoted = new Set(records.filter((r) => r.kind === "promotion").map((r) => key(r.revision)));
+  // A promotion contradicted by a later substantive FAIL is not an outcome.
+  // Counting it as one puts its spend in the "did promote" column and inflates
+  // the promoted count — and for a reader whose entire purpose is the outcome
+  // term of rules 7 and 8, an error that runs in the flattering direction is
+  // the one error it must not make. The harness already surfaces these at
+  // every wake; this is the same set.
+  const retracted = new Set(promotionsNeedingRetraction(store).map((r) => key(r.revision)));
+  const promoted = new Set(
+    records
+      .filter((r) => r.kind === "promotion" && !retracted.has(key(r.revision)))
+      .map((r) => key(r.revision)),
+  );
+  // The SAME lane inference view/spend.ts uses, not a second rule. Bucketing
+  // on `u.meter ?? "unstamped"` put every record of every pre-stamp campaign —
+  // which is all of them — into one row, and that row then added nested
+  // `input` (includes cached) to disjoint `input` (excludes it) and printed
+  // the auditor's unmeasured fresh input as a measured 0.00M. Those are rule 1
+  // and rule 10, the exact two errors this reader's sibling exists to refuse
+  // and that its own header claims it inherits.
+  const lanes0 = inferLanes(records);
 
   const stages: StageOutcome[] = [];
   const perRevision = new Map<string, { rounds: number; verdicts: string[]; label: string }>();
@@ -97,7 +120,8 @@ export function campaignOutcomes(campaignDir: string, run?: string): CampaignOut
     perRevision.set(k, e);
     const u = r.usage as RoleUsage | undefined;
     if (u && typeof u.input === "number") {
-      bumpLane(promoted.has(k) ? promotedLanes : unpromoted, (u.meter ?? "unstamped") as LaneSpend["meter"], u);
+      const meter = (u.meter ?? lanes0.get(roleOf(r)) ?? "unstamped") as LaneSpend["meter"];
+      bumpLane(promoted.has(k) ? promotedLanes : unpromoted, meter, u);
     }
   }
 
@@ -107,6 +131,7 @@ export function campaignOutcomes(campaignDir: string, run?: string): CampaignOut
       .map(([k, e]) => ({ revision: e.label, rounds: e.rounds, verdicts: e.verdicts, promoted: promoted.has(k) }))
       .sort((a, b) => b.rounds - a.rounds),
     promoted: promoted.size,
+    retracted: [...retracted],
     unpromotedSpend: [...unpromoted.values()].sort(bySpend),
     promotedSpend: [...promotedLanes.values()].sort(bySpend),
     promotedWithoutVerification: [...promoted].filter((p) => !perRevision.has(p)),
@@ -126,7 +151,10 @@ export function formatOutcomes(o: CampaignOutcomes): string {
   out.push("");
   out.push("revisions");
   out.push(`  ${String(verified).padStart(5)}  entered verification`);
-  out.push(`  ${String(o.promoted).padStart(5)}  promoted`);
+  out.push(`  ${String(o.promoted).padStart(5)}  promoted (standing; retractions excluded)`);
+  if (o.retracted.length > 0) {
+    out.push(`  ${String(o.retracted.length).padStart(5)}  promoted then contradicted by a later FAIL — NOT counted above`);
+  }
   if (verified > 0) {
     const never = o.revisions.filter((r) => !r.promoted).length;
     out.push(`  ${String(never).padStart(5)}  verified and never promoted (${((never / verified) * 100).toFixed(0)}%)`);
@@ -160,7 +188,12 @@ export function formatOutcomes(o: CampaignOutcomes): string {
   out.push("");
   out.push("Stage spend only — the reasoner work that produced these revisions is not");
   out.push("attributed here, because a dispatch record names no revision. Lanes are not");
-  out.push("summed: they bill to different accounts (see coverify spend).");
+  out.push("summed, and neither are the two tables against each other: they bill to");
+  out.push("different accounts, and a (nested?) row's `fresh in` may include cached");
+  out.push("tokens that a (disjoint) row's excludes. Compare a lane with itself across");
+  out.push("the two tables; that comparison is the one this reader supports.");
+  out.push("A 0.00M `fresh in` on a disjoint lane is a lane billed entirely at the");
+  out.push("cached rate, not a lane that spent nothing (see coverify spend's floors).");
   out.push("");
   out.push("NOT reported: the on-path fraction of issue #38. It walks promotion premises,");
   out.push("which are optional and absent on 54 of 64 promotions campaign-wide, so the");

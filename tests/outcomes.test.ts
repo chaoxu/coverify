@@ -89,3 +89,40 @@ test("the on-path fraction is refused in the report itself", () => {
   const dir = fixture([{ kind: "promotion", revision: "x.md" }]);
   expect(formatOutcomes(campaignOutcomes(dir))).toContain("NOT reported: the on-path fraction");
 });
+
+test("lanes are split by the same inference spend.ts uses, never one bucket", () => {
+  // Bucketing on `u.meter ?? "unstamped"` put every record of every pre-stamp
+  // campaign — which is all of them — into ONE row, which then added nested
+  // `input` (includes cached) to disjoint `input` (excludes it) and printed an
+  // unmeasured fresh input as a measured 0.00M. Rule 1 and rule 10, the exact
+  // two errors this reader's sibling exists to refuse.
+  const dir = fixture([
+    // Disjoint: cacheRead > input is impossible under the nested convention.
+    { kind: "audit", revision: "a.md", verdict: "PASS", usage: { input: 1, output: 1, cacheRead: 900 } },
+    // Nested: no such proof, so it must not share a row with the above.
+    { kind: "comparison", revision: "a.md", verdict: "PASS", usage: { input: 500, output: 1, cacheRead: 10 } },
+  ]);
+  const o = campaignOutcomes(dir);
+  expect(o.unpromotedSpend).toHaveLength(2);
+  expect(o.unpromotedSpend.map((l) => String(l.meter)).sort()).toEqual([
+    "unstamped:auditor (disjoint)",
+    "unstamped:comparator (nested?)",
+  ]);
+});
+
+test("a retracted promotion is not counted as an outcome", () => {
+  // A promotion contradicted by a later substantive FAIL is not a result. For
+  // a reader whose whole purpose is the outcome term of rules 7 and 8, an
+  // error in the flattering direction is the one it must not make.
+  const dir = fixture([
+    { kind: "audit", revision: "r.md", verdict: "PASS", candidateHash: "h1", usage: { input: 10, output: 1, cacheRead: 0 } },
+    { kind: "promotion", revision: "r.md", candidateHash: "h1" },
+    { kind: "audit", revision: "r.md", verdict: "FAIL", candidateHash: "h1", usage: { input: 20, output: 1, cacheRead: 0 } },
+  ]);
+  const o = campaignOutcomes(dir);
+  expect(o.promoted).toBe(0);
+  expect(o.retracted).toEqual(["r.md"]);
+  // Its spend moves to the unpromoted column with it.
+  expect(o.promotedSpend).toEqual([]);
+  expect(formatOutcomes(o)).toContain("contradicted by a later FAIL");
+});

@@ -507,7 +507,7 @@ journal answers it today.
 | when did the call start? | `durationMs` on every completion | verdict roles and coordinator only |
 | did this run hit the rate limit? | `providerSessionId` + `backendCwd` | **no** — the rollouts hold it, unjoined |
 | why did the run stop? | terminating-condition enum | **no** |
-| what did a compaction cost? | compaction event with usage | **no** — folded into the cumulative |
+| what did a compaction cost? | compaction event with usage | **yes** — `role-call` leaf, `compaction: true`, carrying the usage delta and contextTokensBefore/After |
 | was this work on the answer's path? | premise-closure query | **derivable**, never computed |
 
 The generalisable lesson is not the list. It is that **every field above was

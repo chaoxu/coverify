@@ -24,9 +24,16 @@ export interface GateRecord {
     | "rebuttal"
     | "promotion"
     | "delivery"
-    /** Provider spend with no stage record: a cadence cancelled after the
-     *  call returned. A leaf, so cost never has to be recovered by
-     *  subtracting children from a summary. */
+    /** Provider spend with no stage record of its own. Three sources today: a
+     *  cadence cancelled after the call returned, a call the provider was paid
+     *  for before it failed, and a coordinator compaction (which is a real
+     *  request that leaves no assistant message behind). A leaf, so cost never
+     *  has to be recovered by subtracting children from a summary.
+     *
+     *  NOT all verification spend: a `role-call` carrying `role: "coordinator"`
+     *  belongs to the coordinator lane, so a per-stage query must filter on
+     *  `role IS NULL` or it will pull compaction into the verdict-stage table
+     *  (see design.md's analytics queries). */
     | "role-call"
     // Campaign events (wakes, usage, notes, replayed user guidance). One
     // event log: these live in the same out-of-tree store as gate records —

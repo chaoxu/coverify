@@ -106,9 +106,15 @@ export function corpusChecks(campaignDir: string): CorpusCheck[] {
   //    rather than tolerated as slop: a session that compacted is EXPECTED to
   //    differ by exactly that amount, and a check that cannot tell that apart
   //    from corruption reports every healthy compacted session as a failure.
+  //    Assistant turns only, matching what the session total bills. Summing
+  //    every turn would make this check FAIL the day a non-assistant message
+  //    carries usage — which is precisely the case turns.ts's assistant-only
+  //    filter exists for, so the check would fire on the filter working as
+  //    designed and report a healthy corpus as unsummable.
   const mismatched = sessions.filter((s) => {
     const summed =
-      s.turns.reduce((n, t) => n + (t.usage?.input ?? 0), 0) + (s.compaction?.input ?? 0);
+      s.turns.reduce((n, t) => n + (t.role === "assistant" ? (t.usage?.input ?? 0) : 0), 0) +
+      (s.compaction?.input ?? 0);
     return summed !== s.usage.input;
   });
   out.push({
