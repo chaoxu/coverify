@@ -1,18 +1,15 @@
 // On-demand turn telemetry derived from the pi session JSONL trees under
-// .coverify/sessions/ — the single transcript store. Read-only observability
-// (design rule 2): sizes, per-request usage, gaps, and stopReason per
-// message, never prompt text. Replaces the retired always-on turns sidecars;
-// every field is a pure function of the stored messages.
+// .coverify/sessions/. Read-only observability (design rule 2): sizes,
+// per-request usage, gaps, and stopReason per message, never prompt text.
+// Every field is a pure function of the stored messages.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { type RoleUsage, sumMessagesUsage } from "../providers.js";
 
-/** One message's telemetry: sizes + provider accounting, no content. For
- *  assistant messages `usage.input` is the uncached billed input of THAT
- *  request and `usage.cacheRead` the cached part (disjoint fields), so
- *  per-request cache-hit rate is cacheRead/(input+cacheRead); `gapMs` from
- *  the previous assistant message exposes cache-TTL effects; `stopReason`
- *  diagnoses truncation/empty-final-text failures. */
+/** One message's telemetry: sizes + provider accounting, no content. On
+ *  assistant messages `usage.input` and `usage.cacheRead` are disjoint, so the
+ *  per-request cache-hit rate is cacheRead/(input+cacheRead); `gapMs` from the
+ *  previous assistant message exposes cache-TTL effects. */
 export interface TurnRecord {
   i: number;
   role: string;
@@ -27,12 +24,11 @@ export interface TurnRecord {
 }
 
 /** Usage as pi writes it to the session log: token fields plus a `cost` block
- *  this harness deliberately does not record (see RoleUsage — every lane is
- *  subscription-billed, so that figure is notional list price). */
+ *  this harness does not record — every lane is subscription-billed, so that
+ *  figure is notional list price (see RoleUsage). */
 type SessionUsage = RoleUsage & { cost?: unknown };
 
-/** Drop the wire-only `cost` block so no notional dollar figure reaches a
- *  record; token fields pass through unchanged. */
+/** Drop the wire-only `cost` block; token fields pass through unchanged. */
 function toRoleUsage({ cost: _cost, ...u }: SessionUsage): RoleUsage {
   return u;
 }
@@ -94,10 +90,9 @@ export interface SessionTelemetry {
   /** Message usage plus compaction entries' own spend (a summarization
    *  call's usage lives on the compaction entry, not on any message). */
   usage: RoleUsage;
-  /** The compaction half of `usage`, alone. Separable because it belongs to no
-   *  turn: without it, sum(turn deltas) legitimately differs from `usage` on
-   *  any session that compacted, and a reconciliation check cannot tell that
-   *  apart from corruption (view/corpus.ts, rule 3b check 4). */
+  /** The compaction half of `usage`, alone. Kept separable because it belongs
+   *  to no turn: sum(turn deltas) legitimately differs from `usage` on any
+   *  session that compacted (telemetry/corpus.ts, rule 3b check 4). */
   compaction?: RoleUsage;
   /** How many compactions this session performed. */
   compactions: number;

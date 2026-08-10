@@ -1,8 +1,7 @@
 // Read-only consumer (design.md's view/ layer): what the campaign's spend
-// BOUGHT, as opposed to what it cost. Every cost metric in the 2026-08-09 study
-// died for lack of an outcome term (docs/measurement-protocol.md rules 7 and 8).
-// It reports what stage records can support and refuses what they cannot — see
-// onPathFraction for the one refusal.
+// BOUGHT, as opposed to what it cost (docs/measurement-protocol.md rules 7 and
+// 8). Reports what stage records can support and refuses what they cannot —
+// see onPathFraction.
 import { promotionsNeedingRetraction } from "../gates.js";
 import type { RoleUsage } from "../providers.js";
 import { M, median, runRecords } from "../view/shared.js";
@@ -32,11 +31,11 @@ export interface CampaignOutcomes {
   revisions: RevisionOutcome[];
   promoted: number;
   /** Promotions contradicted by a later substantive FAIL. Excluded from
-   *  `promoted` and from the promoted-spend column, and reported here so the
-   *  exclusion is visible rather than a silently smaller number. */
+   *  `promoted` and from promoted spend, reported here so the exclusion is
+   *  visible rather than a silently smaller number. */
   retracted: string[];
-  /** Verification spend on revisions that never promoted, per lane. Lanes are
-   *  never summed, for the reason view/spend.ts refuses to sum them. */
+  /** Verification spend on revisions that never promoted, per lane. Never
+   *  summed across lanes, for spend.ts's reason. */
   unpromotedSpend: LaneSpend[];
   promotedSpend: LaneSpend[];
   /** Revisions promoted without any stage record naming them — a promotion the
@@ -59,22 +58,19 @@ export interface CampaignOutcomes {
   };
 }
 
-/** Revision identity is case-insensitive everywhere else in this codebase
- *  (gates.ts sameRevision), so two case spellings of one file are one
- *  revision here too. */
+/** Revision identity is case-insensitive codebase-wide (gates.ts
+ *  sameRevision), so two case spellings of one file are one revision. */
 const key = (s: unknown) => String(s).toLowerCase();
 
 /**
  * Issue #38: of the work that promoted, how much lies on the dependency path of
- * a result? Computed from `premises` — the edges retractionClosure walks, taken
- * backwards from terminal results (promotions nothing else depends on).
+ * a result? Walks `premises` backwards from terminal results.
  *
- * REFUSES to divide when the graph cannot carry the question. `premises` is
- * Type.Optional and on the seven campaigns measured 2026-08-09 only 10 of 64
- * promotions carried one, so the rest are isolated nodes trivially their own
- * terminal and the fraction comes out ~1.0 meaning "nothing was recorded".
- * Parsing the promotion ENTRY prose instead finds exactly the same 10 edges: the
- * edge has to be recorded to exist.
+ * REFUSES to divide below 50% premise coverage. On the seven campaigns measured
+ * 2026-08-09 only 10 of 64 promotions carried a premise, so the rest are
+ * isolated nodes trivially their own terminal and the fraction comes out ~1.0
+ * meaning "nothing was recorded". Parsing the promotion entry prose instead
+ * finds the same 10 edges: the edge has to be recorded to exist.
  */
 function onPathFraction(
   promotions: { revision: string; premises: string[] }[],
@@ -86,8 +82,7 @@ function onPathFraction(
   const base = { promotions: promotions.length, withPremises, edges, terminals: terminals.length };
 
   if (promotions.length === 0) return { ...base, refusal: "no promotions" };
-  // Coverage, not edge count, is the test: the question is what share of the
-  // promotions could be placed on or off a path at all.
+  // Coverage, not edge count: what share could be placed on or off a path.
   const coverage = withPremises / promotions.length;
   if (coverage < 0.5) {
     return {
@@ -113,19 +108,17 @@ function onPathFraction(
 export function campaignOutcomes(campaignDir: string, run?: string): CampaignOutcomes {
   const { store, records } = runRecords(campaignDir, run);
 
-  // A promotion contradicted by a later substantive FAIL is not an outcome:
-  // counting it puts its spend in the "did promote" column and inflates the
-  // promoted count, an error running in the flattering direction.
+  // A promotion contradicted by a later substantive FAIL is not an outcome;
+  // counting it errs in the flattering direction.
   const retracted = new Set(promotionsNeedingRetraction(store).map((r) => key(r.revision)));
   const promoted = new Set(
     records
       .filter((r) => r.kind === "promotion" && !retracted.has(key(r.revision)))
       .map((r) => key(r.revision)),
   );
-  // The SAME lane inference view/spend.ts uses, not a second rule. Bucketing on
-  // `u.meter ?? "unstamped"` put every pre-stamp campaign into one row that
-  // added nested `input` to disjoint `input` and printed unmeasured fresh input
-  // as a measured 0.00M — rules 1 and 10, both violated at once.
+  // The SAME lane inference spend.ts uses, never a second rule: bucketing on
+  // `u.meter ?? "unstamped"` mixes nested and disjoint `input` in one row and
+  // prints unmeasured fresh input as a measured 0.00M (rules 1 and 10).
   const lanes0 = inferLanes(records);
 
   const stages: StageOutcome[] = [];
@@ -138,8 +131,8 @@ export function campaignOutcomes(campaignDir: string, run?: string): CampaignOut
     if (rows.length === 0) continue;
     const counts = new Map<string, number>();
     for (const r of rows) {
-      // A stage that ran and reported nothing keeps its own bucket rather than
-      // being dropped, so the totals reconcile against the record count.
+      // A stage that reported nothing keeps its own bucket, so totals
+      // reconcile against the record count.
       const v = typeof r.verdict === "string" ? r.verdict : "(no verdict recorded)";
       counts.set(v, (counts.get(v) ?? 0) + 1);
     }
@@ -153,8 +146,8 @@ export function campaignOutcomes(campaignDir: string, run?: string): CampaignOut
   for (const r of records) {
     if (!STAGES.includes(r.kind as (typeof STAGES)[number])) continue;
     // gate-verdict records carry `mechanism`, never `revision` (issue #36), so
-    // they appear in the stage table above but not the per-revision one below —
-    // a visible gap rather than a fuzzy mechanism-string match.
+    // they appear in the stage table but not the per-revision one — a visible
+    // gap rather than a fuzzy mechanism-string match.
     if (typeof r.revision !== "string") continue;
     const k = key(r.revision);
     const e = perRevision.get(k) ?? { rounds: 0, verdicts: [], label: r.revision };

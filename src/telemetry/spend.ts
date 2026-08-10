@@ -88,10 +88,9 @@ export function accumulate(into: LaneSpend, u: RoleUsage): void {
   if (u.cacheWrite !== undefined) into.cacheWrite = (into.cacheWrite ?? 0) + u.cacheWrite;
 }
 
-/** Get-or-create one lane's bucket and add a record's usage to it. The seed
- *  omits `reasoning` and `cacheWrite` on purpose (absent ≠ zero). Shared with
- *  view/outcomes.ts: a second hand-written seed is where that rule gets broken
- *  silently (issue #43). */
+/** Get-or-create one lane's bucket and add a record's usage. The seed omits
+ *  `reasoning` and `cacheWrite` on purpose (absent ≠ zero). Share this rather
+ *  than hand-writing a second seed, which breaks that rule silently (#43). */
 export function bumpLane(lanes: Map<string, LaneSpend>, meter: LaneSpend["meter"], u: RoleUsage): void {
   const lane = lanes.get(meter) ?? { meter, calls: 0, input: 0, cacheRead: 0, output: 0 };
   accumulate(lane, u);
@@ -103,12 +102,10 @@ export function bumpLane(lanes: Map<string, LaneSpend>, meter: LaneSpend["meter"
 export const bySpend = (a: LaneSpend, b: LaneSpend) => b.input + b.output - (a.input + a.output);
 
 /** Which lane an unstamped (pre-2026-08-09) record came from, and whether its
- *  `input` is the uncached part. A single "unstamped" bucket would mix three
- *  provider accounts AND two conventions in one row.
- *
- *  The convention test is rule 1's: `cacheRead > input` is arithmetically
- *  impossible when input INCLUDES cached, so one such record proves the whole
- *  role's lane disjoint. Measured: 0 of 925 codex-cli records versus 45/53
+ *  `input` is the uncached part — one "unstamped" bucket would mix three
+ *  provider accounts and two conventions in a row. Rule 1's test: `cacheRead >
+ *  input` is impossible when input INCLUDES cached, so one such record proves
+ *  the role's lane disjoint. Measured: 0 of 925 codex-cli records versus 45/53
  *  coordinator and 193/193 auditor. */
 export function inferLanes(records: readonly Record<string, unknown>[]): Map<string, string> {
   const disjoint = new Set<string>();
@@ -140,12 +137,10 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
   const lanes0 = inferLanes(records);
   const unmetered = new Map<string, number>();
   // A cancelled worker keeps running, so one dispatch can write TWO
-  // usage-bearing records: one at the cancel, one when the work settles. Both
-  // are snapshots of the same session's CUMULATIVE total, so summing them counts
-  // the worker twice, and `declare_campaign_state` cancels every live worker.
-  // The LAST wins (cumulative, so the earlier is a strict prefix). `note` counts
-  // too: a late artifact after cancellation is journalled as a note and carries
-  // the settle-time totals the cancel record was written too early to have.
+  // usage-bearing records (cancel, then settle), both snapshots of the same
+  // session's CUMULATIVE total — summing counts the worker twice. LAST wins,
+  // since the earlier is a strict prefix. `note` counts too: a late artifact
+  // after cancellation is journalled as a note carrying settle-time totals.
   const superseded = (r: Record<string, unknown>) =>
     (r.kind === "completion" || r.kind === "note") && typeof r.id === "string" && Boolean(r.usage);
   const lastCompletion = new Map<string, number>();
@@ -171,16 +166,15 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
     // Historical roll-ups carry no flag: every verification completion before
     // 7bd75d5 summed its own four stage records, which are also on file, and
     // every campaign on disk is in that era — counting both is the 80.4M-token
-    // (27%) inflation this reader exists to prevent. A `completion` whose handle
-    // id is a verification id IS that sum. `runId` marks a post-deletion record,
-    // which carries no sum and is not a historical duplicate.
+    // (27%) inflation. `runId` marks a post-deletion record, which carries no
+    // sum and is not a historical duplicate.
     if (r.runId === undefined && r.kind === "completion" && typeof r.id === "string" && /^v\d/.test(r.id)) {
       bump(excluded, "verification roll-up, unflagged (pre-7bd75d5 record)");
       continue;
     }
-    // Records before the coordinator emitted per-wake leaves carry a running
-    // session total. Summing snapshots multiplies them; they need max() per
-    // (runId, sessionId), which is a different query — say so, don't guess.
+    // Pre-per-wake-leaf records carry a running session total. Summing
+    // snapshots multiplies them; they need max() per (runId, sessionId), a
+    // different query — say so, don't guess.
     if (r.cumulative !== undefined) {
       bump(excluded, "cumulative snapshot (pre-leaf coordinator record)");
       continue;
@@ -188,10 +182,9 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
     const u = r.usage as RoleUsage | undefined;
     if (!u || typeof u.input !== "number") {
       // Only records that COULD carry usage count as a gap. A verification or
-      // gate completion is EMPTY BY DESIGN: those handles register no usage()
-      // because their spend is leafed by the stage records underneath them, so
-      // counting them reports the leaf-only design as a measurement failure
-      // (a first run of this reader claimed 122 phantom unmeasured calls).
+      // gate completion is EMPTY BY DESIGN — its spend is leafed by the stage
+      // records underneath — so counting them reports 100+ phantom unmeasured
+      // calls.
       const leafedElsewhere =
         r.kind === "completion" && typeof r.id === "string" && /^[vg]\d/.test(r.id);
       if (SPENDING_KINDS.has(String(r.kind)) && !leafedElsewhere) {
@@ -201,14 +194,12 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
     }
     if ((u as { nonMonotone?: boolean }).nonMonotone) nonMonotone = true;
 
-    // An unstamped record's lane is inferred, and labelled as inferred: its
-    // `input` may be the nested kind, in which case it is NOT comparable with
-    // a disjoint lane's and must not share a row with one.
+    // An unstamped record's lane is inferred and labelled so: its `input` may
+    // be the nested kind, not comparable with a disjoint lane's.
     const meter = (u.meter ?? lanes0.get(roleOf(r)) ?? "unstamped") as LaneSpend["meter"];
     bumpLane(lanes, meter, u);
 
-    // Not bumpLane: this bucket is keyed by role AND meter, and carries the
-    // role on the row.
+    // Not bumpLane: keyed by role AND meter, and carries the role on the row.
     const role = roleOf(r);
     const key = `${role} ${meter}`;
     const byRole = roles.get(key) ?? { role, meter, calls: 0, input: 0, cacheRead: 0, output: 0 };
@@ -216,7 +207,7 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
     roles.set(key, byRole);
 
     // A record naming no spec is grouped as such rather than dropped, so these
-    // rows sum to the same total as byRole and the unattributed share shows.
+    // rows sum to the same total as byRole.
     const spec = typeof r.modelSpec === "string" ? r.modelSpec : "(no modelSpec on record)";
     const mKey = `${spec} ${meter}`;
     const byModel = models.get(mKey) ?? { role: spec, meter, calls: 0, input: 0, cacheRead: 0, output: 0 };
@@ -234,9 +225,8 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
   };
 }
 
-/** Human-readable report. Deliberately prints per-lane subtotals and NO grand
- *  total: a single number across lanes would be the cross-meter sum this
- *  reader exists to refuse. */
+/** Human-readable report: per-lane subtotals and NO grand total, which would
+ *  be the cross-meter sum this reader refuses. */
 export function formatSpend(s: CampaignSpend): string {
   const W = 34;
   const lane = (s: string) => (s.length > W ? `${s.slice(0, W - 1)}…` : s).padEnd(W);
@@ -276,7 +266,7 @@ export function formatSpend(s: CampaignSpend): string {
   // column, and rule 10 forbids presenting a gap as a measurement.
   const noReasoning = s.byLane.filter((l) => l.reasoning === undefined).map((l) => String(l.meter));
   // Absent OR an exact zero across many calls: historical records carry a
-  // literal 0 from a broken meter (absent ≠ zero; see RoleUsage).
+  // literal 0 from a broken meter.
   const noCacheWrite = s.byLane
     .filter((l) => l.cacheWrite === undefined || (l.cacheWrite === 0 && l.calls > 1))
     .map((l) => String(l.meter));
@@ -289,8 +279,7 @@ export function formatSpend(s: CampaignSpend): string {
     }
     if (noCacheWrite.length > 0) {
       out.push(`  cacheWrite unreported by: ${noCacheWrite.join(", ")}`);
-      // An interval, not a point estimate: a point estimate here would be
-      // indistinguishable from a measurement in three months.
+      // An interval, not a point estimate, which would read as a measurement.
       out.push("    Cache writes are real spend billed at 1.25x input on the API lane and are");
       out.push("    absent upstream on the codex lanes (codex #32479, pi #6469). The audit lane,");
       out.push("    which reports both, measured write/read between 0.25 and 2.5 — so bound an");
@@ -307,9 +296,8 @@ export function formatSpend(s: CampaignSpend): string {
     out.push("UNMETERED — real spend nobody can count, not spend that was zero:");
     for (const u of s.unmetered) out.push(`  ${String(u.calls).padStart(5)}  ${u.lane}`);
   }
-  // Rule 1's diagnostic: `cacheRead > input` is impossible when input INCLUDES
-  // cached, so a role showing it is disjoint-convention. This located the 30%
-  // overstatement in the 2026-08-09 study; run it first when numbers look wrong.
+  // Rule 1's diagnostic; it located the 30% overstatement in the 2026-08-09
+  // study, so run it first when numbers look wrong.
   const disjoint = s.byRole.filter((r) => r.cacheRead > r.input);
   if (disjoint.length > 0) {
     out.push("");

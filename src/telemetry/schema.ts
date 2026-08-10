@@ -1,52 +1,29 @@
 // The measurement tree as a formal span schema (@earendil-works/pi-telemetry).
 //
-// WHY THIS AND NOT THE JOURNAL. Coverify has two kinds of record and they are
-// not interchangeable:
+// Two kinds of record, not interchangeable: the gate store is BUSINESS STATE
+// (content-hash-bound, read back to decide what a campaign may do, never
+// dependent on an exporter), spans are DIAGNOSTIC — "recording a span must not
+// change whether the operation runs, succeeds, fails, or is persisted," which
+// is CLAUDE.md rule 2 in pi-telemetry's words.
 //
-//   - The gate store is BUSINESS STATE. checkPromotion, priorReusableRecord
-//     and retractionClosure read it back to decide what a campaign may do, and
-//     records are content-hash-bound. It is authoritative, it lives outside
-//     the campaign tree so no role's write tools can reach it, and it must
-//     never depend on an exporter being configured.
-//   - Spans are DIAGNOSTIC. pi-telemetry states the rule its own way:
-//     "recording a span must not change whether the operation runs, succeeds,
-//     fails, or is persisted." That is CLAUDE.md rule 2 in different words —
-//     observability must be removable without changing campaign behaviour.
-//
-// So this does not replace the journal and does not duplicate it either: the
-// default context is NOOP, so nothing is emitted unless an operator attaches
-// an exporter. What the schema buys, today, is that the tree the journal has
-// been threading BY HAND — runId on every record, wake on every dispatch,
-// dispatchId on every stage — is now written down once, formally, with the
-// parent of each span declared. Three separate reviews found gaps in that
-// hand-threading; a declared parent is the structural version of the rule.
-//
-// It is also the seam an OpenTelemetry exporter plugs into without touching
-// any call site, which is the only reason to prefer a vendor-neutral contract
-// over ad-hoc logging.
-import {
-  InMemoryTelemetryContext,
-  NOOP_TELEMETRY_CONTEXT,
-  defineTelemetrySchema,
-  type TelemetryContext,
-  type TelemetrySpan,
-} from "@earendil-works/pi-telemetry";
+// Spans write the measurement half of the journal: cli.ts installs
+// JournalTelemetryContext, turning each provider_call span into a role-call
+// leaf. Under the NOOP context a run loses every token number and not one
+// verdict. The declared `parents` edges replace hand-stamped runId/wake/
+// dispatchId fields, and are the seam an OpenTelemetry exporter plugs into.
+import { defineTelemetrySchema } from "@earendil-works/pi-telemetry";
 
 const tokens = (description: string) =>
   ({ type: "number", description, cardinality: "high" }) as const;
 
 /**
- * The campaign → run → wake → dispatch → stage → provider-request tree,
- * declared. Every `parents` clause here is an edge that used to exist only as
- * a field somebody remembered to stamp.
+ * The campaign → run → wake → dispatch → stage → provider-request tree.
  *
- * Token attributes deliberately mirror RoleUsage and NOT a vendor's shape:
- * `input` is the uncached part on every lane, `reasoning` is a SUBSET of
- * `output` (pi's Usage contract, so adding them double-counts), and `meter`
- * names the lane because the lanes bill to different accounts and must never
- * be summed together. An exporter that flattens these into one "tokens"
- * counter would reintroduce the exact error docs/measurement-protocol.md
- * exists to prevent, so the meaning travels with the attribute.
+ * Token attributes mirror RoleUsage, not a vendor's shape: `input` is the
+ * uncached part on every lane, `reasoning` is a SUBSET of `output`, and `meter`
+ * names the lane because lanes bill to different accounts and are never summed.
+ * An exporter flattening these into one "tokens" counter reintroduces the error
+ * docs/measurement-protocol.md exists to prevent.
  */
 export const COVERIFY_TELEMETRY_SCHEMA = defineTelemetrySchema({
   version: 1,
