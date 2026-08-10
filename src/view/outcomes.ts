@@ -13,7 +13,7 @@
 // and measure the unrecorded edge rather than the misdirected work.
 import { GateStore } from "../gates.js";
 import type { RoleUsage } from "../providers.js";
-import { type LaneSpend, accumulate } from "./spend.js";
+import { type LaneSpend, bumpLane, bySpend } from "./spend.js";
 
 /** The four verification stages plus the pre-verification gate. A stage record
  *  carries `verdict`, so a FAIL rate is a count, not an inference. */
@@ -52,21 +52,11 @@ export interface CampaignOutcomes {
  *  revision here too. */
 const key = (s: unknown) => String(s).toLowerCase();
 
-function bumpLane(lanes: Map<string, LaneSpend>, u: RoleUsage): void {
-  const meter = (u.meter ?? "unstamped") as LaneSpend["meter"];
-  const lane = lanes.get(meter) ?? { meter, calls: 0, input: 0, cacheRead: 0, output: 0 };
-  accumulate(lane, u);
-  lanes.set(meter, lane);
-}
-
 export function campaignOutcomes(campaignDir: string, run?: string): CampaignOutcomes {
   const store = new GateStore(campaignDir);
-  const records = store
-    .all()
-    .filter((r) => run === undefined || (r as { runId?: string }).runId === run) as unknown as Record<
-    string,
-    unknown
-  >[];
+  const records = (store.all() as unknown as Record<string, unknown>[]).filter(
+    (r) => run === undefined || r.runId === run,
+  );
 
   const promoted = new Set(records.filter((r) => r.kind === "promotion").map((r) => key(r.revision)));
 
@@ -106,10 +96,11 @@ export function campaignOutcomes(campaignDir: string, run?: string): CampaignOut
     if (typeof r.verdict === "string") e.verdicts.push(r.verdict);
     perRevision.set(k, e);
     const u = r.usage as RoleUsage | undefined;
-    if (u && typeof u.input === "number") bumpLane(promoted.has(k) ? promotedLanes : unpromoted, u);
+    if (u && typeof u.input === "number") {
+      bumpLane(promoted.has(k) ? promotedLanes : unpromoted, (u.meter ?? "unstamped") as LaneSpend["meter"], u);
+    }
   }
 
-  const bySpend = (a: LaneSpend, b: LaneSpend) => b.input + b.output - (a.input + a.output);
   return {
     stages,
     revisions: [...perRevision]

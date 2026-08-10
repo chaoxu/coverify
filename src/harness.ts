@@ -581,6 +581,30 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       }),
     });
   };
+  /** The compaction's own spend, leafed like any other call. The summarization
+   *  is a real, large provider request, and its tokens were being folded
+   *  silently into the session total — so the first-order cost of the
+   *  resident-coordinator design was unmeasurable, and no record said a
+   *  compaction had happened at all (#37). The record carries the DELTA this
+   *  call cost plus the context it traded away. */
+  const leafCompactionSpend = (session: RoleSession, before: RoleUsage | undefined, beforeTokens: number) => {
+    const after = session.usage();
+    if (!after) return;
+    store.append({
+      kind: "role-call",
+      role: "coordinator",
+      sessionId: coordinatorSessionId(),
+      wake: wakeCount,
+      compaction: true,
+      modelSpec: specKey(coordinatorSpec),
+      usage: subUsage(after, before),
+      contextTokensBefore: beforeTokens,
+      contextTokensAfter: session.approxTokens(),
+    });
+    // Baseline moves with it, so this wake's own leaf reports what the WAKE
+    // cost and the compaction is counted exactly once.
+    prevCoord = { ...prevCoord, usage: after };
+  };
   // Per-wake context growth, surfaced when large (issue #17): the measured
   // campaign grew 29–55k tokens per wake, ~90% of it the coordinator's own
   // reads and output, invisible to the coordinator itself. Telemetry plus a
@@ -680,29 +704,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
               "decisions not yet externalized, and open questions from the newest reports.",
           );
           justCompacted = true;
-          // The summarization call is a real, large provider request, and its
-          // tokens were being folded silently into the session total — so the
-          // first-order cost of the resident-coordinator design was
-          // unmeasurable, and no record said a compaction had happened at all
-          // (#37). A leaf like any other: the DELTA this call cost, plus the
-          // context it traded away.
-          const afterUsage = coordinator.usage();
-          if (afterUsage) {
-            store.append({
-              kind: "role-call",
-              role: "coordinator",
-              sessionId: coordinatorSessionId(),
-              wake: wakeCount,
-              compaction: true,
-              modelSpec: specKey(coordinatorSpec),
-              usage: subUsage(afterUsage, beforeUsage),
-              contextTokensBefore: beforeTokens,
-              contextTokensAfter: coordinator.approxTokens(),
-            });
-            // Baseline moves with it, so this wake's own leaf reports what the
-            // WAKE cost and the compaction is counted exactly once.
-            prevCoord = { ...prevCoord, usage: afterUsage };
-          }
+          leafCompactionSpend(coordinator, beforeUsage, beforeTokens);
         } catch (e) {
           // Compaction is a real LLM call and can fail (quota, provider);
           // the campaign must not die with workers live — fall back to the

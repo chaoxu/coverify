@@ -95,6 +95,21 @@ export function accumulate(into: LaneSpend, u: RoleUsage): void {
   if (u.cacheWrite !== undefined) into.cacheWrite = (into.cacheWrite ?? 0) + u.cacheWrite;
 }
 
+/** Get-or-create one lane's bucket and add a record's usage to it. The seed
+ *  omits `reasoning` and `cacheWrite` on purpose (see accumulate): an absent
+ *  field must never render as a measured zero. One copy, shared with
+ *  view/outcomes.ts, for the reason accumulate() itself is shared — a second
+ *  hand-written seed is where that rule gets broken silently (issue #43). */
+export function bumpLane(lanes: Map<string, LaneSpend>, meter: LaneSpend["meter"], u: RoleUsage): void {
+  const lane = lanes.get(meter) ?? { meter, calls: 0, input: 0, cacheRead: 0, output: 0 };
+  accumulate(lane, u);
+  lanes.set(meter, lane);
+}
+
+/** Row order only: biggest spender first. Summing input+output here ORDERS
+ *  lanes, it never prints — a cross-lane total is what this reader refuses. */
+export const bySpend = (a: LaneSpend, b: LaneSpend) => b.input + b.output - (a.input + a.output);
+
 /** Which lane an unstamped (pre-2026-08-09) record came from, and whether its
  *  `input` is the uncached part. Both are inferable and neither may be assumed:
  *  a single "unstamped" bucket would mix three provider accounts AND two
@@ -220,10 +235,10 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
     // `input` may be the nested kind, in which case it is NOT comparable with
     // a disjoint lane's and must not share a row with one.
     const meter = (u.meter ?? lanes0.get(roleOf(r)) ?? "unstamped") as LaneSpend["meter"];
-    const lane = lanes.get(meter) ?? { meter, calls: 0, input: 0, cacheRead: 0, output: 0 };
-    accumulate(lane, u);
-    lanes.set(meter, lane);
+    bumpLane(lanes, meter, u);
 
+    // Not bumpLane: this bucket is keyed by role AND meter, and carries the
+    // role on the row.
     const role = roleOf(r);
     const key = `${role} ${meter}`;
     const byRole = roles.get(key) ?? { role, meter, calls: 0, input: 0, cacheRead: 0, output: 0 };
@@ -231,7 +246,6 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
     roles.set(key, byRole);
   }
 
-  const bySpend = (a: LaneSpend, b: LaneSpend) => b.input + b.output - (a.input + a.output);
   return {
     byLane: [...lanes.values()].sort(bySpend),
     byRole: [...roles.values()].sort(bySpend),

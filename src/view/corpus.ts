@@ -136,17 +136,21 @@ export function formatCorpusChecks(checks: CorpusCheck[]): string {
   out.push("corpus checks (docs/measurement-protocol.md rule 3b) — run these before quoting");
   out.push("a number off the session trees. A corpus that fails one is not summable.");
   for (const c of checks) {
-    const mark = c.notApplicable ? "n/a " : c.ok ? "ok  " : "FAIL";
+    let mark: string;
+    if (c.notApplicable) mark = "n/a ";
+    else if (c.ok) mark = "ok  ";
+    else mark = "FAIL";
     out.push(`  ${mark} ${c.n}. ${c.name}`);
     out.push(`       ${c.detail}`);
   }
   const failed = checks.filter((c) => !c.ok && !c.notApplicable);
   out.push("");
-  out.push(
-    failed.length === 0
-      ? "No check failed. That is a licence to sum this corpus, not a guarantee the"
-      : `${failed.length} CHECK(S) FAILED — do not sum this corpus until the relationship is`,
-  );
-  out.push(failed.length === 0 ? "numbers mean what you want them to (rules 7 and 8)." : "characterized.");
+  if (failed.length === 0) {
+    out.push("No check failed. That is a licence to sum this corpus, not a guarantee the");
+    out.push("numbers mean what you want them to (rules 7 and 8).");
+  } else {
+    out.push(`${failed.length} CHECK(S) FAILED — do not sum this corpus until the relationship is`);
+    out.push("characterized.");
+  }
   return out.join("\n");
 }

@@ -61,11 +61,21 @@ function campaign(label: string, verdicts: string[]) {
   return { dir, store: new GateStore(dir), calls: () => Number(fs.readFileSync(counter, "utf8").trim()) };
 }
 
-/** Run one cadence to completion and hand back the journal it wrote. */
-async function runCadence(dir: string, store: InstanceType<typeof GateStore>, revision = "cand.r1.md") {
+/** Run one cadence to completion and hand back the journal it wrote. The id,
+ *  wake and rebuttal are parameters because the carry-forward test runs a
+ *  SECOND cadence over the same store: a re-attempt against a standing FAIL
+ *  gets a fresh verification id and carries the rebuttal the contract
+ *  requires. Only `hasHandle` is asked about an id, and only ever about the
+ *  cadence's own (cadence.ts `cancelled`), so answering for this id is the
+ *  whole of a live handle. */
+async function runCadence(
+  dir: string,
+  store: InstanceType<typeof GateStore>,
+  opts: { id?: string; wake?: number; rebuttalArtifact?: string } = {},
+) {
+  const { id = "v1", wake = 1, rebuttalArtifact } = opts;
   const models = await buildModels();
   let promise: (() => Promise<string>) | undefined;
-  const live = new Set<string>(["v1"]);
   const tool = requestVerificationTool({
     dir,
     store,
@@ -73,19 +83,20 @@ async function runCadence(dir: string, store: InstanceType<typeof GateStore>, re
     models,
     evidenceRelative: (p: string) => (p.includes("..") ? undefined : p),
     declaration: () => undefined,
-    mintVerificationId: () => "v1",
-    wake: () => 1,
-    hasHandle: (id: string) => live.has(id),
+    mintVerificationId: () => id,
+    wake: () => wake,
+    hasHandle: (asked: string) => asked === id,
     liveCount: () => 0,
     registerHandle: (h) => {
       promise = h.promise;
     },
   });
-  await tool.execute("call-1", {
-    revision,
+  await tool.execute(`call-${id}`, {
+    revision: "cand.r1.md",
     declaredDependencies: "none",
     keyIdeas: "the idea, stated at a high level",
     allowedSources: "standard references",
+    ...(rebuttalArtifact === undefined ? {} : { rebuttalArtifact }),
   });
   if (!promise) throw new Error("cadence registered no handle");
   return promise();
@@ -165,31 +176,7 @@ test("a re-run on byte-identical inputs carries every reusable stage forward", a
   // A FAIL stands against the exact bytes, so the re-attempt carries the
   // rebuttal the contract requires.
   fs.writeFileSync(path.join(dir, "EVIDENCE", "rebuttal.md"), "# rebuttal\n\nWhy the comparison erred.\n");
-  const models = await buildModels();
-  let promise: (() => Promise<string>) | undefined;
-  const tool = requestVerificationTool({
-    dir,
-    store,
-    contract: "CONTRACT",
-    models,
-    evidenceRelative: (p: string) => (p.includes("..") ? undefined : p),
-    declaration: () => undefined,
-    mintVerificationId: () => "v2",
-    wake: () => 2,
-    hasHandle: () => true,
-    liveCount: () => 0,
-    registerHandle: (h) => {
-      promise = h.promise;
-    },
-  });
-  await tool.execute("call-2", {
-    revision: "cand.r1.md",
-    declaredDependencies: "none",
-    keyIdeas: "the idea, stated at a high level",
-    allowedSources: "standard references",
-    rebuttalArtifact: "rebuttal.md",
-  });
-  await promise?.();
+  await runCadence(dir, store, { id: "v2", wake: 2, rebuttalArtifact: "rebuttal.md" });
 
   // ONE more provider call, not four: only the comparison was re-bought.
   expect(calls() - afterFirst).toBe(1);
