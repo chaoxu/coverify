@@ -4,12 +4,17 @@
 // type and defaults to NOOP — so `rm -rf src/telemetry`, its test files, and
 // the imports in cli.ts is a clean removal. Keep it that way.
 //
-// What deletion costs is ATTRIBUTION, not counting. `spendLeafed()` in
-// providers.ts keys on whether a sink is installed: with one, the span leaf is
-// the single writer and referencing records carry join keys alone; with none,
-// those records carry the tokens themselves. So a harness without this folder
-// still records what it spent — it loses the per-stage tree, and the readers
-// that would show it.
+// What deletion mostly costs is ATTRIBUTION rather than counting.
+// `spendLeafed()` in providers.ts keys on whether a sink is installed: with
+// one, the span leaf is the single writer and referencing records carry join
+// keys alone; with none, those records carry the tokens themselves. Worker,
+// gate and librarian spend therefore survives without this folder.
+//
+// One lane does NOT: a verification stage record deliberately carries no
+// tokens, so a sink-less run records its four calls as calls that reported no
+// usage. That gap is stated in docs/journal-shape.md rule 13 rather than
+// papered over, and closing it means giving the cadence a sink-independent
+// writer of its own.
 import type {
   SpanAttributes,
   SpanOptions,
@@ -54,9 +59,10 @@ export class JournalTelemetryContext implements TelemetryContext {
     };
     const span: TelemetrySpan = {
       startSpan: (o, cb) => new JournalTelemetryContext(this.store, state).startSpan(o, cb),
-      addEvent: (name, attributes) => {
-        if (name === "coverify.compaction") this.write(state, { compaction: true, ...attributes });
-      },
+      // No addEvent handling: nothing in the harness emits one. Compaction is
+      // a real billed call, and harness.ts writes its leaf directly because it
+      // also knows the context tokens traded away, which a span does not.
+      addEvent: () => {},
       setAttributes: (attributes) => Object.assign(state.attributes, attributes),
       setStatus: (status: SpanStatus) => {
         if (status.status === "error") state.attributes["coverify.error"] = status.error?.message ?? true;

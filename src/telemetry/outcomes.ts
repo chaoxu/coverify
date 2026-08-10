@@ -102,28 +102,33 @@ function onPathFraction(
   return { ...base, onPath: seen.size, fraction: seen.size / promotions.length };
 }
 
-/** A cadence dispatch runs several stages, so the leaf key is the pair. Leaves
- *  under a stage span carry both; ones that carry only `dispatchId` join to
- *  every stage of that dispatch, which is the best the record supports. */
+/** A cadence dispatch runs several stages, so the leaf key is the pair. */
 const joinKey = (dispatchId: unknown, stage: unknown) => `${String(dispatchId)}\u0000${String(stage)}`;
 
-function leavesByStage(records: readonly Record<string, unknown>[]): Map<string, RoleUsage[]> {
-  const out = new Map<string, RoleUsage[]>();
-  const push = (k: string, u: RoleUsage) => out.set(k, [...(out.get(k) ?? []), u]);
-  const dispatchStages = new Map<string, Set<string>>();
-  for (const r of records) {
-    if (STAGES.includes(r.kind as (typeof STAGES)[number]) && typeof r.dispatchId === "string") {
-      dispatchStages.set(r.dispatchId, (dispatchStages.get(r.dispatchId) ?? new Set()).add(String(r.kind)));
-    }
-  }
+/** Stage-attributed spend, plus the dispatch-level spend that names no stage.
+ *
+ *  The second bucket is why this is not one map. `flushErrorSpend` and
+ *  `flushUnrecordedSpend` write a `role-call` carrying `dispatchId` but no
+ *  `stage` — a cadence billed and then failed. Fanning those across every stage
+ *  the dispatch recorded counted a single payment FOUR TIMES in a reader whose
+ *  stated discipline is never to double-count, so they are attributed once, to
+ *  the dispatch. */
+function leavesByStage(records: readonly Record<string, unknown>[]): {
+  byStage: Map<string, RoleUsage[]>;
+  byDispatch: Map<string, RoleUsage[]>;
+} {
+  const byStage = new Map<string, RoleUsage[]>();
+  const byDispatch = new Map<string, RoleUsage[]>();
+  const push = (m: Map<string, RoleUsage[]>, k: string, u: RoleUsage) =>
+    m.set(k, [...(m.get(k) ?? []), u]);
   for (const r of records) {
     if (r.kind !== "role-call" || typeof r.dispatchId !== "string") continue;
     const u = r.usage as RoleUsage | undefined;
     if (!u || typeof u.input !== "number") continue;
-    if (typeof r.stage === "string") push(joinKey(r.dispatchId, r.stage), u);
-    else for (const s of dispatchStages.get(r.dispatchId) ?? []) push(joinKey(r.dispatchId, s), u);
+    if (typeof r.stage === "string") push(byStage, joinKey(r.dispatchId, r.stage), u);
+    else push(byDispatch, r.dispatchId, u);
   }
-  return out;
+  return { byStage, byDispatch };
 }
 
 export function campaignOutcomes(campaignDir: string, run?: string): CampaignOutcomes {
@@ -146,7 +151,10 @@ export function campaignOutcomes(campaignDir: string, run?: string): CampaignOut
   const perRevision = new Map<string, { rounds: number; verdicts: string[]; label: string }>();
   const unpromoted = new Map<string, LaneSpend>();
   const promotedLanes = new Map<string, LaneSpend>();
-  const leafSpend = leavesByStage(records);
+  const { byStage: leafSpend, byDispatch: dispatchSpend } = leavesByStage(records);
+  // Dispatch-level spend is claimed by the FIRST stage record of that dispatch,
+  // so it lands in the promoted/unpromoted split exactly once.
+  const claimedDispatches = new Set<string>();
   // Stage records whose spend could not be found on either side of the split.
   // Counted so an empty spend table can say WHY it is empty (rule 10).
   let unjoined = 0;
@@ -182,8 +190,17 @@ export function campaignOutcomes(campaignDir: string, run?: string): CampaignOut
     // stage record: a stage record is a DECISION and carries no tokens. The
     // legacy branch reads `r.usage` for campaigns recorded before that split.
     const legacy = r.usage as RoleUsage | undefined;
-    const spends =
-      legacy && typeof legacy.input === "number" ? [legacy] : leafSpend.get(joinKey(r.dispatchId, r.kind)) ?? [];
+    let spends: RoleUsage[];
+    if (legacy && typeof legacy.input === "number") {
+      spends = [legacy];
+    } else {
+      spends = [...(leafSpend.get(joinKey(r.dispatchId, r.kind)) ?? [])];
+      const id = typeof r.dispatchId === "string" ? r.dispatchId : undefined;
+      if (id !== undefined && !claimedDispatches.has(id)) {
+        claimedDispatches.add(id);
+        spends.push(...(dispatchSpend.get(id) ?? []));
+      }
+    }
     for (const u of spends) {
       const meter = (u.meter ?? lanes0.get(roleOf(r)) ?? "unstamped") as LaneSpend["meter"];
       bumpLane(promoted.has(k) ? promotedLanes : unpromoted, meter, u);

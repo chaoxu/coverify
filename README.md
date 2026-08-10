@@ -13,8 +13,9 @@ sessions propose routes, work them out, and record what failed and why. When a
 candidate proof looks finished, it goes through four separate sessions, none
 of which sees the others' work:
 
-1. A **hostile audit** by a model from a different vendor, asked to break the
-   proof. Its verdict can kill the candidate.
+1. A **hostile audit** by a fresh session asked to break the proof. Its verdict
+   can kill the candidate. At the shipped defaults this runs on a different
+   vendor's model from the one that wrote the candidate — see the caveat below.
 2. A **bundle certification** checking that the summary handed to the next
    stage does not smuggle the proof through. A failure here sends the summary
    back for rewriting; the candidate is untouched.
@@ -53,6 +54,10 @@ ledger rather than hidden:
 - **The dependency list is instructed, not enforced.** A candidate declares
   what it relies on. The hostile auditor is shown `PROVED.md` so it can catch
   a false declaration, but nothing stops one from being made.
+- **Cross-family auditing is a default, not a guarantee.** No code compares the
+  auditor's model family to the candidate author's. The `fable` ideation family
+  currently resolves to the same model as the default auditor, so a candidate
+  from that family is audited by its own model unless you re-point one of them.
 - **The reconstructor's blindness is checked, not sealed.** The harness
   refuses to dispatch a reconstruction whose prompt contains the candidate
   text, comparing with whitespace collapsed so a re-wrapped copy cannot slip
@@ -74,7 +79,8 @@ You need four things:
 
 - **[Bun](https://bun.sh)** — the only runtime.
 - **The `codex` CLI**, logged in to a ChatGPT subscription.
-- **The `claude` CLI**, logged in to a Claude subscription. The hostile audit
+- **The `claude` CLI**, logged in to a Claude subscription. (`agy` too, if you
+  use the `gemini` ideation family.) The hostile audit
   runs on a different vendor's model from the one that wrote the candidate, so
   the defaults span both. You can point every role at one provider (see
   `docs/models.md`) and lose the cross-family check by doing so.
@@ -180,9 +186,11 @@ round twelve times is the kind of thing that changes how you set up the next
 campaign.
 
 These four readers live in `src/telemetry/`, which is severable. Removing it
-means: delete the folder, its five test files, the imports and four `case`
-blocks in `src/cli.ts`, and the one `src/telemetry/limits.ts` line in
-`HOME_PATH_ALLOWED` in `scripts/conformance-check.ts`. What is left still
+means: delete the folder; delete the six test files that import it (`grep -l
+telemetry tests/*.ts`); in `src/cli.ts` delete its imports, its four `case`
+blocks, and the `telemetry:` option passed to `runCampaign`; and delete the
+`src/telemetry/limits.ts` line from `HOME_PATH_ALLOWED` in
+`scripts/conformance-check.ts`. What is left still
 proves theorems and still records spend on worker and gate lanes; it loses
 these four commands, the per-stage attribution, and verification-stage token
 counts (see `docs/journal-shape.md`). A conformance check fails if anything
@@ -207,9 +215,13 @@ comparison step then maps its route against the candidate's. This is the only
 stage that can catch an error the candidate's own framing makes invisible —
 and the one whose isolation rests partly on instruction, as above.
 
-**It crosses model families.** The hostile audit runs on a different vendor's
-model from the one that wrote the candidate, so a shared failure mode has to
-survive two architectures rather than one.
+**It crosses model families, by configuration rather than by enforcement.** The
+shipped defaults put the auditor on Anthropic and everything else on OpenAI, so
+a shared failure mode has to survive two architectures. Nothing in the code
+checks this. Re-point a reasoner at the auditor's model — `docs/models.md`
+suggests exactly that as a quota fallback — and the audit becomes same-family
+without refusing. `prove` warns when it can see the collision at startup; it
+does not stop you.
 
 **It writes the rules down and enforces them in code.** The protocol coverify
 follows is a document in this repository —

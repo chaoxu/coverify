@@ -161,6 +161,18 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
     (typeof r.id === "string" && leafed.has(`d:${r.id}`)) ||
     (typeof r.role === "string" && typeof r.wake === "number" && leafed.has(`w:${r.role}:${r.wake}`));
 
+  // Dispatches that already declared an unmeasurable lane. Their span leaf and
+  // their completion are both usage-less by construction — the lane reports
+  // nothing — so counting either as "a provider call that reported no usage"
+  // puts ONE call in both honesty sections at once, under UNMETERED and again
+  // under excluded. Keyed on `dispatchId` OR `id`, since a completion carries
+  // the handle id where a leaf carries the dispatch.
+  const declaredUnmetered = new Set(
+    records
+      .filter((r) => typeof r.unmetered === "string" && typeof r.dispatchId === "string")
+      .map((r) => String(r.dispatchId)),
+  );
+
   for (const [i, r] of records.entries()) {
     if (superseded(r) && lastCompletion.get(r.id as string) !== i) {
       bump(excluded, "superseded completion for a cancelled dispatch (same session's cumulative total)");
@@ -197,7 +209,8 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
       // records underneath, so counting them reports phantom unmeasured calls.
       const emptyByDesign =
         (r.kind === "completion" && typeof r.id === "string" && /^[vg]\d/.test(r.id)) ||
-        leafedElsewhere(r);
+        leafedElsewhere(r) ||
+        declaredUnmetered.has(String(r.dispatchId ?? r.id));
       if (SPENDING_KINDS.has(String(r.kind)) && !emptyByDesign) {
         bump(excluded, "provider call that reported no usage (unmetered lane, or a reject before parse)");
       }

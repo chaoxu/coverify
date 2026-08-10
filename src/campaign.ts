@@ -71,8 +71,20 @@ export function campaignExists(dir: string): boolean {
   return fs.existsSync(path.join(dir, "STATEMENT.md"));
 }
 
+/** Throws when the ledger is absent. Callers that can legitimately meet a
+ *  partial campaign use `readLedgerOrNote`; the throw is load-bearing for
+ *  `archiveLedgerHistory`, which must not snapshot a placeholder as content. */
 export function readLedger(dir: string, name: string): string {
   return fs.readFileSync(path.join(dir, name), "utf-8");
+}
+
+/** For display: a missing ledger is a state a hand-made or partially restored
+ *  campaign can legitimately be in — the README invites those — and `status`
+ *  exiting on a raw ENOENT stack trace helps nobody. */
+export function readLedgerOrNote(dir: string, name: string): string {
+  const p = path.join(dir, name);
+  if (!fs.existsSync(p)) return `[${name} is missing from this campaign directory]\n`;
+  return fs.readFileSync(p, "utf-8");
 }
 
 /** Reserve the next free append-only evidence path for a basename. Launcher:

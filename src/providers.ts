@@ -215,6 +215,29 @@ export function familyModelSpec(family: string): ModelSpec | undefined {
     : envSpec(`COVERIFY_FAMILY_${family.toUpperCase()}`, fallback);
 }
 
+/** Roles and ideation families whose model is the auditor's own.
+ *
+ *  The audit's value is that a shared failure mode has to survive two
+ *  architectures. Nothing enforces that — this only makes the collision
+ *  VISIBLE, because refusing would invent a policy the user did not set
+ *  (design rule 3) and because a same-family audit is still an audit. The
+ *  shipped `fable` family resolves to the auditor's own model, and
+ *  docs/models.md recommends re-pointing the reasoner there when ChatGPT quota
+ *  runs out, so this fires on a configuration the docs themselves suggest. */
+export function sameFamilyAsAuditor(): string[] {
+  const auditor = specKey(roleModelSpec("hostileAuditor"));
+  const clashes: string[] = [];
+  for (const role of ROLE_NAMES) {
+    if (role === "hostileAuditor") continue;
+    if (specKey(roleModelSpec(role)) === auditor) clashes.push(`role ${role}`);
+  }
+  for (const family of IDEATION_FAMILIES) {
+    const spec = familyModelSpec(family);
+    if (spec !== undefined && specKey(spec) === auditor) clashes.push(`ideation family ${family}`);
+  }
+  return clashes;
+}
+
 /** Resolve an ideation-family request to a usable spec, or a refusal reason the
  *  coordinator can act on in the same turn. */
 export async function resolveFamily(
@@ -398,15 +421,20 @@ export function leafDelegatedCall(
   attrs: { role: string; modelSpec: string },
   usage: RoleUsage,
 ): void {
-  void (parent ?? sink).startSpan(
-    {
-      name: "coverify.provider_call",
-      attributes: { "coverify.model_spec": attrs.modelSpec, "coverify.role": attrs.role },
-    },
-    (span) => {
-      recordProviderCall(span, usage, { requests: 1 });
-    },
-  );
+  // Rejection owned, not voided: a third-party sink that throws would otherwise
+  // surface as an unhandled rejection and end the campaign, which is exactly
+  // what "measurement may not end a campaign" forbids.
+  void (parent ?? sink)
+    .startSpan(
+      {
+        name: "coverify.provider_call",
+        attributes: { "coverify.model_spec": attrs.modelSpec, "coverify.role": attrs.role },
+      },
+      (span) => {
+        recordProviderCall(span, usage, { requests: 1 });
+      },
+    )
+    .catch(() => {});
 }
 
 export async function runRole(
@@ -470,7 +498,7 @@ export interface RoleSession {
   reportedModel?(): string | undefined;
   /** Provider calls whose tokens cannot be measured. Real spend, recorded as a
    *  gap so it never reads as costing nothing. */
-  unmetered?(): { lane: string; detail: string }[];
+  unmetered?(): { lane: string; detail: string; usage?: RoleUsage }[];
   /** Provider attempts, retries included. A retry re-presents the whole context
    *  and is billed again but leaves no message, so it is unrecoverable from the
    *  transcript afterwards. */
@@ -715,8 +743,15 @@ export async function createHarnessRoleSession(
         literature: run.workspace.literature,
         failedLedger: run.workspace.failedLedger,
         onUnmetered: (lane, detail) => unmetered.push({ lane, detail }),
+        // The sink writes the leaf when one is installed; otherwise the
+        // harness writes it off this channel at settle. Without the second
+        // arm a metered librarian call recorded NEITHER spend nor gap with
+        // telemetry off — silently losing 20k+ input tokens, which is worse
+        // than the unmetered record it replaced.
         onLibrarianSpend: (usage) =>
-          leafDelegatedCall(spanParent, { role: "librarian", modelSpec: librarianSpec() }, usage),
+          spendLeafed()
+            ? leafDelegatedCall(spanParent, { role: "librarian", modelSpec: librarianSpec() }, usage)
+            : unmetered.push({ lane: "librarian", detail: librarianSpec(), usage }),
       })
     : [];
   if (run.extraTools) tools.push(...run.extraTools);
@@ -790,7 +825,7 @@ export async function createHarnessRoleSession(
     contextMessages = (await session.buildContext()).messages;
   };
   let attempts = 0;
-  const unmetered: { lane: string; detail: string }[] = [];
+  const unmetered: { lane: string; detail: string; usage?: RoleUsage }[] = [];
   // Cancellation must also cover the retry wrapper's backoff sleeps:
   // harness.abort() only aborts an in-flight prompt, and between attempts there
   // is none. retryAssistantCall honors this controller as terminal.

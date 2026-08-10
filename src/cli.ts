@@ -9,7 +9,7 @@ import {
   gateOf,
   readCampaignLock,
   readJournal,
-  readLedger,
+  readLedgerOrNote,
 } from "./campaign.js";
 import { CLAUDE_BRIDGE_ID } from "./claude-bridge.js";
 import { GateStore, acceptedStatementHash, recordStatement, statementHash } from "./gates.js";
@@ -18,6 +18,7 @@ import {
   providerUsable,
   ROLE_NAMES,
   roleModelSpec,
+  sameFamilyAsAuditor,
   specLabel,
 } from "./providers.js";
 import { runCampaign } from "./harness.js";
@@ -30,8 +31,9 @@ import { campaignLimits, formatLimits } from "./telemetry/limits.js";
 import { knobUsage, validateKnobs } from "./knobs.js";
 import { JournalTelemetryContext } from "./telemetry/context.js";
 
-function usage(): never {
-  console.error(`usage:
+function usage(explicit = false): never {
+  const out = explicit ? console.log : console.error;
+  out(`usage:
   coverify prove "<exact statement>" [--dir campaign] [--agent-limit N] [--max-wakes N] [--no-computation]
   coverify resume [--dir campaign] [--agent-limit N] [--max-wakes N] [--no-computation]
                                     (--agent-limit defaults to 6 workers — user policy 2026-08-08; 0 = unlimited)
@@ -68,7 +70,7 @@ env: every knob below is generated from src/knobs.ts, so this list cannot drift 
      read site in the code; unset means that site's value governs the run, and the
      run stamp records only the knobs you actually set.
 ${knobUsage()}`);
-  process.exit(2);
+  process.exit(explicit ? 0 : 2);
 }
 
 /** Every flag this CLI accepts, declared so `strict: true` can stop the run on
@@ -128,6 +130,9 @@ function parseFlags(args: string[]): { flags: Map<string, string>; positional: s
 }
 
 const [command, ...rest] = process.argv.slice(2);
+// An explicit help request is not a usage error: it exits 0 on stdout, so
+// `coverify --help | less` shows something and `coverify --help && ...` runs on.
+if (command === "--help" || command === "-h" || command === "help") usage(true);
 if (!command) usage();
 const { flags, positional } = parseFlags(rest);
 const dir = path.resolve(flags.get("dir") ?? "campaign");
@@ -212,6 +217,26 @@ async function prove(resume: boolean): Promise<void> {
     );
     process.exit(1);
   }
+  // Not a refusal: a same-family audit is still an audit, and refusing here
+  // would invent a policy the user did not set. But the cross-family property
+  // is the audit's whole point, so a run that has quietly lost it says so.
+  const sameFamily = sameFamilyAsAuditor();
+  if (sameFamily.length > 0) {
+    console.error(
+      `[coverify] WARNING: the hostile auditor (${specLabel(roleModelSpec("hostileAuditor"))}) is the ` +
+        `same model as: ${sameFamily.join(", ")}.\n` +
+        "  A candidate written there is audited by its own model, so the audit no longer crosses\n" +
+        "  model families. Re-point one of them with COVERIFY_MODEL_* or COVERIFY_FAMILY_* to restore it.",
+    );
+  }
+
+  // Parsed BEFORE the campaign is created: validating at the call site left a
+  // full campaign skeleton on disk behind a `--max-wakes abc` typo, which
+  // contradicts the refuse-before-doing-anything posture everything else here
+  // keeps.
+  const maxWakes = optionalInt("max-wakes");
+  const agents = agentLimit();
+
   if (!resume) {
     initCampaign(dir, positional[0]!);
     recordStatement(new GateStore(dir), dir, "init");
@@ -232,8 +257,8 @@ async function prove(resume: boolean): Promise<void> {
   const synthesis = await runCampaign({
     telemetry: (store) => new JournalTelemetryContext(store),
     campaignDir: dir,
-    userAgentLimit: agentLimit(),
-    maxWakes: optionalInt("max-wakes"),
+    userAgentLimit: agents,
+    maxWakes,
     noComputation,
   });
   console.log(synthesis);
@@ -365,8 +390,8 @@ switch (command) {
       for (const m of pending) console.log(`- ${m}`);
       console.log("");
     }
-    console.log(readLedger(dir, "STATEMENT.md"));
-    console.log(readLedger(dir, "CURRENT_FRONTIER.md"));
+    console.log(readLedgerOrNote(dir, "STATEMENT.md"));
+    console.log(readLedgerOrNote(dir, "CURRENT_FRONTIER.md"));
     const journal = readJournal(dir);
     // Verdict-permission records beside the verdicts: a FAIL followed by a PASS
     // on the same revision reads as verdict shopping without its rebuttal.

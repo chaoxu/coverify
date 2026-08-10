@@ -73,15 +73,7 @@ export const COVERIFY_TELEMETRY_SCHEMA = defineTelemetrySchema({
         },
       },
       status: { default: "ok", errorWhen: "the turn failed after its retries" },
-      events: {
-        "coverify.compaction": {
-          description: "In-place context compaction; a real provider call that leaves no message.",
-          attributes: {
-            "coverify.context_tokens_before": { type: "number", description: "Before.", required: true, cardinality: "high" },
-            "coverify.context_tokens_after": { type: "number", description: "After.", required: true, cardinality: "high" },
-          },
-        },
-      },
+      events: {},
     },
     "coverify.dispatch": {
       description: "One unit of delegated work: a worker, a gate critic, or a verification cadence.",

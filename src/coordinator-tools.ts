@@ -261,13 +261,22 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
           // cwd-encoded subdirectory, so per-worker cwds produce junk layout.
           { sessionId: id, sessionsRoot, cwd: dir },
         );
-    void sessionPromise.then((s) => {
-      session = s;
-      // The handle may register before the async session resolves; patch it
-      // in place so steer/cancel/turns-dump see the live session.
-      const h = handles.get(id);
-      if (h) h.session = s;
-    });
+    // The rejection handler is not optional. `void p.then(f)` builds a SECOND
+    // derived promise with no handler of its own, so a session that fails to
+    // construct — an unknown model id survives preflight, which checks auth and
+    // never the model — takes the whole harness down as an unhandled rejection
+    // at the first dispatch, with workers live. The dispatch's own consumer
+    // below reports the failure; this arm exists only to own the derivative.
+    void sessionPromise.then(
+      (s) => {
+        session = s;
+        // The handle may register before the async session resolves; patch it
+        // in place so steer/cancel/turns-dump see the live session.
+        const h = handles.get(id);
+        if (h) h.session = s;
+      },
+      () => {},
+    );
     // The dispatch span wraps the worker's whole life, so every turn it takes
     // inherits the id, role and wake rather than each record copying them.
     // With telemetry off this is a pass-through that runs the same callback.

@@ -86,6 +86,29 @@ test("a metered librarian call writes spend, not a gap", async () => {
   expect((leaves(store)[0].usage as { meter: string }).meter).toBe("agy-json");
 });
 
+test("with telemetry OFF a metered call still records its spend, not silence", async () => {
+  // The failure this pins is silent token loss, which is worse than double
+  // counting because nothing looks wrong: routing a SUCCESSFUL parse into the
+  // span sink alone meant a 22,000-token librarian call left neither spend nor
+  // gap on a harness with src/telemetry/ removed. Exactly one writer still
+  // fires — the sink when installed, this channel when not.
+  const dir = fs.mkdtempSync("/private/tmp/coverify-librarian-off-");
+  process.env.COVERIFY_STATE_DIR = fs.mkdtempSync("/private/tmp/coverify-librarian-off-state-");
+  setTelemetrySink(NOOP_TELEMETRY_CONTEXT);
+  stubLibrarian(dir, { input_tokens: 22711, output_tokens: 63, cache_read_tokens: 0 });
+
+  const channel: { lane: string; detail: string; usage?: unknown }[] = [];
+  const tool = workspaceTools(dir, { allow: [dir], deny: [] }, {
+    literature: true,
+    onUnmetered: (lane, detail) => channel.push({ lane, detail }),
+    onLibrarianSpend: (usage) => channel.push({ lane: "librarian", detail: "s", usage }),
+  }).find((t) => t.name === "literature_search")!;
+
+  await tool.execute("c1", { question: "who proved this?" });
+  expect(channel).toHaveLength(1);
+  expect((channel[0].usage as { input: number }).input).toBe(22711);
+});
+
 test("an unreadable librarian reply keeps its report and degrades to a gap", async () => {
   // A librarian whose SPEND cannot be read must never become a librarian whose
   // REPORT is lost: COVERIFY_LITERATURE_CMD can point at any command.

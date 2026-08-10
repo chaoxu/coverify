@@ -1,0 +1,30 @@
+# The only contract this repository has is `bun run check`, and nothing was
+# running it. Three environment facts the suite depends on, learned by having a
+# reviewer run it on a clean machine:
+#   - `bun install` first; tsc resolves without it but the tests spawn
+#     ./node_modules/.bin/tsc and die on a bare ENOENT.
+#   - a writable HOME: one test builds a temp dir under $HOME directly.
+#   - network on the first run: pi-coding-agent downloads ripgrep into
+#     ~/.cache/vscode-ripgrep, so an offline runner fails in read-scope tests.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      # Cache the ripgrep download rather than pretending the suite is offline.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/vscode-ripgrep
+          key: ripgrep-${{ runner.os }}
+      - run: bun run check

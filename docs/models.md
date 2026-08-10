@@ -15,8 +15,15 @@ not write it.
 | hostile auditor | `claude-cli/opus` | one cross-family audit per candidate |
 
 Override per role with `COVERIFY_MODEL_{COORDINATOR,REASONER,TECHNICIAN,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}`.
-That is the only model override; the journal records the model family actually
-served on every call.
+Ideation families are the other model selector: `dispatch_reasoner` can route
+one reasoner to `fable`, `gemini` or `pro` as a toolless single-shot consult,
+overridable with `COVERIFY_FAMILY_FABLE|GEMINI|PRO`. The `gemini` family shells
+out to the `agy` binary via `bin/agy-oracle`. The journal records the model
+family actually served on every call.
+
+Note that `fable` currently resolves to `claude-cli/opus`, which is also the
+default hostile auditor, so a candidate from that family is audited by its own
+model. `prove` warns about the collision at startup.
 
 When ChatGPT quota runs out, `COVERIFY_MODEL_REASONER=claude-cli/opus` falls
 back to all-Anthropic. `COVERIFY_MODEL_RECONSTRUCTOR=google/gemini-3.6-flash`

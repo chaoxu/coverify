@@ -83,7 +83,9 @@ harness lessons go in the `docs/design.md` conformance table and roadmap.
 
 ## Style
 
-TypeScript on Bun; keep the tool small. Checks: `bun run check` (tsc, launcher conformance, and the
-enforcement tests in `tests/`). Prefer
+TypeScript on Bun; keep the tool small. Checks: `bun install` once, then `bun run check` (tsc, launcher conformance,
+and the enforcement tests in `tests/`). The suite needs a writable `$HOME` and,
+on a cold machine, network access to fetch ripgrep. CI runs exactly this
+(`.github/workflows/check.yml`). Prefer
 enforcing a rule in `gates.ts` over restating it in a prompt, and prefer
 prompt text quoted from the launcher over new prose.

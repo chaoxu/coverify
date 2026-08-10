@@ -207,6 +207,35 @@ export class GateStore {
     // meta.json names the opaque 16-hex state dir for cross-campaign analytics
     // (design.md, Appendix: Canonical analytics queries): campaign path plus the
     // statement's first line, best-effort, refreshed each construction.
+    // Runs OUTSIDE the best-effort meta block below: that one swallows errors
+    // for a campaign with no statement yet, and swallowing this would restore
+    // the very corruption it detects.
+    const metaPath = path.join(dir, "meta.json");
+    // A campaign's id lives INSIDE it so a rename or a restore keeps its gate
+    // history. `cp -R` copies that id too, and then two directories write one
+    // authoritative store: an edit in the copy re-arms the original's
+    // statement freeze, and each takes its own per-directory lock, so the
+    // "one writer per campaign" rule does not see it. A rename leaves the old
+    // path GONE; a copy leaves it standing with the same id. That difference
+    // is the only signal available, and it is enough.
+    if (fs.existsSync(metaPath)) {
+      const prior = JSON.parse(fs.readFileSync(metaPath, "utf-8")) as { campaignDir?: string };
+      const other = prior.campaignDir;
+      if (
+        typeof other === "string" &&
+        other !== this.campaignDir &&
+        fs.existsSync(campaignIdPath(other)) &&
+        fs.readFileSync(campaignIdPath(other), "utf-8").trim() === id
+      ) {
+        throw new Error(
+        `campaign id ${id} is claimed by two directories:\n  ${other}\n  ${this.campaignDir}\n` +
+          "They share one authoritative gate store, so work in either corrupts the other. This is\n" +
+          "what copying a campaign directory does. Keep one, and give the other a new identity by\n" +
+          `deleting its .coverify/campaign-id (it then starts with no gate history).`,
+        );
+      }
+    }
+
     try {
       const stmt = readLedger(this.campaignDir, "STATEMENT.md");
       const firstLine = stmt.split("\n").find((l) => l.trim() && !l.startsWith("#")) ?? "";

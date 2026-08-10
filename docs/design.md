@@ -826,7 +826,9 @@ cheaper thing to fix first.
       `claude-cli/opus` at `--effort max` (user decisions 2026-08-01 and
       2026-08-08 — the cross-family audit behind every promotion runs at
       maximum effort); the audit stage is
-      still cross-family out of the box)
+      cross-family at the shipped defaults, though nothing compares families
+      and the `fable` ideation family currently resolves to the auditor's own
+      model — `prove` warns, and does not refuse)
 - [ ] Per-wake model routing and eval-driven per-role tuning (cheap wakes vs
       promotion wakes; cheap critics) — decided by eval evidence
 - [x] Linux write-sandbox backend: @landstrip/landstrip (Landlock+seccomp;

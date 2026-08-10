@@ -94,7 +94,7 @@ export interface Handle {
   attempts?: () => number;
   requests?: () => number;
   /** Tool-spawned provider calls with no measurable usage; see RoleSession. */
-  unmetered?: () => { lane: string; detail: string }[];
+  unmetered?: () => { lane: string; detail: string; usage?: RoleUsage }[];
   /** Resolves (never rejects) when the handle finishes; set by registerHandle. */
   settled: Promise<void>;
 }
@@ -289,11 +289,19 @@ async function runLockedCampaign(
         }),
         ...(handle.usage?.() === undefined && billed !== undefined ? { usage: billed } : {}),
       });
-      // Tool-spawned calls this handle could not measure. Leafed once per
-      // settle so an unmeasurable call reads as a declared gap, not silence.
-      // Drained rather than peeked, so a refactor cannot emit each gap twice.
+      // Tool-spawned calls, leafed once per settle: a gap when the lane could
+      // not be measured, real spend when it could but no telemetry sink was
+      // installed to leaf it. Drained rather than peeked, so a refactor cannot
+      // emit each entry twice.
       for (const u of handle.unmetered?.().splice(0) ?? []) {
-        store.append({ kind: "role-call", dispatchId: handle.id, unmetered: u.lane, detail: u.detail });
+        store.append({
+          kind: "role-call",
+          dispatchId: handle.id,
+          detail: u.detail,
+          ...(u.usage === undefined
+            ? { unmetered: u.lane }
+            : { role: u.lane, usage: u.usage, requests: 1 }),
+        });
       }
       if (failed !== undefined) {
         // Preserve what the dead stream produced. NOT a deliverable: the

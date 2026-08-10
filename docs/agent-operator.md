@@ -12,7 +12,7 @@ can stop a promotion (the audit and the comparison). Survivors are recorded
 with the content hash of the exact artifact verified.
 
 It is a CLI over a directory of Markdown files. There is no server, no daemon,
-no API. Everything below is `bun run src/cli.ts <verb>` and reading files. The
+no API. Everything below is `coverify <verb>` (after `bun link`; otherwise `coverify <verb>`) and reading files. The
 protocol being enforced is `contract/math-proof-search-launcher.md` in this
 repository; `docs/design.md` maps every enforcement to its clause.
 
@@ -32,12 +32,12 @@ supervision.
 ## Starting and steering
 
 ```bash
-bun run src/cli.ts prove "<exact statement>" --dir <campaign>
-bun run src/cli.ts status --dir <campaign>
-bun run src/cli.ts resume --dir <campaign>
-bun run src/cli.ts stop   --dir <campaign>
-bun run src/cli.ts say "<guidance>" --dir <campaign>
-bun run src/cli.ts amend  --dir <campaign>
+coverify prove "<exact statement>" --dir <campaign>
+coverify status --dir <campaign>
+coverify resume --dir <campaign>
+coverify stop   --dir <campaign>
+coverify say "<guidance>" --dir <campaign>
+coverify amend  --dir <campaign>
 ```
 
 `prove` blocks for the life of the campaign — hours. Do not wait on it in a
@@ -75,11 +75,11 @@ question itself needs to change, use `amend`, which re-freezes and re-hashes.
 Every one of these is read-only and safe against a live campaign:
 
 ```bash
-bun run src/cli.ts status   --dir <campaign>    # pending messages, STATEMENT, frontier, last 10 events
-bun run src/cli.ts outcomes --dir <campaign>    # verdicts, repair depth, promotions
-bun run src/cli.ts spend    --dir <campaign>    # tokens by lane, role, model
-bun run src/cli.ts limits   --dir <campaign>    # rate-limit headroom
-bun run src/cli.ts turns    --dir <campaign>    # per-turn sizes and usage
+coverify status   --dir <campaign>    # pending messages, STATEMENT, frontier, last 10 events
+coverify outcomes --dir <campaign>    # verdicts, repair depth, promotions
+coverify spend    --dir <campaign>    # tokens by lane, role, model
+coverify limits   --dir <campaign>    # rate-limit headroom
+coverify turns    --dir <campaign>    # per-turn sizes and usage
 ```
 
 The files themselves are the better read for most questions. `PROVED.md`,
@@ -154,6 +154,6 @@ out-of-campaign gate store live under `~/.config/coverify` and
 `~/.local/state/coverify` (XDG-respecting; `COVERIFY_STATE_DIR` overrides the
 gate store).
 
-`bun run src/cli.ts --help` lists every environment knob, generated from the
+`coverify --help` lists every environment knob, generated from the
 registry so the list cannot drift from the code. Defaults live at their read
 sites and are not printed.
