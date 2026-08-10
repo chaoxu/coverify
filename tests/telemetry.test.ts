@@ -5,6 +5,7 @@ import { afterEach, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { InMemoryTelemetryContext, NOOP_TELEMETRY_CONTEXT } from "@earendil-works/pi-telemetry";
+import { FIXTURE_ENVS, campaign, runCadence } from "./cadence-fixture.ts";
 import { recordFixture } from "./helpers.ts";
 
 const { COVERIFY_TELEMETRY_SCHEMA } = await import("../src/telemetry/schema.ts");
@@ -14,6 +15,7 @@ const { GateStore } = await import("../src/gates.ts");
 
 const stubDir = fs.mkdtempSync("/private/tmp/coverify-telemetry-");
 afterEach(() => {
+  for (const e of FIXTURE_ENVS) delete process.env[e];
   delete process.env.COVERIFY_CODEX_CMD;
   setTelemetrySink(NOOP_TELEMETRY_CONTEXT);
 });
@@ -171,4 +173,28 @@ test("the SESSION lane emits too — the coordinator and workers, not just singl
   expect(session).toBeInstanceOf(Error);
   expect(String(session)).toContain("single-shot verdict roles only");
   expect(store.all()).toHaveLength(0);
+});
+
+test("with telemetry on, the same cadence's spend lands on leaves under that dispatch", async () => {
+  // Cadence cost is GROUP BY dispatchId over role-call leaves. Four calls at
+  // 10 input each: 40, counted exactly once, and attributable to the stage
+  // that spent it without any stage record carrying a token.
+  const { dir, store } = campaign("full-telemetry", [
+    "VERDICT: PASS\nholds",
+    "VERDICT: PASS\nno leak",
+    "A reconstruction.",
+    "VERDICT: PASS\nmatches",
+  ]);
+  setTelemetrySink(new JournalTelemetryContext(store));
+  try {
+    await runCadence(dir, store);
+  } finally {
+    setTelemetrySink(NOOP_TELEMETRY_CONTEXT);
+  }
+  const leaves = store.all().filter((r) => r.kind === "role-call");
+  expect(leaves).toHaveLength(4);
+  expect(leaves.reduce((n, r) => n + ((r.usage as { input?: number })?.input ?? 0), 0)).toBe(40);
+  // Every leaf inherited the dispatch and the stage from its ancestors.
+  expect(new Set(leaves.map((r) => r.dispatchId))).toEqual(new Set(["v1"]));
+  expect(new Set(leaves.map((r) => r.stage)).size).toBe(4);
 });
