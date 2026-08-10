@@ -13,6 +13,7 @@ const {
   priorReusableRecord,
   promotionsNeedingRetraction,
   retractionClosure,
+  undeliveredCompletions,
 } = await import("../src/gates.ts");
 const { sha256File, sha256Text, danglingCitations } = await import("../src/campaign.ts");
 
@@ -251,20 +252,43 @@ describe("delivery is durable, not one-shot", () => {
     store.append({ kind: "dispatch", id: "r001", role: "reasoner", mechanism: "route-A", task: "t" });
     store.append({ kind: "completion", id: "r001", report: path.relative(dir, report) });
 
-    const undelivered = () => {
-      const delivered = new Set<string>();
-      for (const e of store.all()) {
-        if (e.kind === "delivery") for (const id of (e.ids as string[]) ?? []) delivered.add(id);
-      }
-      return store
-        .all()
-        .filter((e) => e.kind === "completion" && !e.cancelled && !delivered.has(e.id as string))
-        .map((e) => e.id as string);
-    };
-    expect(undelivered()).toEqual(["r001"]); // turn failed: still pending
-    expect(undelivered()).toEqual(["r001"]); // and still pending on the next wake
+    // The REAL query, not a local reimplementation. This test used to define
+    // its own `undelivered()` and assert against that, so deleting the
+    // production rule left it green — it covered nothing. Extracting
+    // undeliveredCompletions() out of the harness closure is what made it
+    // reachable from here.
+    const ids = () => undeliveredCompletions(store, dir).map((c) => c.id);
+    expect(ids()).toEqual(["r001"]); // turn failed: still pending
+    expect(ids()).toEqual(["r001"]); // and still pending on the next wake
     store.append({ kind: "delivery", ids: ["r001"] });
-    expect(undelivered()).toEqual([]); // shown once, not re-offered forever
+    expect(ids()).toEqual([]); // shown once, not re-offered forever
+
+    // It renders the report, and names the mechanism from the dispatch record
+    // — the part a bare id list never checked.
+    store.append({ kind: "completion", id: "r002", report: path.relative(dir, report) });
+    store.append({ kind: "dispatch", id: "r002", role: "reasoner", mechanism: "route-B", task: "t" });
+    const [shown] = undeliveredCompletions(store, dir);
+    expect(shown.mechanism).toBe("route-B");
+    expect(shown.section).toContain("# findings");
+  });
+
+  test("a report edited after completion is delivered with a loud taint", () => {
+    // Hash-bound like every other trusted artifact: the bytes delivered must
+    // be provably the bytes the worker returned, or the coordinator is told.
+    const { dir, store } = campaign("tainted");
+    fs.mkdirSync(path.join(dir, "EVIDENCE", "r001"), { recursive: true });
+    const report = path.join(dir, "EVIDENCE", "r001", "report.r1.md");
+    fs.writeFileSync(report, "# original\n");
+    store.append({ kind: "dispatch", id: "r001", role: "reasoner", mechanism: "m", task: "t" });
+    store.append({
+      kind: "completion",
+      id: "r001",
+      report: path.relative(dir, report),
+      reportSha256: sha256Text("# original\n"),
+    });
+    expect(undeliveredCompletions(store, dir)[0].section).not.toContain("WARNING");
+    fs.writeFileSync(report, "# tampered\n");
+    expect(undeliveredCompletions(store, dir)[0].section).toContain("no longer matches the hash");
   });
 
   test("a cancelled agent is not re-offered as an undelivered report", () => {

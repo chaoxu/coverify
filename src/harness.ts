@@ -15,6 +15,7 @@ import {
   acceptedStatementHash,
   defined,
   recordStatement,
+  undeliveredCompletions,
   GateStore,
   statementHash,
 } from "./gates.js";
@@ -384,7 +385,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     const settled = settledQueue.splice(0, settledQueue.length);
     for (const s of settled) handles.delete(s.h.id);
     // Counts only. The wake's report text is rendered from the durable record
-    // by undeliveredCompletions() — this used to render a second copy that no
+    // by undeliveredCompletions(store, dir) — this used to render a second copy that no
     // caller read, an invitation for the two to drift.
     return {
       total: settled.length,
@@ -424,56 +425,6 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     return out.slice(-20);
   };
 
-  const undeliveredCompletions = (): { id: string; mechanism: string; section: string }[] => {
-    const delivered = new Set<string>();
-    const mechanisms = new Map<string, string>();
-    for (const e of store.all()) {
-      if (e.kind === "delivery") for (const id of (e.ids as string[]) ?? []) delivered.add(id);
-      if (e.kind === "dispatch" && typeof e.id === "string") {
-        mechanisms.set(e.id, String(e.mechanism ?? ""));
-      }
-    }
-    const out: { id: string; mechanism: string; section: string }[] = [];
-    for (const e of store.all()) {
-      if (e.kind !== "completion" || typeof e.id !== "string") continue;
-      if (e.cancelled || delivered.has(e.id)) continue;
-      const mechanism = mechanisms.get(e.id) ?? "";
-      if (typeof e.failed === "string") {
-        out.push({
-          id: e.id,
-          mechanism,
-          section:
-            `## ${e.id} [${mechanism}] FAILED (infrastructure): ${e.failed}\n\n` +
-            (typeof e.partial === "string"
-              ? `No completed report exists. Partial work from the interrupted attempt is preserved ` +
-                `at ${e.partial} — notes only, no claim label; mine it if useful when redispatching.`
-              : `No report artifact exists.`) +
-            ` Per the contract this is never PASS and carries no mathematical content; ` +
-            `re-dispatching the assignment is legitimate.`,
-        });
-        continue;
-      }
-      if (typeof e.report !== "string") continue;
-      const p = path.join(dir, e.report);
-      if (!fs.existsSync(p)) continue;
-      const bytes = fs.readFileSync(p, "utf-8");
-      // Integrity check against the recorded hash: an edited report is
-      // delivered with a loud taint instead of silently, mirroring the
-      // candidate-hash discipline everywhere else.
-      const tainted =
-        typeof e.reportSha256 === "string" && sha256Text(bytes) !== e.reportSha256
-          ? `\n\n[WARNING: this report file no longer matches the hash recorded at completion — ` +
-            `it was modified after the worker returned. Treat content as untrusted; the original ` +
-            `bytes are not recoverable.]`
-          : "";
-      out.push({
-        id: e.id,
-        mechanism,
-        section: `## ${e.id} [${mechanism}] (saved: ${e.report})\n\n${bytes}${tainted}`,
-      });
-    }
-    return out;
-  };
 
   const requestVerification = requestVerificationTool({
     dir,
@@ -656,7 +607,7 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     const harvested = harvestSettled();
     // Delivered from the record, not from the queue: a report the previous
     // wake failed to show is still pending here.
-    const pending = undeliveredCompletions();
+    const pending = undeliveredCompletions(store, dir);
     const reportSections = pending.map((p) => p.section);
     const limits: string[] = [];
     if (opts.userAgentLimit !== undefined) limits.push(`workers ${liveWorkers()}/${opts.userAgentLimit}`);

@@ -148,7 +148,9 @@ test("a CLI oracle answers exactly once", async () => {
     models: undefined as never,
   });
   await session.ask("first");
-  expect(session.ask("second")).rejects.toThrow(/exactly once/);
+  // Awaited: an unawaited rejects() is a floating promise, so removing the
+  // throw left this green.
+  await expect(session.ask("second")).rejects.toThrow(/exactly once/);
 });
 
 test("each CLI lane stamps its own meter and its real gaps", async () => {

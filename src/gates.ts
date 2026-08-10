@@ -175,6 +175,71 @@ export function defined<T extends object>(fields: T): Partial<T> {
   ) as Partial<T>;
 }
 
+/**
+ * Completions the coordinator has not been shown yet, rendered for a wake.
+ *
+ * Pure query over the store, exported so it can be TESTED. It used to be a
+ * closure inside runLockedCampaign, so the test that claimed to cover it
+ * reimplemented the logic locally and asserted against its own copy —
+ * deleting the real rule left that test green.
+ *
+ * Persistence and delivery are separate on purpose: a wake that fails after
+ * harvesting must not consume the only chance to show a report.
+ */
+export function undeliveredCompletions(
+store: GateStore,
+dir: string,
+): { id: string; mechanism: string; section: string }[] {
+  const delivered = new Set<string>();
+  const mechanisms = new Map<string, string>();
+  for (const e of store.all()) {
+    if (e.kind === "delivery") for (const id of (e.ids as string[]) ?? []) delivered.add(id);
+    if (e.kind === "dispatch" && typeof e.id === "string") {
+      mechanisms.set(e.id, String(e.mechanism ?? ""));
+    }
+  }
+  const out: { id: string; mechanism: string; section: string }[] = [];
+  for (const e of store.all()) {
+    if (e.kind !== "completion" || typeof e.id !== "string") continue;
+    if (e.cancelled || delivered.has(e.id)) continue;
+    const mechanism = mechanisms.get(e.id) ?? "";
+    if (typeof e.failed === "string") {
+      out.push({
+        id: e.id,
+        mechanism,
+        section:
+          `## ${e.id} [${mechanism}] FAILED (infrastructure): ${e.failed}\n\n` +
+          (typeof e.partial === "string"
+            ? `No completed report exists. Partial work from the interrupted attempt is preserved ` +
+              `at ${e.partial} — notes only, no claim label; mine it if useful when redispatching.`
+            : `No report artifact exists.`) +
+          ` Per the contract this is never PASS and carries no mathematical content; ` +
+          `re-dispatching the assignment is legitimate.`,
+      });
+      continue;
+    }
+    if (typeof e.report !== "string") continue;
+    const p = path.join(dir, e.report);
+    if (!fs.existsSync(p)) continue;
+    const bytes = fs.readFileSync(p, "utf-8");
+    // Integrity check against the recorded hash: an edited report is
+    // delivered with a loud taint instead of silently, mirroring the
+    // candidate-hash discipline everywhere else.
+    const tainted =
+      typeof e.reportSha256 === "string" && sha256Text(bytes) !== e.reportSha256
+        ? `\n\n[WARNING: this report file no longer matches the hash recorded at completion — ` +
+          `it was modified after the worker returned. Treat content as untrusted; the original ` +
+          `bytes are not recoverable.]`
+        : "";
+    out.push({
+      id: e.id,
+      mechanism,
+      section: `## ${e.id} [${mechanism}] (saved: ${e.report})\n\n${bytes}${tainted}`,
+    });
+  }
+return out;
+}
+
 export class GateStore {
   private records: GateRecord[];
   private file: string;
