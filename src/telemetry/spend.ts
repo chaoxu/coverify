@@ -1,7 +1,5 @@
 // Read-only consumer (design.md's view/ layer): what a campaign's tokens went
-// on. The journal's usage fields were write-only for the project's whole
-// history, and write-only fields are untested fields; this is the reader that
-// exercises them.
+// on.
 //
 // Three refusals, each purchased with a specific error from the 2026-08-09
 // study (docs/measurement-protocol.md):
@@ -21,8 +19,7 @@ export interface LaneSpend {
   input: number;
   cacheRead: number;
   output: number;
-  /** Absent unless some record in this lane reported it (absent ≠ zero; see
-   *  RoleUsage in providers.ts). */
+  /** Absent unless some record reported it (absent ≠ zero; see RoleUsage). */
   reasoning?: number;
   cacheWrite?: number;
 }
@@ -32,31 +29,29 @@ export interface RoleSpend extends LaneSpend {
 }
 
 export interface CampaignSpend {
-  /** Provider calls whose tokens this harness cannot measure at all. Separate
-   *  from `excluded`: those are records a reader must SKIP, these are spend
-   *  nobody can count. Both would otherwise read as zero. */
+  /** Provider calls whose tokens cannot be measured at all — distinct from
+   *  `excluded` (records a reader must SKIP). Both would else read as zero. */
   unmetered: { lane: string; calls: number }[];
   byLane: LaneSpend[];
   byRole: RoleSpend[];
-  /** Per (model, thinking level) — `modelSpec`, which unlike `modelFamily`
-   *  keeps the @thinking suffix. The grouping issue #31's reasoning-effort A/B
-   *  needs (rule 13b: ship the reader with the field). */
+  /** Per (model, thinking level) — `modelSpec` keeps the @thinking suffix that
+   *  `modelFamily` drops, the grouping issue #31's effort A/B needs. */
   byModel: RoleSpend[];
-  /** Records whose usage was skipped, and why. Reported rather than silently
-   *  dropped: a reader must be able to see that a total is partial. */
+  /** Records whose usage was skipped, and why: reported, never silently
+   *  dropped, so a reader can see that a total is partial. */
   excluded: { reason: string; records: number }[];
   /** True when any record carried a clamped (non-monotone) delta — real spend
    *  may be missing upstream of this reader. */
   nonMonotone: boolean;
 }
 
-/** Which role a usage-bearing record belongs to. The journal names it three
- *  ways by record kind: `role` on coordinator events, the stage kind on
- *  verification records, the handle id's prefix on completions.
+/** Which role a usage-bearing record belongs to: `role` on coordinator events,
+ *  the stage kind on verification records, the handle id's prefix on
+ *  completions.
  *
- *  DRIFT HAZARD: the id prefixes below are minted in coordinator-tools and
- *  nothing couples the two ends, so a new prefix silently lands in "other".
- *  Read-only, so the cost is a mislabelled row, never a wrong decision. */
+ *  DRIFT HAZARD: the id prefixes are minted in coordinator-tools and nothing
+ *  couples the two ends, so a new prefix silently lands in "other". Read-only,
+ *  so the cost is a mislabelled row, never a wrong decision. */
 export function roleOf(r: Record<string, unknown>): string {
   if (typeof r.role === "string") return r.role;
   const kind = String(r.kind);
@@ -88,8 +83,7 @@ export function accumulate(into: LaneSpend, u: RoleUsage): void {
   into.input += u.input;
   into.cacheRead += u.cacheRead;
   into.output += u.output;
-  // Optional fields stay absent until some record reports one (absent ≠ zero;
-  // see RoleUsage).
+  // Optional fields stay absent until reported (absent ≠ zero; see RoleUsage).
   if (u.reasoning !== undefined) into.reasoning = (into.reasoning ?? 0) + u.reasoning;
   if (u.cacheWrite !== undefined) into.cacheWrite = (into.cacheWrite ?? 0) + u.cacheWrite;
 }

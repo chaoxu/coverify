@@ -81,7 +81,12 @@ export const COVERIFY_TELEMETRY_SCHEMA = defineTelemetrySchema({
       status: { default: "ok", errorWhen: "the operation threw" },
     },
     "coverify.wake": {
-      description: "One coordinator turn: the unit the campaign advances in.",
+      description:
+        "One coordinator turn. DECLARED BUT NOT EMITTED by this harness: the wake loop is a " +
+        "`while (true)` with four returns and two continues, and a callback-scoped span means " +
+        "converting all six in the event loop, which no test drives. The ordinal reaches every " +
+        "leaf as an attribute on the dispatch spans instead, so the journal is identical; an " +
+        "exporter that wants the tree level is the reason to pay for the restructure.",
       parents: { kind: "spans", spans: ["coverify.run"] },
       startAttributes: {
         "coverify.wake": { type: "number", description: "Wake ordinal.", required: true, cardinality: "high" },
