@@ -5,9 +5,11 @@ coverify, read `AGENTS.md` instead.
 
 Coverify runs an adversarial proof search over one frozen mathematical
 statement: models propose and work routes, and a candidate that looks finished
-is attacked by four fresh instances, one of which is denied sight of it and
-must derive the result independently. Survivors are recorded with the content
-hash of the exact artifact verified.
+goes through four fresh sessions — a hostile audit, a bundle certification, a
+blind reconstruction that is not shown the proof, and a comparison of that
+reconstruction against the candidate. Two of those four issue a verdict that
+can stop a promotion (the audit and the comparison). Survivors are recorded
+with the content hash of the exact artifact verified.
 
 It is a CLI over a directory of Markdown files. There is no server, no daemon,
 no API. Everything below is `bun run src/cli.ts <verb>` and reading files. The
@@ -21,9 +23,11 @@ every verification verdict is bound to that hash, so you cannot widen the
 question mid-campaign and keep the verdicts. Changing it is `amend`, and it is
 recorded.
 
-A campaign runs until stopped. It has no completion timer, no agent ceiling,
-and no wall-clock limit on thinking — deliberately. If you want it bounded, you
-bound it: `--max-wakes N`.
+A campaign runs until stopped. There is no completion timer and no wall-clock
+limit on proof work; the only timeouts apply to scripts a technician runs.
+`--agent-limit` caps concurrent workers and defaults to **6** (`0` removes the
+cap). `--max-wakes N` has no default and is how you bound a run for
+supervision.
 
 ## Starting and steering
 
@@ -36,9 +40,16 @@ bun run src/cli.ts say "<guidance>" --dir <campaign>
 bun run src/cli.ts amend  --dir <campaign>
 ```
 
-`prove` blocks for the life of the campaign. To supervise rather than babysit,
-run it with `--max-wakes N`, inspect, then `resume`. `stop` sends SIGTERM to
-the lock-holding process, which reaps the CLI subprocesses it spawned.
+`prove` blocks for the life of the campaign — hours. Do not wait on it in a
+foreground tool call. Either run it with `--max-wakes N` so it returns after N
+coordinator turns, or start it detached with output redirected to a file and
+poll the campaign directory. `stop` sends SIGTERM to the lock-holding process,
+which reaps the CLI subprocesses it spawned.
+
+Exit codes: `0` success, `1` operational refusal (no campaign at `--dir`, no
+lock to stop), `2` usage error (unknown flag, malformed value, missing
+argument). A bad flag never runs unbounded — `--max-wake 40` is rejected
+rather than silently ignored.
 
 `say` is the steering channel. Messages are delivered into the coordinator's
 running turn within about a second, or at its next wake if it is idle. Delivery
@@ -48,8 +59,12 @@ losing it.
 Delivered messages are journaled and replayed. A directive survives both an
 in-place compaction and a full session rebuild, because the harness re-sends
 standing guidance on any prompt that rebuilds context rather than relying on it
-still being in the conversation. Guidance you gave at wake 3 still applies at
-wake 40.
+still being in the conversation.
+
+The replay is capped at the **20 most recent** directives (`standingGuidance`
+in src/harness.ts). Past 20, the oldest silently stop being replayed. If a
+constraint must hold for the whole campaign, it belongs in `STATEMENT.md` via
+`amend`, not in the 21st `say`.
 
 What `say` does **not** do is change the target. It is guidance, not a
 statement amendment — the coordinator is told so in both delivery paths. If the
@@ -60,7 +75,7 @@ question itself needs to change, use `amend`, which re-freezes and re-hashes.
 Every one of these is read-only and safe against a live campaign:
 
 ```bash
-bun run src/cli.ts status   --dir <campaign>    # phase, live agents, pending messages
+bun run src/cli.ts status   --dir <campaign>    # pending messages, STATEMENT, frontier, last 10 events
 bun run src/cli.ts outcomes --dir <campaign>    # verdicts, repair depth, promotions
 bun run src/cli.ts spend    --dir <campaign>    # tokens by lane, role, model
 bun run src/cli.ts limits   --dir <campaign>    # rate-limit headroom
@@ -80,18 +95,27 @@ reconstruct what happened. One JSON object per line.
 content hashes. Editing an artifact does not invalidate a verdict loudly — it
 makes the record unverifiable. If you want a statement changed, use `amend`.
 `PROVED.md` has exactly one legitimate writer (`record_promotion`, inside the
-harness); direct writes are denied by the OS, not by convention.
+harness). The coordinator's own write tool refuses it via an in-process scope
+check; a technician's `run_script` is refused by the OS sandbox.
 
 **Do not treat a `PROVED.md` entry as a checked theorem.** The entry's prose is
 written by the coordinator and is not mechanically checked against the proof it
 cites. Verify the claim by reading the artifact the entry names, whose hash is
-on the entry. This is the single most likely way to draw a wrong conclusion
-from a coverify campaign.
+on the entry.
+
+Nor is the promotion machine-checked in the sense you might assume. It requires
+two verdicts — a hostile audit and a comparison against a blind reconstruction
+— on byte-identical inputs. The reconstruction's isolation from the candidate
+is a prompt check plus an instruction, not a sandbox: the reconstructor is a
+subprocess that can read the disk.
 
 **Do not run two harnesses on one campaign.** A run holds
 `.coverify/lock.json` for its life. A second run would mint colliding handle
-ids and gate against an incomplete record. A stale lock is taken over
-automatically and the takeover is journaled.
+ids and gate against an incomplete record. The lock carries a pid: a second
+run probes it with `kill(pid, 0)`, throws if the holder is alive, and
+otherwise reclaims the lock and journals the takeover. So `.coverify/lock.json`
+plus a liveness check on its pid is how you tell a live campaign from an
+abandoned one — no verb reports that directly.
 
 **Two campaigns do not share results.** A promoted result from another campaign
 is an imported theorem: cite it by path and re-verify its hypotheses where you

@@ -455,8 +455,18 @@ that then fails redelivers at the next wake), and a statement change still
 requires `coverify amend` (the delivered block says so).
 
 **Honesty ledger** (launcher: record instructed-vs-platform-enforced): the
-candidate withheld from the reconstructor and all write confinement are
-platform-enforced (macOS); the bundle (`keyIdeas`/`allowedSources`) is
+candidate is withheld from the reconstructor by a PROMPT CHECK, not by the
+platform: `assertCandidateWithheld` (gates.ts) refuses to dispatch when the
+rendered prompt contains the candidate with whitespace collapsed, which catches
+the leak that occurs in practice (a bundle quoting the proof) and does not stop
+a reconstructor reading the file — the default `codex-cli` backend runs
+`--sandbox read-only`, which confines writes and leaves reads open, and role
+subprocesses do not go through `sandboxedArgv`. Its isolation from the
+candidate is therefore instructed, and this ledger said "platform-enforced"
+until 2026-08-10. Write confinement IS platform-enforced, but only for
+`run_script` and the librarian, which are the calls that go through the
+sandbox; the prose write tool is guarded in-process by `assertInScope`.
+The bundle (`keyIdeas`/`allowedSources`) is
 coordinator-authored but now passes a mandatory certification by a fresh
 agent before stage 2 runs (contract-required; the certification itself is
 model judgment, recorded as such); `declaredDependencies` remains

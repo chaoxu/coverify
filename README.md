@@ -8,26 +8,40 @@ wrong ones read exactly like the right ones. Coverify's answer is not a better
 prover — it is an adversarial process around the prover, and a record of what
 that process actually did.
 
-You write the statement in a file. Coverify runs a search: instances propose
-routes, work them out, and record what failed and why. When a candidate proof
-looks finished, four fresh instances try to break it — one of them working
-blind, reconstructing the result from the statement alone without ever seeing
-the candidate. A candidate that survives all four is written to `PROVED.md`,
-with the exact bytes it was verified against.
+You write the statement in a file. Coverify runs a search: fresh model
+sessions propose routes, work them out, and record what failed and why. When a
+candidate proof looks finished, it goes through four separate sessions, none
+of which sees the others' work:
+
+1. A **hostile audit** by a model from a different vendor, asked to break the
+   proof. Its verdict can kill the candidate.
+2. A **bundle certification** checking that the summary handed to the next
+   stage does not smuggle the proof through. A failure here sends the summary
+   back for rewriting; the candidate is untouched.
+3. A **blind reconstruction** — a session given the statement and the declared
+   dependencies but not the proof, asked to derive the result itself. It
+   returns no verdict.
+4. A **comparison** mapping that independent derivation against the
+   candidate's route and conclusions. Its verdict is the second that counts.
+
+Promotion needs stages 1 and 4 to pass on the exact bytes of the candidate.
+The reconstruction's value is that stage 4 has something to compare against
+that was not written by looking at the proof.
 
 The search does not stop on its own. It runs until you stop it, or until it
 declares itself finished with at least one result on record.
 
 ## What this is not
 
-**Nothing here is machine-checked.** There is no Lean, no Coq, no proof
-assistant. Verification is adversarial reading by language models. The
-strongest honest description of a promoted result is: *four fresh instances
-tried to break this and failed, one of them without being allowed to see it.*
-That is a real filter — it catches the confident nonsense that a single model
-reviewing its own work does not — and it is not a proof of correctness.
+**Nothing here is machine-checked.** No Lean, no proof assistant.
+Verification is adversarial reading by language models. What a promoted result
+means, stated exactly: a hostile audit from a different model family failed to
+break it, and an independent derivation of the same statement was judged to
+match it. That filter catches the confident nonsense a model reviewing its own
+work waves through. It is not a proof of correctness, and a result that clears
+it can still be wrong.
 
-Two specific things to distrust, both recorded in `docs/design.md`'s honesty
+Three specific things to distrust, all recorded in `docs/design.md`'s honesty
 ledger rather than hidden:
 
 - **The promoted statement text is not checked against the proof.** The
@@ -39,19 +53,28 @@ ledger rather than hidden:
 - **The dependency list is instructed, not enforced.** A candidate declares
   what it relies on. The hostile auditor is shown `PROVED.md` so it can catch
   a false declaration, but nothing stops one from being made.
+- **The reconstructor's blindness is checked, not sealed.** The harness
+  refuses to dispatch a reconstruction whose prompt contains the candidate
+  text, comparing with whitespace collapsed so a re-wrapped copy cannot slip
+  through. That is a real check and it catches the leak that actually happens
+  — a coordinator pasting the proof into the "key ideas". What it does not do
+  is stop a reconstructor from opening the file: the default reconstructor is
+  a `codex` subprocess with read access to the disk, and its isolation from
+  the candidate is an instruction. Treat the blind reconstruction as strong
+  evidence, not as a sealed experiment.
 
-What *is* enforced by the operating system rather than by instruction: the
-blind reconstructor genuinely cannot read the candidate, and every role can
-only write inside the directory it was given. Those are filesystem
-permissions, not promises in a prompt.
+What *is* enforced by the operating system: code that a technician runs goes
+through a sandbox — `sandbox-exec` on macOS, Landlock and seccomp on Linux —
+confined to its own directory. If that sandbox binary is missing, coverify
+degrades to instructed-only confinement and says so on stderr.
 
 ## Running one
 
-You need [Bun](https://bun.sh) and a subscription to at least one model
-provider. The defaults spawn the vendors' own CLIs — `codex` on a ChatGPT
-subscription for most roles, `claude` on a Claude subscription for the hostile
-audit, so that every candidate gets read by a model family that did not write
-it.
+You need [Bun](https://bun.sh). The default setup wants **two** subscriptions
+— ChatGPT and Claude — because the hostile audit deliberately runs on a
+different vendor's model from the one that wrote the candidate. You can point
+every role at one provider (see `docs/models.md`), and you lose the
+cross-family check by doing so.
 
 ```bash
 bun install
@@ -72,10 +95,13 @@ bun run src/cli.ts say "the LP relaxation route is a dead end" --dir campaign
 `say` reaches the coordinator inside its current turn, usually within a
 second. Use it the way you would interrupt a student at a whiteboard.
 
-Two optional brakes, both off unless you set them: `--agent-limit N` caps
-concurrent workers, `--max-wakes N` stops after N coordinator turns so you can
-inspect before spending more. Coverify imposes no limits of its own — no agent
-ceiling, and no wall-clock timeout on thinking.
+Two brakes. `--agent-limit N` caps concurrent workers and **defaults to 6**;
+`--agent-limit 0` removes the cap. `--max-wakes N` stops after N coordinator
+turns so you can look before spending more, and has no default.
+
+There is no wall-clock timeout on thinking, ever. A reasoner that needs forty
+minutes gets forty minutes. The only time limits in the system apply to
+scripts a technician runs, not to proof work.
 
 ## What you get
 
@@ -113,13 +139,15 @@ bun run src/cli.ts outcomes --dir campaign   # what the tokens bought
 ```
 
 `limits` is the one to watch during a campaign. The others are for working out
-whether the search is spending well — on a recent campaign, `outcomes` showed
-34 revisions entering verification and 5 promoted, at a median of 4 repair
-rounds each, which is the kind of thing that changes how you set a campaign up
-next time.
+whether the search is spending well. On one recent campaign `outcomes`
+reported 34 revisions entering verification and 5 promoted, at a median of 4
+verification rounds per revision and a worst case of 12 — a revision going
+round twelve times is the kind of thing that changes how you set up the next
+campaign.
 
-These readers live in `src/telemetry/` and can be deleted outright. The
-harness runs without them; you just stop getting token numbers.
+These readers live in `src/telemetry/`. Delete that folder and the four
+lines in `src/cli.ts` that import it and the harness still proves theorems —
+it just stops counting. A check fails if anything else ever reaches into it.
 
 ## Why it is built this way
 
@@ -134,10 +162,11 @@ coverify does three things instead.
 
 **It withholds the proof from one verifier.** The reconstructor is given the
 statement and the declared dependencies, and asked to derive the result
-independently. It is not asked to agree — it cannot see anything to agree
-with. A comparison step then maps its route against the candidate's. This is
-the only stage that can catch an error the candidate's own framing makes
-invisible.
+itself. It is never shown the candidate, so it has nothing to agree with, and
+the harness refuses to dispatch it if the proof text appears in its prompt. A
+comparison step then maps its route against the candidate's. This is the only
+stage that can catch an error the candidate's own framing makes invisible —
+and the one whose isolation rests partly on instruction, as above.
 
 **It crosses model families.** The hostile audit runs on a different vendor's
 model from the one that wrote the candidate, so a shared failure mode has to
