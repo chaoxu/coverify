@@ -23,7 +23,7 @@ The goal binds harness mechanics, never the search itself:
 Efficiency claims are measured, not asserted — quote before/after tokens or
 context chars from real campaign sessions (`coverify turns`, the journal's
 usage records), the way `docs/design.md` records its baselines. Follow
-`docs/measurement-protocol.md` when you do: it fixes the unit conventions
+`docs/journal-shape.md` when you do: it fixes the unit conventions
 (cached inside or beside input, reasoning inside output), requires the
 three-way cross-check, and records why a token count is not a cost.
 

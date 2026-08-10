@@ -1,5 +1,5 @@
 // The outcome side of the ledger. Cost numbers alone are non-diagnostic
-// (docs/measurement-protocol.md rules 7 and 8), and this reader is what the
+// (~/kb/notes/agents/token-measurement.md rules 7 and 8), and this reader is what the
 // cost tables are supposed to be divided by. Every assertion pins a refusal
 // or a join that a hand-rolled query got wrong before.
 import { expect, test } from "bun:test";

@@ -1,6 +1,6 @@
 // The reader that makes the journal's usage fields non-write-only. Every
 // assertion here is a refusal purchased with a specific error from the
-// 2026-08-09 study (docs/measurement-protocol.md).
+// 2026-08-09 study (docs/journal-shape.md).
 import { expect, test } from "bun:test";
 import { recordFixture } from "./helpers.ts";
 
