@@ -1,12 +1,14 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
+import { configHome } from "./userdirs.js";
 import * as path from "node:path";
 import type { createModels } from "@earendil-works/pi-ai";
 
 type CredentialStore = NonNullable<NonNullable<Parameters<typeof createModels>[0]>["credentials"]>;
 type Credential = Awaited<ReturnType<CredentialStore["read"]>>;
 
-const DEFAULT_FILE = path.join(os.homedir(), ".config/coverify/auth.json");
+// Resolved lazily: a module-level os.homedir() would throw at IMPORT time in
+// a container with no HOME, taking down commands that never touch credentials.
+const defaultFile = () => path.join(configHome(), "coverify", "auth.json");
 
 /**
  * File-backed credential store for pi-ai OAuth credentials (subscription
@@ -14,7 +16,7 @@ const DEFAULT_FILE = path.join(os.homedir(), ".config/coverify/auth.json");
  * providerId → credential, mode 0600. pi-ai refreshes expiring tokens
  * through `modify`, which we serialize with a promise chain.
  */
-export function fileCredentialStore(file = DEFAULT_FILE): CredentialStore {
+export function fileCredentialStore(file = defaultFile()): CredentialStore {
   let chain: Promise<unknown> = Promise.resolve();
   const load = (): Record<string, Credential> => {
     if (!fs.existsSync(file)) return {};

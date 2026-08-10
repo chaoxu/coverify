@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
+import { stateHome } from "./userdirs.js";
 import * as path from "node:path";
 import { appendJournal, gateOf, readLedger, sha256File, sha256Text } from "./campaign.js";
 
@@ -135,7 +135,7 @@ export function viewsOf<K extends keyof ViewByKind>(
 const ADOPT_ENABLED = new Set(["1", "true", "yes"]);
 
 export function stateRootDir(): string {
-  return process.env.COVERIFY_STATE_DIR ?? path.join(os.homedir(), ".local/state/coverify");
+  return process.env.COVERIFY_STATE_DIR ?? path.join(stateHome(), "coverify");
 }
 
 /** Where a campaign records its opaque state-dir id (16 hex chars). */
