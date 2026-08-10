@@ -13,6 +13,7 @@ import { promotedStatementsView, readLedger, sha256File } from "./campaign.js";
 import {
   checkPromotion,
   checkDispatch,
+  defined,
   resolvePremises,
   sameRevision,
   GateStore,
