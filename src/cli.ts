@@ -66,6 +66,9 @@ auth: defaults need 'coverify login openai-codex' (ChatGPT subscription) plus th
        only for api-provider role overrides
 env: per-role COVERIFY_MODEL_{COORDINATOR,REASONER,TECHNICIAN,CRITIC,AUDITOR,CERTIFIER,RECONSTRUCTOR,COMPARATOR}
        as "provider/model[@thinking]" specs (the only model override),
+     COVERIFY_EFFORT / COVERIFY_EFFORT_<ROLE> set reasoning effort ALONE
+       (off|minimal|low|medium|high|xhigh|max), leaving provider and model as they are —
+       per-role wins; an invalid value hard-stops rather than being ignored,
      COVERIFY_LAUNCHER_PATH (default: contract/math-proof-search-launcher.md in this repo;
        set it only to test an edited contract — a set-but-missing path hard-fails)`);
   process.exit(2);

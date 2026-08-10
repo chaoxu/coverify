@@ -216,3 +216,42 @@ test("summing two lanes is a TYPE error, not merely discouraged", async () => {
   fs.writeFileSync(probe, fs.readFileSync(probe, "utf8").replaceAll("codex-cli-jsonl", "pi-session"));
   expect(probeErrors()).toBe("");
 }, 60_000);
+
+test("COVERIFY_EFFORT changes only the thinking level", async () => {
+  // Issue #31's A/B needs effort to be the ONLY difference between arms. The
+  // alternative is respelling the whole spec, where a fat-fingered model id
+  // silently changes the model too — no failure, no warning, and the
+  // experiment quietly measures something else.
+  const { roleModelSpec } = await import("../src/providers.ts");
+  const base = roleModelSpec("reasoner");
+  try {
+    process.env.COVERIFY_EFFORT = "xhigh";
+    const lowered = roleModelSpec("reasoner");
+    expect(lowered.thinking).toBe("xhigh");
+    // Provider and model are untouched — that is the whole point.
+    expect(lowered.provider).toBe(base.provider);
+    expect(lowered.modelId).toBe(base.modelId);
+
+    // Per-role beats the global, so one arm can vary one role.
+    process.env.COVERIFY_EFFORT_REASONER = "low";
+    expect(roleModelSpec("reasoner").thinking).toBe("low");
+    expect(roleModelSpec("coordinator").thinking).toBe("xhigh");
+  } finally {
+    delete process.env.COVERIFY_EFFORT;
+    delete process.env.COVERIFY_EFFORT_REASONER;
+  }
+  // Unset means the role's own spec stands: no invented default (rule 3).
+  expect(roleModelSpec("reasoner")).toEqual(base);
+});
+
+test("an invalid effort hard-stops instead of being ignored", async () => {
+  // A silently ignored effort setting would make an A/B compare an arm
+  // against itself — the failure mode that produces a confident null result.
+  const { roleModelSpec } = await import("../src/providers.ts");
+  try {
+    process.env.COVERIFY_EFFORT = "maximum";
+    expect(() => roleModelSpec("reasoner")).toThrow(/invalid reasoning effort/);
+  } finally {
+    delete process.env.COVERIFY_EFFORT;
+  }
+});

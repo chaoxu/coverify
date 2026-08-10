@@ -160,9 +160,54 @@ function parseModelSpec(spec: string): ModelSpec {
   return { provider: provider as ModelSpec["provider"], modelId, thinking: thinking as ThinkingLevel };
 }
 
-/** Resolution: COVERIFY_MODEL_<ROLE> > role default (every role has one). */
+export const THINKING_LEVELS: ThinkingLevel[] = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+
+/**
+ * Reasoning-effort override that changes ONLY the thinking level, inheriting
+ * provider and model from whatever the spec already resolves to.
+ * `COVERIFY_EFFORT_<ROLE>` beats `COVERIFY_EFFORT`; absent, nothing changes.
+ *
+ * This exists because the alternative is respelling the whole spec —
+ * `COVERIFY_MODEL_REASONER=openai-codex/gpt-5.6-sol@xhigh` — and issue #31's
+ * A/B is a comparison in which effort must be the ONLY difference between the
+ * arms. A fat-fingered model id there silently changes the model too, which
+ * does not fail, does not warn, and quietly makes the experiment measure
+ * something else. One variable is the treatment, so one variable is what you
+ * set.
+ *
+ * No default (rule 3): unset means the role's own spec stands. An invalid
+ * value hard-stops rather than falling back, for the same reason `--agent-limit`
+ * does — a typo that silently disables the thing you are testing is worse than
+ * a crash.
+ */
+function effortOverride(role: RoleName): ThinkingLevel | undefined {
+  const raw = process.env[`COVERIFY_EFFORT_${ROLE_ENV[role].replace("COVERIFY_MODEL_", "")}`] ??
+    process.env.COVERIFY_EFFORT;
+  if (raw === undefined) return undefined;
+  if (!(THINKING_LEVELS as string[]).includes(raw)) {
+    throw new Error(
+      `invalid reasoning effort "${raw}" (valid: ${THINKING_LEVELS.join(", ")}). ` +
+        "Refusing to fall back to the default: a silently ignored effort setting would make an " +
+        "A/B compare an arm against itself.",
+    );
+  }
+  return raw as ThinkingLevel;
+}
+
+/** Resolution: COVERIFY_EFFORT[_<ROLE>] (thinking only) > COVERIFY_MODEL_<ROLE>
+ *  > role default (every role has one). */
 export function roleModelSpec(role: RoleName): ModelSpec {
-  return envSpec(ROLE_ENV[role], ROLE_DEFAULTS[role]);
+  const spec = envSpec(ROLE_ENV[role], ROLE_DEFAULTS[role]);
+  const thinking = effortOverride(role);
+  return thinking === undefined ? spec : { ...spec, thinking };
 }
 
 /** Ideation families (user decision, Chao 2026-08-09): a reasoner dispatch
