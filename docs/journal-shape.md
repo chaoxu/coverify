@@ -68,9 +68,19 @@ that references it carries the join key alone and no tokens. Two writers for
 one call is not a redundancy, it is a 2x error that no cross-check catches,
 because both sides agree about the payment they are each counting. In this
 harness the switch is `spendLeafed()`: with a telemetry sink installed the span
-leaf is the writer, without one the referencing record is. `tests/spend-invariant.test.ts`
-asserts the two configurations total identically, which is the only form of
-this rule that survives a refactor.
+leaf is the writer, without one the referencing record is.
+`tests/spend-invariant.test.ts` asserts the two configurations total
+identically, which is the only form of this rule that survives a refactor.
+
+**Known gap, stated rather than implied.** That equality holds for worker
+dispatches and gate critics, which is what the invariant test drives. It does
+NOT hold for the verification cadence: a stage record deliberately carries no
+tokens (`cadence.ts`), so with no sink installed a cadence's four calls are
+recorded as four provider calls that reported no usage. Sink-less runs
+therefore lose verification spend, not merely its per-stage breakdown. Live
+campaigns always install the sink (`cli.ts`), so this bites only a harness with
+`src/telemetry/` removed. Extending the invariant test to a cadence is what
+would turn this paragraph back into a passing assertion.
 
 A campaign is a tree: **campaign → run → wake → dispatch → stage record →
 provider request.** Spend happens at exactly one level — the provider request —
@@ -119,13 +129,19 @@ behind, so a transcript cannot tell a 500k-token turn from three 170k attempts.
 twice — a stored duplicate of derivable state is a second source that can drift
 from the first.
 
-**Spend that cannot be measured is recorded as a gap, never omitted.** Three
-sources have no usage payload at all: the librarian (a full external agent with
-live web search), and the `agy` and `chatgpt-cli` oracle lanes. Omitting them
-would read as "this cost nothing", so each call appends a `role-call` carrying
-`unmetered: <lane>`, and `coverify spend` reports them under their own heading
-— separate from `excluded`, which is records a reader must SKIP rather than
-spend nobody can count.
+**Spend that cannot be measured is recorded as a gap, never omitted.** Omitting
+it would read as "this cost nothing", so each such call appends a `role-call`
+carrying `unmetered: <lane>`, and `coverify spend` reports those under their own
+heading — separate from `excluded`, which is records a reader must SKIP rather
+than spend nobody can count.
+
+Before declaring a lane unmeasurable, check whether it is. The librarian was in
+this list until 2026-08-10 on the strength of a comment; `agy --output-format
+json` in fact returns a usage block, and a single librarian call turned out to
+carry over 22,000 input tokens. It is now a measured lane. What remains
+genuinely unmeasurable is `chatgpt-cli`, whose daemon emits nothing, and the
+`agy` ORACLE lane, which still runs `--output-format text` and could be
+converted the same way.
 
 The tree is complete. Any aggregate — per campaign, run, wake, dispatch, stage,
 lane, role or model — is a `GROUP BY` over leaves; no level stores a summary of

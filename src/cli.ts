@@ -175,6 +175,16 @@ async function prove(resume: boolean): Promise<void> {
     console.error(String(e instanceof Error ? e.message : e));
     process.exit(2);
   }
+  // Cheap refusals first: a missing campaign or a missing statement does not
+  // depend on model access, and running the auth preflight ahead of them made
+  // `resume --dir /nowhere` report an auth failure on any machine without
+  // credentials — including a fresh clone running `bun run check`.
+  if (resume && !campaignExists(dir)) {
+    console.error(`no campaign at ${dir}`);
+    process.exit(1);
+  }
+  if (!resume && !positional[0]) usage();
+
   // Auth preflight: a provider is usable via an env API key or a stored OAuth
   // subscription credential (coverify login <provider>).
   const models = await buildModels();
@@ -196,21 +206,17 @@ async function prove(resume: boolean): Promise<void> {
   if (missing.size > 0) {
     console.error(
       `no usable auth for configured role providers:\n  ${[...missing].join("\n  ")}\n` +
-        "fix with 'coverify login <provider>' for subscription OAuth, an API key env var " +
-        "(ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY), or re-point the role with " +
-        "COVERIFY_MODEL_<ROLE>",
+        "fix by: 'coverify login anthropic|openai-codex' (subscription OAuth); OR installing and " +
+        "logging into the vendor binary for a *-cli provider (run `claude` or `codex` once); OR an " +
+        "API key env var (ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY); OR re-pointing the " +
+        "role with COVERIFY_MODEL_<ROLE>. See docs/models.md.",
     );
     process.exit(1);
   }
   if (!resume) {
-    const statement = positional[0];
-    if (!statement) usage();
-    initCampaign(dir, statement);
+    initCampaign(dir, positional[0]!);
     recordStatement(new GateStore(dir), dir, "init");
     console.error(`[coverify] campaign initialized at ${dir}`);
-  } else if (!campaignExists(dir)) {
-    console.error(`no campaign at ${dir}`);
-    process.exit(1);
   }
   // Reasoning-only is a per-CAMPAIGN user policy (design.md rule 3), so a resume
   // inherits it from the last run's stamp. Read from the GATE STORE, never the
@@ -234,9 +240,25 @@ async function prove(resume: boolean): Promise<void> {
   console.log(synthesis);
 }
 
+/** Providers that hold their own OAuth credential. The CLI-backed providers
+ *  are deliberately absent: `claude-cli` and `codex-cli` ride the vendor
+ *  binary's own login, so `login claude-cli` is not a thing to do — it used to
+ *  reach pi-ai and surface a raw `ModelsError` stack, from the very command the
+ *  auth preflight tells you to run. */
+const OAUTH_PROVIDERS = ["anthropic", "openai-codex"] as const;
+
 async function oauth(action: "login" | "logout"): Promise<void> {
   const provider = positional[0];
   if (!provider) usage();
+  if (!(OAUTH_PROVIDERS as readonly string[]).includes(provider)) {
+    console.error(
+      `${provider} does not use coverify's OAuth store. Valid: ${OAUTH_PROVIDERS.join(", ")}.\n` +
+        "claude-cli and claude-bridge use the `claude` binary's own login (run `claude` once);\n" +
+        "codex-cli uses the `codex` binary's (`coverify login openai-codex` covers the API lane);\n" +
+        "api providers use ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY.",
+    );
+    process.exit(2);
+  }
   const models = await buildModels();
   if (action === "logout") {
     await models.logout(provider);

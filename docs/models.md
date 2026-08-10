@@ -41,12 +41,15 @@ stays the cheap third-family trial.
 - `codex-cli` — official `codex exec`, ChatGPT-subscription billed, read-only
   sandbox.
 - `chatgpt-cli` — the chatgpt.com daemon CLI (gitea `chaoxu/chatgpt-cli`), the
-  only route to ChatGPT-Pro-only models such as `gpt-5.6-pro`. Its daemon picks
+  only route to ChatGPT-Pro-only models such as `gpt-5-6-pro`. Its daemon picks
   the model, so the spec's modelId is a provenance label, not a request.
 
 A single-shot CLI-backed **reasoner** runs as an oracle: one deep attempt, no
-tools, the reply is the deliverable. `COVERIFY_MODEL_REASONER=chatgpt-cli/gpt-5.6-pro`
-turns reasoners into GPT-5.6 Pro deep provers. Technicians need tools, so a CLI
+tools, the reply is the deliverable. `COVERIFY_MODEL_REASONER=chatgpt-cli/gpt-5-6-pro`
+turns reasoners into GPT-5.6 Pro deep provers. Spell the id exactly as
+`FAMILY_SPECS` does (`gpt-5-6-pro`, hyphens): served-model enforcement compares
+it verbatim against what the daemon reports, so a dotted spelling has every
+reply discarded as a router downgrade. Technicians need tools, so a CLI
 oracle backend is refused there.
 
 ## Auth

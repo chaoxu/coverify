@@ -123,6 +123,30 @@ if (hidden.length > 0) {
   process.exit(1);
 }
 
+// Delegated-call attribution. The librarian's leaf must read the session's
+// LIVE parent, because a dispatched session is built before its dispatch span
+// exists and receives it later through setTelemetryParent. Passing the
+// build-time `opts.parent` compiles, runs, and silently produces leaves with no
+// dispatchId and no wake — worse attribution than the unmetered record it
+// replaced. No unit test catches it: the callback is internal to
+// createHarnessRoleSession, so a test supplies its own and pins nothing.
+const providersSrc = fs.readFileSync(path.join(repoRoot(), "src/providers.ts"), "utf-8");
+// Call sites only — the declaration names its parameter `parent`.
+const delegatedCalls = [...providersSrc.matchAll(/(?<!function )leafDelegatedCall\(\s*([A-Za-z.]+)/g)].map(
+  (m) => m[1],
+);
+const badDelegated = delegatedCalls.filter((arg) => arg !== "spanParent");
+if (delegatedCalls.length === 0 || badDelegated.length > 0) {
+  console.error(
+    `DELEGATED-CALL ATTRIBUTION — leafDelegatedCall must take \`spanParent\`, got \`${badDelegated[0] ?? "no call site"}\`.`,
+  );
+  console.error(
+    "`opts.parent` is undefined for every dispatched session; the live parent arrives via\n" +
+      "setTelemetryParent after the tools are built. See tests/librarian.test.ts for the edges this buys.",
+  );
+  process.exit(1);
+}
+
 // Knob registry vs reality (#45). The registry declares NAMES, not defaults —
 // each default lives at its one read site — and it is only worth having if that
 // name list is COMPLETE: the usage text and the run stamp both derive from it,

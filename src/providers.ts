@@ -702,6 +702,13 @@ export async function createHarnessRoleSession(
   if (isCliProvider(run.spec.provider)) {
     throw new Error("CLI backends support single-shot verdict roles only, not sessions");
   }
+  // Declared before the tools, and read LAZILY by them: a dispatched session is
+  // built before its dispatch span exists and receives it later through
+  // setTelemetryParent. Capturing `opts.parent` here instead left every
+  // librarian leaf rooted at the campaign, with no dispatchId and no wake —
+  // worse attribution than the unmetered record it replaced, which the harness
+  // stamped with the handle id.
+  let spanParent: TelemetryContext | undefined = opts.parent;
   const tools: AgentTool[] = run.workspace
     ? workspaceTools(run.workspace.cwd, run.workspace.scope, {
         code: run.workspace.code,
@@ -709,7 +716,7 @@ export async function createHarnessRoleSession(
         failedLedger: run.workspace.failedLedger,
         onUnmetered: (lane, detail) => unmetered.push({ lane, detail }),
         onLibrarianSpend: (usage) =>
-          leafDelegatedCall(opts.parent, { role: "librarian", modelSpec: librarianSpec() }, usage),
+          leafDelegatedCall(spanParent, { role: "librarian", modelSpec: librarianSpec() }, usage),
       })
     : [];
   if (run.extraTools) tools.push(...run.extraTools);
@@ -788,7 +795,6 @@ export async function createHarnessRoleSession(
   // harness.abort() only aborts an in-flight prompt, and between attempts there
   // is none. retryAssistantCall honors this controller as terminal.
   const sessionStop = new AbortController();
-  let spanParent: TelemetryContext | undefined = opts.parent;
   const askTurn = async (prompt: string): Promise<string> => {
       // Turn-level retry at the ask boundary: retryAssistantCall restarts the
       // turn on transient transport failures with backoff, while quota/billing
