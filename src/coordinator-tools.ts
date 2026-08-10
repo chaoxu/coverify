@@ -29,7 +29,9 @@ import {
   type RoleSession,
   runRole,
   specKey,
+  spendFields,
   telemetrySink,
+  withProviderCallSpan,
   specLabel,
 } from "./providers.js";
 import { runMemMb, runTimeoutMs, toolText } from "./sandbox.js";
@@ -218,15 +220,22 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
     let session: RoleSession | undefined;
     const sessionPromise: Promise<RoleSession> = isCliProvider(spec.provider)
       ? Promise.resolve(
-          createCliRoleSession({
-            contract,
-            charge:
-              CHARGES.reasoner +
-              "\nYou have no tools in this run: produce the deliverable directly and completely in your reply.",
-            prompt: packetPrompt,
+          // Span-wrapped like a harness session: a bare CLI session has no
+          // provider_call span and no setTelemetryParent, so the dispatch span
+          // below silently no-op'd and every fable/gemini/pro-routed reasoner
+          // produced zero leaves.
+          withProviderCallSpan(
+            createCliRoleSession({
+              contract,
+              charge:
+                CHARGES.reasoner +
+                "\nYou have no tools in this run: produce the deliverable directly and completely in your reply.",
+              prompt: packetPrompt,
+              spec,
+              models,
+            }),
             spec,
-            models,
-          }),
+          ),
         )
       : createHarnessRoleSession(
           {
@@ -435,7 +444,19 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
       // One resolution per gate: the spec the call requested is the spec the
       // record names, even if the env changes mid-campaign.
       const gateSpec = roleModelSpec("gateCritic");
-      const promise = runRole({
+      // The gate's dispatch span: without it the critic's leaf carried no role,
+      // wake or dispatch id and bucketed as `orphaned-spend` (rule 13, "record
+      // every edge"). Pass-through when telemetry is off.
+      const promise = telemetrySink().startSpan(
+        {
+          name: "coverify.dispatch",
+          attributes: {
+            "coverify.dispatch_id": id,
+            "coverify.role": "gate-critic",
+            "coverify.wake": deps.wake(),
+          },
+        },
+        (gateSpan) => runRole({
         contract,
         charge: CHARGES.gateCritic,
         prompt:
@@ -446,7 +467,7 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
           `\n\n# Proposed mechanism\n\n${p.mechanism}\n\n# Claimed first nontrivial implication\n\n${p.firstImplication}`,
         spec: gateSpec,
         models,
-      }, gateStop.signal).then(({
+      }, gateStop.signal, gateSpan).then(({
         text, usage: criticUsage, promptChars, durationMs,
         servedModel, reportedModel, providerSessionId, backendCwd,
         attempts, requests,
@@ -454,12 +475,13 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
         if (!handles.has(id)) {
           // Cancelled after the critic returned: the verdict must NOT be
           // recorded (an unseen PASS could later unlock concurrent workers
-          // nobody reviewed), but the tokens were spent — leaf them.
+          // nobody reviewed), but the tokens were spent — leaf them, unless the
+          // call's own span already did.
           store.append({
             kind: "role-call",
             dispatchId: id,
             orphaned: "gate cancelled after the critic returned; verdict deliberately not recorded",
-            ...defined({ usage: criticUsage, attempts, requests }),
+            ...defined(spendFields({ usage: criticUsage, attempts, requests })),
           });
           return `[gate ${id} cancelled; verdict not recorded]`;
         }
@@ -481,7 +503,8 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
           );
         }
         return `${verdict}\n\n${text}`;
-      });
+      }),
+      );
       // liveOnMechanism counts workers only, so a gate records its mechanism as
       // itself rather than disguising its own subject.
       registerHandle({ id, kind: "gate", mechanism: p.mechanism.slice(0, 60), promise, stop: () => gateStop.abort() });
@@ -612,12 +635,14 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
         cancelled: true,
         reason: p.reason,
         // The provider was paid for whatever ran before the cancel; dropping it
-        // records a multi-hour worker as zero tokens.
-        ...defined({
+        // records a multi-hour worker as zero tokens — unless the turn's own
+        // span leafs it (the work keeps running and its leaf lands when the
+        // turn settles), in which case this record carries the join key only.
+        ...defined(spendFields({
           usage: handle.usage?.(),
           attempts: handle.attempts?.(),
           requests: handle.requests?.(),
-        }),
+        })),
       });
       deps.bumpActivity();
       return toolText(`cancelled ${p.id}. Record the route state in the ledgers per the contract.`);
@@ -702,11 +727,11 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
             id,
             cancelled: true,
             reason: `campaign ${p.state}`,
-            ...defined({
+            ...defined(spendFields({
               usage: handle.usage?.(),
               attempts: handle.attempts?.(),
               requests: handle.requests?.(),
-            }),
+            })),
           });
           handles.delete(id);
           interrupted++;

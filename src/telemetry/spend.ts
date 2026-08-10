@@ -145,6 +145,21 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
   records.forEach((r, i) => {
     if (superseded(r)) lastCompletion.set(r.id as string, i);
   });
+  // Join keys under which some `role-call` leaf already holds a payment. A
+  // record that REFERENCES a billed call carries the key and no tokens (exactly
+  // one writer per call), and without this it reads as a call nobody could
+  // meter — a phantom unmeasured-spend count on every campaign written since.
+  // Campaigns with no leaves have an empty set and are read exactly as before.
+  const leafed = new Set<string>();
+  for (const r of records) {
+    if (r.kind !== "role-call" || !r.usage) continue;
+    if (typeof r.dispatchId === "string") leafed.add(`d:${r.dispatchId}`);
+    if (typeof r.role === "string" && typeof r.wake === "number") leafed.add(`w:${r.role}:${r.wake}`);
+  }
+  const leafedElsewhere = (r: Record<string, unknown>): boolean =>
+    (typeof r.dispatchId === "string" && leafed.has(`d:${r.dispatchId}`)) ||
+    (typeof r.id === "string" && leafed.has(`d:${r.id}`)) ||
+    (typeof r.role === "string" && typeof r.wake === "number" && leafed.has(`w:${r.role}:${r.wake}`));
 
   for (const [i, r] of records.entries()) {
     if (superseded(r) && lastCompletion.get(r.id as string) !== i) {
@@ -180,9 +195,10 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
       // Only records that COULD carry usage count as a gap: a verification or
       // gate completion is EMPTY BY DESIGN, its spend leafed by the stage
       // records underneath, so counting them reports phantom unmeasured calls.
-      const leafedElsewhere =
-        r.kind === "completion" && typeof r.id === "string" && /^[vg]\d/.test(r.id);
-      if (SPENDING_KINDS.has(String(r.kind)) && !leafedElsewhere) {
+      const emptyByDesign =
+        (r.kind === "completion" && typeof r.id === "string" && /^[vg]\d/.test(r.id)) ||
+        leafedElsewhere(r);
+      if (SPENDING_KINDS.has(String(r.kind)) && !emptyByDesign) {
         bump(excluded, "provider call that reported no usage (unmetered lane, or a reject before parse)");
       }
       continue;

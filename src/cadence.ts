@@ -28,6 +28,7 @@ import {
   type RoleUsage,
   runRole,
   specKey,
+  spendLeafed,
   telemetrySink,
   specLabel,
 } from "./providers.js";
@@ -186,6 +187,10 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
       // that carries it. If the cadence unwinds in that window it is emitted as
       // its own leaf, so cadence spend is ALWAYS a leaf — the roll-up that
       // replaced this cost 80.4M tokens of double-counting.
+      //
+      // Held only when the call itself wrote no leaf (`spendLeafed`): with a
+      // sink installed the stage's own provider_call span already recorded this
+      // payment, and flushing it again on the cancel path wrote it twice.
       let unrecordedSpend: RoleUsage | undefined;
 
       // The cadence runs as an async handle, like a worker: the verdict arrives
@@ -296,7 +301,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             parent,
           ),
         );
-        unrecordedSpend = usage;
+        unrecordedSpend = spendLeafed() ? undefined : usage;
         abortIfCancelled();
         const evidence = newEvidencePath(dir, `audits/${slug}.${stage.kind}`);
         fs.writeFileSync(evidence, text);
@@ -536,7 +541,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
               parent,
             ),
           );
-          unrecordedSpend = usage;
+          unrecordedSpend = spendLeafed() ? undefined : usage;
           abortIfCancelled();
           reconText = text;
           const reconEvidence = newEvidencePath(dir, `audits/${slug}.reconstruction`);

@@ -298,22 +298,12 @@ export async function runRole(
    *  under the process context (NOOP without an exporter). */
   parent?: TelemetryContext,
 ): Promise<RoleResult> {
-  return (parent ?? sink).startSpan(
-    {
-      name: "coverify.provider_call",
-      attributes: { "coverify.model_spec": specKey(run.spec) },
-    },
-    async (span) => {
-      const result = await runRoleInner(run, signal);
-      if (result.usage) {
-        recordProviderCall(span, result.usage, {
-          attempts: result.attempts,
-          requests: result.requests,
-        });
-      }
-      return result;
-    },
-  );
+  // No span of its own, deliberately: the SESSION opens the provider_call span
+  // (a harness turn in `ask`, a CLI answer in the wrapper below), so this call
+  // has exactly one writer. Wrapping here as well made every single-shot role
+  // emit two leaves for one payment — an outer span carrying the session total
+  // and an inner one carrying the same delta.
+  return runRoleInner(run, signal, parent);
 }
 
 /** The measurement sink. Injected by cli.ts via runCampaign; NOOP until then,
@@ -324,6 +314,74 @@ export function setTelemetrySink(next: TelemetryContext): void {
 }
 export function telemetrySink(): TelemetryContext {
   return sink;
+}
+
+/**
+ * Whether a billed provider call writes its own leaf. The rule this serves:
+ * EXACTLY ONE WRITER PER BILLED CALL. With a sink installed, every span-wrapped
+ * call appends a `role-call` leaf, so records that merely REFERENCE that call
+ * (a completion, a coordinator wake event, a gate verdict) carry their join key
+ * and no tokens — otherwise both write the same payment and `coverify spend`
+ * counts it twice. Without a sink there is no leaf, so those records stay the
+ * single writer and a sink-less harness still counts its tokens.
+ */
+export function spendLeafed(): boolean {
+  return sink !== NOOP_TELEMETRY_CONTEXT;
+}
+
+/** The token fields a non-leaf record may carry, per `spendLeafed`. Absent
+ *  fields are dropped rather than written as zero (absent ≠ zero; see
+ *  RoleUsage). One helper so a new record kind cannot re-introduce the second
+ *  writer by hand. */
+export function spendFields(f: {
+  usage?: RoleUsage;
+  attempts?: number;
+  requests?: number;
+}): { usage?: RoleUsage; attempts?: number; requests?: number } {
+  if (spendLeafed()) return {};
+  return Object.fromEntries(Object.entries(f).filter(([, v]) => v !== undefined));
+}
+
+/**
+ * Give a session that reports usage only when its single answer lands (a
+ * spawned CLI) the same span treatment `ask` has on a harness session, plus the
+ * `setTelemetryParent` a dispatch needs. Without it a `fable`/`gemini`/`pro`-
+ * routed reasoner produced no leaf at all and the dispatch span's parent edge
+ * silently no-op'd.
+ */
+export function withProviderCallSpan<T extends RoleSession>(session: T, spec: ModelSpec): T {
+  let spanParent: TelemetryContext | undefined;
+  return {
+    ...session,
+    setTelemetryParent(parent: TelemetryContext): void {
+      spanParent = parent;
+    },
+    ask(prompt: string): Promise<string> {
+      return (spanParent ?? sink).startSpan(
+        { name: "coverify.provider_call", attributes: { "coverify.model_spec": specKey(spec) } },
+        async (span) => {
+          // A CLI session answers once, so its cumulative total IS this call's
+          // delta; the baseline is kept anyway so a future multi-ask backend
+          // cannot start double-counting silently.
+          const before = session.usage();
+          try {
+            return await session.ask(prompt);
+          } finally {
+            const after = session.usage();
+            // No usage means the lane reported none (absent ≠ zero): the leaf
+            // is still written, which is what distinguishes a call nobody could
+            // meter from a call that cost nothing.
+            if (after !== undefined) {
+              recordProviderCall(span, subUsage(after, before), {
+                attempts: session.attempts?.(),
+                requests: session.requests?.(),
+              });
+            }
+          }
+        },
+      );
+    },
+  };
 }
 
 /** Attach a billed call's tokens to its span. Absent fields stay absent:
@@ -348,14 +406,19 @@ function recordProviderCall(
 async function runRoleInner(
   run: Omit<RoleRun, "workspace" | "extraTools">,
   signal?: AbortSignal,
+  parent?: TelemetryContext,
 ): Promise<RoleResult> {
   const started = Date.now();
   // One invocation surface: every role call is a session asked once. A CLI
   // backend is a degenerate session (answers once, stoppable, not steerable);
   // an API provider gets an in-memory harness session whose id becomes pi's
   // prompt_cache_key — ~80% prefix-cache hit measured (f0ad016).
-  const cli = isCliProvider(run.spec.provider) ? createCliRoleSession(run, signal) : undefined;
-  const session = cli ?? (await createHarnessRoleSession(run, { sessionId: randomUUID(), ephemeral: true }));
+  const cli = isCliProvider(run.spec.provider)
+    ? withProviderCallSpan(createCliRoleSession(run, signal), run.spec)
+    : undefined;
+  if (parent !== undefined) cli?.setTelemetryParent?.(parent);
+  const session =
+    cli ?? (await createHarnessRoleSession(run, { sessionId: randomUUID(), ephemeral: true, parent }));
   const text = await session.ask(run.prompt);
   return {
     text,

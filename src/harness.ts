@@ -33,6 +33,8 @@ import {
   createHarnessRoleSession,
   roleModelSpec,
   specKey,
+  spendFields,
+  spendLeafed,
   subUsage,
   type RoleSession,
   type RoleUsage,
@@ -256,12 +258,20 @@ async function runLockedCampaign(
       // failed (a CLI exiting nonzero after turn.completed). Skipped once
       // something upstream claimed that payment (BilledFailure.usageLeafed), so
       // that leaf and this record cannot both count it.
-      const spend = () =>
-        defined({
-          usage: handle.usage?.() ?? billed,
+      //
+      // The session's own total is written only when nothing leafed it: with a
+      // sink installed each turn already appended its own `role-call`, and
+      // stamping the cumulative total here as well counted every worker twice.
+      // `billed` survives either way — a call that threw before returning wrote
+      // no leaf, so this record is its only writer.
+      const spend = () => ({
+        ...spendFields({
+          usage: handle.usage?.(),
           attempts: handle.attempts?.(),
           requests: handle.requests?.(),
-        });
+        }),
+        ...(handle.usage?.() === undefined && billed !== undefined ? { usage: billed } : {}),
+      });
       // Tool-spawned calls this handle could not measure. Leafed once per
       // settle so an unmeasurable call reads as a declared gap, not silence.
       // Drained rather than peeked, so a refactor cannot emit each gap twice.
@@ -473,6 +483,23 @@ async function runLockedCampaign(
   const leafDiscardedCoordSpend = (why: { compactionFailed: true } | { turnFailed: true }) => {
     const total = coordinator?.usage();
     if (!total) return;
+    // A failed TURN was already leafed: `ask` records in a `finally`, so the
+    // span wrote this payment before the throw reached here. A failed
+    // COMPACTION was not — `compact()` opens no span, its designated single
+    // writer is leafCompactionSpend below, and that never ran. So this record
+    // stays the only writer for the compaction case and carries join keys only
+    // for the turn case.
+    if ("turnFailed" in why && spendLeafed()) {
+      store.event({
+        kind: "usage",
+        role: "coordinator",
+        sessionId: coordinatorSessionId(),
+        wake: wakeCount,
+        ...why,
+        modelSpec: specKey(coordinatorSpec),
+      });
+      return;
+    }
     store.event({
       kind: "usage",
       role: "coordinator",
@@ -744,10 +771,23 @@ async function runLockedCampaign(
       })();
     }, 1000);
     try {
-      lastWakeText = await coordinator.ask(
-        fresh
-          ? `${resumeBundle(dir)}${readingDiscipline}${guidanceBlock}\n\n---\n\nCampaign directory: ${dir}\n${lostNote}${digest}${bookkeeping}${idleNudge}\n\n${newsBlock}${userBlock}`
-          : `${rereadBlock}${guidanceBlock}${lostNote}${digest}${bookkeeping}${idleNudge}${compactionWarning}${growthNote}\n\n${newsBlock}${userBlock}`,
+      // The wake span: without a parent the coordinator's own leaves carried no
+      // role and no wake and bucketed as `orphaned-spend` — roughly a third of
+      // measured campaign spend, unattributable (rule 13, "record every edge").
+      // Re-pointed each wake because the session outlives any one span; with
+      // telemetry off this is a pass-through that runs the same callback.
+      const wakePrompt = fresh
+        ? `${resumeBundle(dir)}${readingDiscipline}${guidanceBlock}\n\n---\n\nCampaign directory: ${dir}\n${lostNote}${digest}${bookkeeping}${idleNudge}\n\n${newsBlock}${userBlock}`
+        : `${rereadBlock}${guidanceBlock}${lostNote}${digest}${bookkeeping}${idleNudge}${compactionWarning}${growthNote}\n\n${newsBlock}${userBlock}`;
+      lastWakeText = await telemetrySink().startSpan(
+        {
+          name: "coverify.wake",
+          attributes: { "coverify.wake": wakeCount, "coverify.role": "coordinator" },
+        },
+        (wakeSpan) => {
+          coordinator!.setTelemetryParent?.(wakeSpan);
+          return coordinator!.ask(wakePrompt);
+        },
       );
       for (const m of userMessages) store.event({ kind: "note", note: `user message: ${m}` });
       consumeUserMessages(dir, userMessages.length + steeredCount);
@@ -821,7 +861,10 @@ async function runLockedCampaign(
       sessionId: coordinatorSessionId(),
       wake: wakeCount,
       modelSpec: specKey(coordinatorSpec),
-      ...defined({ usage: spent, attempts, requests }),
+      // Tokens only when the turn's own span did not leaf them: with a sink
+      // installed this record is the wake's context gauge and a join key, never
+      // a second copy of what the wake spent.
+      ...spendFields({ usage: spent, attempts, requests }),
       approxContextTokens: contextNow,
       ...defined({ contextGrowthTokens: growth }),
     });
