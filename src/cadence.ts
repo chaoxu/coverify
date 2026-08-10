@@ -28,8 +28,10 @@ import {
   type RoleUsage,
   runRole,
   specKey,
+  telemetrySink,
   specLabel,
 } from "./providers.js";
+import type { TelemetrySpan } from "@earendil-works/pi-telemetry";
 import { toolText } from "./sandbox.js";
 
 /** What the cadence needs from the campaign loop. Narrow by design: it never
@@ -194,6 +196,25 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
       const id = deps.mintVerificationId();
       const cadenceStop = new AbortController();
       let cancelled: () => boolean = () => cadenceStop.signal.aborted;
+      /** The dispatch span, held while the cadence runs so each stage's
+       *  provider call nests under it and inherits its id and wake. */
+      let cadenceSpan: TelemetrySpan | undefined;
+      /** Run one stage's provider call inside a stage span. The span is what
+       *  carries `stage` and `revision` down to the leaf, so the record writer
+       *  never copies them; when telemetry is off this is a pass-through. */
+      const stageSpan = <T,>(
+        kind: "audit" | "bundle-cert" | "reconstruction" | "comparison",
+        call: (parent: TelemetrySpan | undefined) => Promise<T>,
+      ): Promise<T> =>
+        cadenceSpan === undefined
+          ? call(undefined)
+          : cadenceSpan.startSpan(
+              {
+                name: "coverify.stage",
+                attributes: { "coverify.stage": kind, "coverify.revision": rel },
+              },
+              (span) => call(span),
+            );
       /** Spend attached to a thrown error by a CLI backend that failed after
        *  the provider had already been paid (backends.ts attaches `usage` to
        *  the rejection). Leafed like any other unrecorded spend. */
@@ -268,13 +289,13 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         const {
           text, usage, promptChars, durationMs, servedModel, reportedModel,
           providerSessionId, backendCwd, attempts, requests,
-        } = await runRole({
-          contract,
-          charge: CHARGES[stage.role],
-          prompt: stage.ctx.prompt,
-          spec,
-          models,
-        });
+        } = await stageSpan(stage.kind, (parent) =>
+          runRole(
+            { contract, charge: CHARGES[stage.role], prompt: stage.ctx.prompt, spec, models },
+            undefined,
+            parent,
+          ),
+        );
         unrecordedSpend = usage;
         abortIfCancelled();
         const evidence = newEvidencePath(dir, `audits/${slug}.${stage.kind}`);
@@ -506,13 +527,13 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           const {
             text, usage, promptChars, durationMs, servedModel, reportedModel,
             providerSessionId, backendCwd, attempts, requests,
-          } = await runRole({
-            contract,
-            charge: CHARGES.reconstructor,
-            prompt: reconCtx.prompt,
-            spec: reconSpec,
-            models,
-          });
+          } = await stageSpan("reconstruction", (parent) =>
+            runRole(
+              { contract, charge: CHARGES.reconstructor, prompt: reconCtx.prompt, spec: reconSpec, models },
+              undefined,
+              parent,
+            ),
+          );
           unrecordedSpend = usage;
           abortIfCancelled();
           reconText = text;
@@ -599,16 +620,32 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         // not start before registerHandle sets the handle. Every unwinding path
         // flushes, not just cancellation; flushUnrecordedSpend self-clears, so a
         // second call is a no-op.
-        promise: async () => {
-          try {
-            return await cadence();
-          } catch (e) {
-            flushErrorSpend(e, "provider call failed after being billed (CLI reported a nonzero exit)");
-            throw e;
-          } finally {
-            flushUnrecordedSpend("cadence failed after the provider returned, before the stage record");
-          }
-        },
+        promise: async () =>
+          // The dispatch span: every provider call this cadence makes inherits
+          // its id and wake, so no stage has to copy them onto its own record.
+          telemetrySink().startSpan(
+            {
+              name: "coverify.dispatch",
+              attributes: {
+                "coverify.dispatch_id": id,
+                "coverify.role": "verification",
+                "coverify.wake": deps.wake(),
+                "coverify.mechanism": `${VERIFICATION_MECHANISM_PREFIX}${rel}`,
+              },
+            },
+            async (span) => {
+              cadenceSpan = span;
+              try {
+                return await cadence();
+              } catch (e) {
+                flushErrorSpend(e, "provider call failed after being billed (CLI reported a nonzero exit)");
+                throw e;
+              } finally {
+                cadenceSpan = undefined;
+                flushUnrecordedSpend("cadence failed after the provider returned, before the stage record");
+              }
+            },
+          ),
         // No `usage` here, deliberately: every stage records its own, and a
         // summary alongside them cost 80.4M tokens of double-counting (27% of
         // the 2026-08-09 study). Cadence cost is GROUP BY dispatchId over leaves.

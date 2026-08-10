@@ -373,6 +373,9 @@ async function runRoleInner(
 }
 
 export interface RoleSession {
+  /** Nest this session's turns under a span created after the session was.
+   *  A worker's dispatch span opens around the promise, not the constructor. */
+  setTelemetryParent?(parent: TelemetryContext): void;
   /** Stated, not inferred from which fields exist: a spawned CLI answers once
    *  and is stoppable but not steerable; a harness session is steerable, and
    *  durable when its transcript persists. */
@@ -706,6 +709,7 @@ export async function createHarnessRoleSession(
   // harness.abort() only aborts an in-flight prompt, and between attempts there
   // is none. retryAssistantCall honors this controller as terminal.
   const sessionStop = new AbortController();
+  let spanParent: TelemetryContext | undefined = opts.parent;
   const askTurn = async (prompt: string): Promise<string> => {
       // Turn-level retry at the ask boundary: retryAssistantCall restarts the
       // turn on transient transport failures with backoff, while quota/billing
@@ -763,7 +767,7 @@ export async function createHarnessRoleSession(
      *  dispatched worker — ~93% of presented tokens — emitted nothing, because
      *  only the single-shot lane went through runRole. */
     ask(prompt: string): Promise<string> {
-      return (opts.parent ?? sink).startSpan(
+      return (spanParent ?? sink).startSpan(
         { name: "coverify.provider_call", attributes: { "coverify.model_spec": specKey(run.spec) } },
         async (span) => {
           // usage() is CUMULATIVE over the session, so this turn is the delta.
@@ -782,6 +786,9 @@ export async function createHarnessRoleSession(
           }
         },
       );
+    },
+    setTelemetryParent(parent: TelemetryContext): void {
+      spanParent = parent;
     },
     approxTokens(): number {
       return estimateContextTokens(contextMessages).tokens;

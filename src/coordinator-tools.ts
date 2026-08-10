@@ -29,6 +29,7 @@ import {
   type RoleSession,
   runRole,
   specKey,
+  telemetrySink,
   specLabel,
 } from "./providers.js";
 import { runMemMb, runTimeoutMs, toolText } from "./sandbox.js";
@@ -258,10 +259,25 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
       const h = handles.get(id);
       if (h) h.session = s;
     });
-    const promise = sessionPromise.then((live) => {
-      // Cancelled while the session was being created: don't launch the
-      // turn at all — nothing could stop it and the report would be dropped.
-      if (!handles.has(id)) return "";
+    // The dispatch span wraps the worker's whole life, so every turn it takes
+    // inherits the id, role and wake rather than each record copying them.
+    // With telemetry off this is a pass-through that runs the same callback.
+    const promise = telemetrySink().startSpan(
+      {
+        name: "coverify.dispatch",
+        attributes: {
+          "coverify.dispatch_id": id,
+          "coverify.role": role,
+          "coverify.wake": deps.wake(),
+          "coverify.mechanism": packet.mechanism,
+        },
+      },
+      (dispatchSpan) =>
+        sessionPromise.then((live) => {
+          // Cancelled while the session was being created: don't launch the
+          // turn at all — nothing could stop it and the report would be dropped.
+          if (!handles.has(id)) return "";
+          live.setTelemetryParent?.(dispatchSpan);
       // A tooled session gets its evidence directory; a toolless oracle has
       // nowhere to write, so the line would be a false affordance.
       const opening = live.capabilities.steerable
@@ -282,7 +298,8 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
                   "conclusion-first report now, per your charge.",
               ),
       );
-    });
+        }),
+    );
     registerHandle({
       id,
       kind: "worker",
