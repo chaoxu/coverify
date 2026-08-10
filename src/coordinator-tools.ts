@@ -300,6 +300,10 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
       promise,
       session,
       usage: () => session?.usage(),
+      // Request-level counts, so a worker's completion can distinguish one
+      // long turn from several retried ones.
+      attempts: () => session?.attempts?.() ?? 0,
+      requests: () => session?.requests?.() ?? 0,
     });
     return toolText(
       `dispatched ${id} (${handles.size} live). The report will arrive at a later wake.` +
@@ -434,6 +438,7 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
       }, gateStop.signal).then(({
         text, usage: criticUsage, promptChars, durationMs,
         servedModel, reportedModel, providerSessionId, backendCwd,
+        attempts, requests,
       }) => {
         // A cancelled gate must not record a verdict (mirrors verification):
         // an unseen verdict could later unlock concurrent workers nobody reviewed.
@@ -451,6 +456,8 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
           ...(reportedModel !== undefined ? { reportedModel } : {}),
           ...(providerSessionId !== undefined ? { providerSessionId } : {}),
           ...(backendCwd !== undefined ? { backendCwd } : {}),
+          ...(attempts !== undefined ? { attempts } : {}),
+          ...(requests !== undefined ? { requests } : {}),
         });
         if (verdict === "UNPARSEABLE") {
           return (

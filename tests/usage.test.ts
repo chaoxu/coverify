@@ -139,3 +139,31 @@ test("subUsage returns a copy, never an alias of its baseline argument", () => {
   expect(d).toEqual(a);
   expect(d).not.toBe(a);
 });
+
+test("a retried call is distinguishable from one long call", async () => {
+  // The last edge of the record tree. A retry re-presents the whole context
+  // and is billed again, but leaves NO message behind — so unlike request
+  // count it cannot be recovered from a transcript afterwards. Without it a
+  // 500k-token turn and three 170k attempts look identical on file, which is
+  // exactly the question "what did this call cost" needs answered.
+  const { createCliRoleSession } = await import("../src/backends.ts");
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const dir = fs.mkdtempSync("/private/tmp/coverify-attempts-");
+  const stub = path.join(dir, "once.sh");
+  fs.writeFileSync(stub, `#!/bin/sh\nprintf 'VERDICT: PASS' > "$1"\n`, { mode: 0o755 });
+  process.env.COVERIFY_CODEX_CMD = `${stub} {out}`;
+  const s = createCliRoleSession({
+    contract: "c",
+    charge: "c",
+    prompt: "unused",
+    spec: { provider: "codex-cli", modelId: "stub", thinking: "off" },
+    models: undefined as never,
+  });
+  expect(s.attempts?.()).toBe(0);
+  await s.ask("q");
+  // A CLI oracle answers exactly once, so both counts are exact, not derived.
+  expect(s.attempts?.()).toBe(1);
+  expect(s.requests?.()).toBe(1);
+  delete process.env.COVERIFY_CODEX_CMD;
+});

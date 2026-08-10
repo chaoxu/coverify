@@ -65,6 +65,9 @@ export interface Handle {
   /** Provider- or CLI-reported usage, read at completion (undefined when the
    *  backend reported none). */
   usage?: () => RoleUsage | undefined;
+  /** Request-level counts; see RoleSession.attempts. */
+  attempts?: () => number;
+  requests?: () => number;
   /** Resolves (never rejects) when the handle finishes; set by registerHandle. */
   settled: Promise<void>;
 }

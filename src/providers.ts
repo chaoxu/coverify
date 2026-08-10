@@ -289,6 +289,8 @@ export async function runRole(
     reportedModel: cli?.reportedModel?.(),
     providerSessionId: cli?.providerSessionId?.(),
     backendCwd: cli?.backendCwd?.(),
+    attempts: session.attempts?.(),
+    requests: session.requests?.(),
     // promptChars counts what actually went over the wire: the CLI path
     // inlines the contract+charge into one prompt string.
     promptChars: cli ? cli.promptChars() : run.prompt.length,
@@ -314,6 +316,14 @@ export interface RoleSession {
   servedModel?(): string | undefined;
   /** Self-reported model, when the backend states one (#21 P3). */
   reportedModel?(): string | undefined;
+  /** Provider attempts made by this session, retries included. A retry
+   *  re-presents the whole context and is billed again but leaves no message,
+   *  so this is the one part of request-level cost that cannot be recovered
+   *  from a transcript afterwards. */
+  attempts?(): number;
+  /** Provider requests that produced output. Derived from the transcript where
+   *  one exists, so it never becomes a second source that can drift. */
+  requests?(): number;
   /** Join keys into the provider's own transcript, where telemetry this
    *  harness cannot see otherwise lives — for the codex lane, the rollout
    *  under ~/.codex/sessions/ carrying rate_limits.primary.used_percent.
@@ -504,6 +514,10 @@ interface RoleResult {
   /** Provider-side transcript join keys (codex lane); see RoleSession. */
   providerSessionId?: string;
   backendCwd?: string;
+  /** Request-level counts: the last edge of the record tree. Without these a
+   *  record spanning a tool loop cannot be told from one spanning retries. */
+  attempts?: number;
+  requests?: number;
 }
 
 export type HarnessSessionOpts = {
@@ -644,6 +658,8 @@ export async function createHarnessRoleSession(
   // Cancellation must also cover the retry wrapper's backoff sleeps:
   // harness.abort() only aborts an in-flight prompt, and between attempts
   // there is none — so abort() additionally fires this controller, which
+  // Provider attempts across this session's life, retries included.
+  let attempts = 0;
   // retryAssistantCall honors as terminal (an aborted backoff resolves as
   // an aborted message, never another attempt).
   const sessionStop = new AbortController();
@@ -661,6 +677,13 @@ export async function createHarnessRoleSession(
       // and refresh() runs per attempt so telemetry counts every attempt.
       const final = await retryAssistantCall(
         async () => {
+          // Each entry here is one provider attempt. A retry re-presents the
+          // entire context and is billed again, but leaves no message behind —
+          // so unlike request count, this is NOT derivable from the transcript
+          // afterwards, and a 500k-token turn is indistinguishable from three
+          // 170k attempts without it. The last missing edge of the record tree
+          // (docs/measurement-protocol.md rule 13).
+          attempts++;
           try {
             return (await harness.prompt(prompt)) as AssistantMessage;
           } finally {
@@ -710,6 +733,12 @@ export async function createHarnessRoleSession(
     usage(): RoleUsage {
       return addUsage(sumMessagesUsage(allMessages), compactionUsage);
     },
+    attempts: () => attempts,
+    // Assistant messages are the provider requests that produced output; the
+    // transcript already holds them, so this is derived rather than counted
+    // twice — a stamped duplicate of derivable state is a second source that
+    // can drift from the first.
+    requests: () => allMessages.filter((m) => (m as { role?: string }).role === "assistant").length,
     async compact(customInstructions?: string): Promise<void> {
       await harness.compact(customInstructions);
       await refresh();

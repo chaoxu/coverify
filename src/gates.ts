@@ -651,6 +651,8 @@ export function recordGateVerdict(
     reportedModel?: string;
     providerSessionId?: string;
     backendCwd?: string;
+    attempts?: number;
+    requests?: number;
   },
 ): string {
   const verdict =

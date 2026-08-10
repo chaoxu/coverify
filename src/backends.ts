@@ -62,6 +62,10 @@ export function createCliRoleSession(
      *  requested spec, never enforced (#21 P3). codex-cli emits no model
      *  echo in its JSONL (verified 2026-08-09), so it stays undefined. */
     reportedModel: () => reportedModel,
+    // A CLI oracle answers exactly once and keeps no transcript, so both
+    // counts are exact rather than derived.
+    attempts: () => (asked ? 1 : 0),
+    requests: () => (asked ? 1 : 0),
     /** Join keys into the provider's own rollout (codex lane), where the
      *  rate-limit trajectory lives. Recorded, never interpreted here. */
     providerSessionId: () => providerSessionId,

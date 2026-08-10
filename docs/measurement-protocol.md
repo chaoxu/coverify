@@ -419,11 +419,18 @@ attributed to the wake that ordered it. Every edge below is now stamped:
 | wake → dispatch | `wake` on every dispatch record |
 | dispatch → stage | `dispatchId` on audit, bundle-cert, reconstruction, comparison, gate-verdict, role-call |
 | dispatch → completion | the handle `id` |
-| stage → provider request | **still missing** — one record spans a whole tool loop and its retries |
+| stage → provider request | `attempts` + `requests` on every usage-bearing record |
 
-That last row is the remaining hole, and it is why "what did this call cost"
-is still unanswerable: a 500k-token turn and three 170k attempts are
-indistinguishable on file.
+**`attempts` is the one count that cannot be derived after the fact.** A retry
+re-presents the whole context and is billed again while leaving no message
+behind, so a transcript cannot tell a 500k-token turn from three 170k attempts.
+`requests` is derived from the transcript where one exists, rather than stamped
+twice — a stored duplicate of derivable state is a second source that can drift
+from the first.
+
+The tree is now complete. Any aggregate — per campaign, run, wake, dispatch,
+stage, lane, role or model — is a `GROUP BY` over leaves, and no level stores a
+summary of the level below it.
 
 ## 13b. What must be recorded
 

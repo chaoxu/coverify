@@ -261,7 +261,7 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         const spec = roleModelSpec(stage.role);
         const {
           text, usage, promptChars, durationMs, servedModel, reportedModel,
-          providerSessionId, backendCwd,
+          providerSessionId, backendCwd, attempts, requests,
         } = await runRole({
           contract,
           charge: CHARGES[stage.role],
@@ -311,6 +311,9 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
           usage,
           promptChars,
           durationMs,
+          // stage -> provider request, the tree's last edge.
+          ...(attempts !== undefined ? { attempts } : {}),
+          ...(requests !== undefined ? { requests } : {}),
         });
         } finally {
           // The stage record now carries this spend. Cleared in a finally so a
@@ -525,6 +528,8 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
             reportedModel: reconReportedModel,
             providerSessionId: reconProviderSessionId,
             backendCwd: reconBackendCwd,
+            attempts: reconAttempts,
+            requests: reconRequests,
           } = await runRole({
             contract,
             charge: CHARGES.reconstructor,
@@ -568,6 +573,8 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
               ? { providerSessionId: reconProviderSessionId }
               : {}),
             ...(reconBackendCwd !== undefined ? { backendCwd: reconBackendCwd } : {}),
+            ...(reconAttempts !== undefined ? { attempts: reconAttempts } : {}),
+            ...(reconRequests !== undefined ? { requests: reconRequests } : {}),
           });
           } finally {
             unrecordedSpend = undefined;
