@@ -320,7 +320,16 @@ export function formatSpend(s: CampaignSpend): string {
   // A row whose lane never reports a field is a LOWER BOUND on that column,
   // and rule 10 forbids presenting a gap as a measurement.
   const noReasoning = s.byLane.filter((l) => l.reasoning === undefined).map((l) => String(l.meter));
-  const noCacheWrite = s.byLane.filter((l) => l.cacheWrite === undefined).map((l) => String(l.meter));
+  // Absent OR an exact zero across many calls. A lane that made hundreds of
+  // calls and wrote the cache exactly zero times did not measure zero — its
+  // meter is broken (codex #32479 drops cache_write_tokens before telemetry;
+  // pi #6469). Records written since cacheWrite became optional leave it
+  // absent, but every historical record carries a literal 0, and treating that
+  // as a measurement is the same error this repo already legislates against
+  // for costUSD (issue #29).
+  const noCacheWrite = s.byLane
+    .filter((l) => l.cacheWrite === undefined || (l.cacheWrite === 0 && l.calls > 1))
+    .map((l) => String(l.meter));
   if (noReasoning.length > 0 || noCacheWrite.length > 0) {
     out.push("");
     out.push("floors — these rows are LOWER BOUNDS, not measurements:");

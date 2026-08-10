@@ -180,3 +180,24 @@ test("thinking level survives on the per-call record, not just the run stamp", a
   expect(specLabel(spec)).not.toContain("high");
   expect(specKey(spec)).toBe("openai-codex/gpt-5.6-sol@high");
 });
+
+test("a broken meter's exact zero is a floor, not a measurement", () => {
+  // codex drops cache_write_tokens before telemetry (#32479; pi #6469), so a
+  // lane that made many calls and wrote the cache exactly zero times did not
+  // measure zero — the meter is broken. Records written since cacheWrite
+  // became optional leave it absent, but every historical record carries a
+  // literal 0, and treating that as evidence is the same error this repo
+  // already legislates against for costUSD (issue #29).
+  const dir = fixture([
+    { kind: "audit", usage: { input: 5, output: 1, cacheRead: 100, cacheWrite: 0, meter: "codex-cli-jsonl" } },
+    { kind: "audit", usage: { input: 5, output: 1, cacheRead: 100, cacheWrite: 0, meter: "codex-cli-jsonl" } },
+    // A lane that really reports it must NOT be called a floor.
+    { kind: "comparison", usage: { input: 5, output: 1, cacheRead: 10, cacheWrite: 700, meter: "claude-cli-json" } },
+    { kind: "comparison", usage: { input: 5, output: 1, cacheRead: 10, cacheWrite: 800, meter: "claude-cli-json" } },
+  ]);
+  const text = formatSpend(campaignSpend(dir));
+  const line = text.split("\n").find((l) => l.includes("cacheWrite unreported by:")) ?? "";
+  expect(line).toContain("codex-cli-jsonl");
+  expect(line).not.toContain("claude-cli-json");
+  expect(text).toContain("0.25-2.5x its cached-in column");
+});
