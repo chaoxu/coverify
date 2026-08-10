@@ -655,11 +655,11 @@ export async function createHarnessRoleSession(
     );
     contextMessages = (await session.buildContext()).messages;
   };
+  // Provider attempts across this session's life, retries included.
+  let attempts = 0;
   // Cancellation must also cover the retry wrapper's backoff sleeps:
   // harness.abort() only aborts an in-flight prompt, and between attempts
   // there is none — so abort() additionally fires this controller, which
-  // Provider attempts across this session's life, retries included.
-  let attempts = 0;
   // retryAssistantCall honors as terminal (an aborted backoff resolves as
   // an aborted message, never another attempt).
   const sessionStop = new AbortController();

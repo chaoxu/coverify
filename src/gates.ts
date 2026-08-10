@@ -147,6 +147,18 @@ function campaignIdentity(campaignDir: string, stateDir: string): string {
   return id;
 }
 
+/** Keep only the fields that have a value. Record writers stamp optional
+ *  telemetry through this because absence is load-bearing throughout this
+ *  journal — "the backend never reported it" is a different record from a
+ *  measured value, and every reader keys on the field simply not being there.
+ *  One call replaces a row of `...(x !== undefined ? { x } : {})` spreads,
+ *  which had multiplied to five per record site. */
+export function defined<T extends object>(fields: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(fields).filter(([, v]) => v !== undefined),
+  ) as Partial<T>;
+}
+
 export class GateStore {
   private records: GateRecord[];
   private file: string;

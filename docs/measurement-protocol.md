@@ -272,6 +272,42 @@ indistinguishable. State the filter used, report how many sessions it matched,
 and sanity-check the match against an independently known figure before
 building on it.
 
+## 9b. A CLI's own transcript is a second source — find it before declaring a gap
+
+Both subscription CLIs write a full transcript that the harness never sees, and
+both are joinable from data the harness already has. Declaring a field
+unmeasurable because the CLI's *reply payload* omits it is a claim about the
+payload, not about the run.
+
+| lane | transcript | join key | holds |
+|---|---|---|---|
+| `codex-cli` | `~/.codex/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl` | `thread.started`'s `thread_id`, or the mkdtemp cwd | per-turn usage, **`rate_limits.primary.used_percent`** |
+| `claude-cli` | `~/.claude/projects/<url-encoded cwd>/<session_id>.jsonl` | `session_id` from the result JSON, or the mkdtemp cwd | **thinking blocks**, `cache_creation` split by TTL |
+
+Verified on this fleet: 411 `~/.claude/projects/` directories named after past
+`coverify-cli-*` temp cwds, each holding thinking blocks — the very field this
+protocol recorded as "absent on 204/204 audit records, a provider fact". True
+of the payload; false of the run.
+
+Two traps before using either:
+
+- **The transcript's token counts may be wrong.** Claude Code's session JSONL
+  never logs the final `message_stop`, so its `output_tokens` is a mid-stream
+  snapshot (anthropics/claude-code #27361). Take counts from the CLI's result
+  payload and use the transcript only for what the payload lacks.
+- **Thinking text is not a token count.** Anthropic folds thinking into
+  `output_tokens` and reports no separate figure, so the transcript proves
+  reasoning *happened* and gives its length — it does not make `reasoning` a
+  measured number. Absence still stands; it is now absence with a witness.
+
+There is also a push option not taken: `CLAUDE_CODE_ENABLE_TELEMETRY=1` makes
+Claude Code emit a `claude_code.token.usage` metric per API request over OTLP,
+split by input/output/cacheRead/cacheCreation and model. It needs a collector
+(or `OTEL_METRICS_EXPORTER=console`, which pollutes the stdout this harness
+parses), and `design.md` already rejects OTel-shaped events as the
+authoritative form. The transcript join costs one recorded field and no
+invocation change.
+
 ## 10. Record measurement gaps as gaps
 
 A missing field and a measured zero are different records — coverify already

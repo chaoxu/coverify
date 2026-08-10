@@ -140,6 +140,8 @@ export function systemText(run: Pick<RoleRun, "contract" | "charge">): string {
 interface ClaudeJsonResult {
   is_error?: boolean;
   result?: string;
+  /** Names this run's transcript under ~/.claude/projects/<encoded cwd>/. */
+  session_id?: string;
   /** Per-model usage map; its key (and canonicalModel) is the CLI's own
    *  report of what answered — self-reported, not server-attested (#21 P3). */
   modelUsage?: Record<string, { canonicalModel?: string }>;
@@ -374,6 +376,17 @@ function runCliRole(
           return resolve({
             text: (payload.result ?? "").trim(),
             reportedModel: reported ? `${provider}/${reported}` : undefined,
+            // This lane leaves a transcript too, under
+            // ~/.claude/projects/<url-encoded cwd>/<session_id>.jsonl —
+            // verified: 411 such directories exist from past auditor runs,
+            // named after the mkdtemp cwd. It holds the THINKING BLOCKS this
+            // lane's result JSON omits, so "reasoning is a provider fact we
+            // cannot have" was only true of the payload, not of the run.
+            // Token counts stay from the payload: the transcript's
+            // output_tokens is a mid-stream snapshot (anthropics/claude-code
+            // #27361), so it must not be summed.
+            providerSessionId: payload.session_id,
+            backendCwd: cwd,
             usage: u && {
               input: u.input_tokens ?? 0,
               output: u.output_tokens ?? 0,
@@ -392,7 +405,7 @@ function runCliRole(
           });
         } catch {
           // Env-overridden template without --output-format json: plain text.
-          return resolve({ text: out.trim() });
+          return resolve({ text: out.trim(), backendCwd: cwd });
         }
       }
       if (backend.output === "outfile" && outText !== undefined) {

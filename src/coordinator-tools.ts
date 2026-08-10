@@ -453,11 +453,7 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
           // Thinking level rides in its own field rather than being fused in.
           modelFamily: servedModel ?? specLabel(gateSpec),
           modelSpec: specKey(gateSpec),
-          ...(reportedModel !== undefined ? { reportedModel } : {}),
-          ...(providerSessionId !== undefined ? { providerSessionId } : {}),
-          ...(backendCwd !== undefined ? { backendCwd } : {}),
-          ...(attempts !== undefined ? { attempts } : {}),
-          ...(requests !== undefined ? { requests } : {}),
+          ...defined({ reportedModel, providerSessionId, backendCwd, attempts, requests }),
         });
         if (verdict === "UNPARSEABLE") {
           return (
