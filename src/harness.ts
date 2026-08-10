@@ -242,27 +242,35 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     // and `failed` set ⟺ no report artifact exists.
     const persist = (report: string, failed?: string, partialText?: string, billed?: RoleUsage) => {
       const live = handles.has(handle.id);
-      // The tree's last edge for this dispatch: `usage` when the handle
-      // measured something, and the two request counts beside it so a reader
-      // can tell four retried calls from one long one. Recorded ONLY while
-      // live — a cancelled handle already wrote a usage-bearing completion
-      // (coordinator-tools' cancel paths), and `handle.usage()` is the
-      // session's CUMULATIVE total, so repeating it here counted the whole
-      // worker twice. That is the double count six commits went into
-      // deleting, re-entering through the failure branch.
+      // The tree's last edge for this dispatch: `usage`, and the two request
+      // counts beside it so a reader can tell four retried calls from one long
+      // one.
+      //
+      // Written even when the handle is no longer live, and that is deliberate
+      // rather than sloppy. A cancel records `handle.usage()` synchronously,
+      // but a pi session only refreshes its totals in the `finally` of an
+      // attempt — before the first refresh `usage()` is all zeros, so the
+      // cancel record of a mid-turn worker is ~0 and the real number does not
+      // exist until the abort unwinds and lands HERE. Suppressing it to avoid
+      // a duplicate threw away the only true total and left the fabricated
+      // zero standing. Both records are cumulative snapshots of one session,
+      // the later strictly containing the earlier, and view/spend.ts keeps the
+      // last per id — so writing both is de-duplicated at read time and is
+      // strictly more information than writing one.
+      //
       // `billed` is the fallback for a call the provider was PAID for before
       // it failed: a CLI that exits nonzero after emitting turn.completed
-      // carries its spend on the rejection (backends' BilledFailure), and the
-      // gate and worker lanes register no usage() of their own, so without
-      // this their billed failures record nothing at all.
+      // carries its spend on the rejection, and the gate and worker lanes
+      // register no usage() of their own. Skipped once some component upstream
+      // has claimed that payment (BilledFailure.usageLeafed) — the cadence
+      // leafs it with richer context, and the claim is what keeps that leaf
+      // and this record from both counting it.
       const spend = () =>
-        live
-          ? defined({
-              usage: handle.usage?.() ?? billed,
-              attempts: handle.attempts?.(),
-              requests: handle.requests?.(),
-            })
-          : {};
+        defined({
+          usage: handle.usage?.() ?? billed,
+          attempts: handle.attempts?.(),
+          requests: handle.requests?.(),
+        });
       // Tool-spawned provider calls this handle could not measure (the
       // librarian's own searches, the agy and chatgpt-cli lanes, which ship no
       // usage payload at all). Leafed once per settle, so an unmeasurable call
@@ -319,7 +327,17 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
         // is journaled as a late artifact rather than a second completion —
         // the work is kept, the accounting is not double-counted, and it never
         // resurfaces to the coordinator as a new report.
-        store.event({ kind: "note", note: `late report after cancellation`, id: handle.id, report: rel });
+        // Carries the settle-time totals for the same reason the failure branch
+        // does: the cancel record was written before this session's usage had
+        // ever been refreshed. Same id, so the reader supersedes the earlier
+        // snapshot rather than adding to it.
+        store.event({
+          kind: "note",
+          note: `late report after cancellation`,
+          id: handle.id,
+          report: rel,
+          ...spend(),
+        });
       }
     };
     handles.set(handle.id, handle);
@@ -340,7 +358,13 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
             "accumulated reads and reasoning, not packet size. Packet-splitting will not help. " +
             "Redispatch with a tighter exploration scope: name the exact files to read.]";
         }
-        persist("", failure, (err as { partialText?: string })?.partialText, (err as BilledFailure).usage);
+        const billed = err as BilledFailure;
+        persist(
+          "",
+          failure,
+          (err as { partialText?: string })?.partialText,
+          billed.usageLeafed ? undefined : billed.usage,
+        );
       },
     );
     activityThisWake++;
@@ -541,6 +565,15 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
       ...why,
       modelSpec: specKey(coordinatorSpec),
       usage: subUsage(total, prevCoord.usage),
+      // The retries are the POINT of this record: a failed turn is the lane
+      // retryAssistantCall actually fires on, and an attempt re-presents the
+      // whole context and is billed while leaving no message behind. It is the
+      // one count no later reader can reconstruct, and the session holding it
+      // is discarded on the next line.
+      ...defined({
+        attempts: (coordinator?.attempts?.() ?? 0) - prevCoord.attempts,
+        requests: Math.max(0, (coordinator?.requests?.() ?? 0) - prevCoord.requests),
+      }),
     });
   };
   // Per-wake context growth, surfaced when large (issue #17): the measured
@@ -850,10 +883,14 @@ async function runLockedCampaign(opts: CampaignOptions, dir: string): Promise<st
     // Requests is cumulative too — it counts assistant messages in the live
     // transcript — so it is deltaed on the same baseline. Journalling it raw
     // beside a delta made `attempts < requests` invert on every wake after the
-    // first and inflated any sum over wakes quadratically. It is also the one
-    // counter that can DROP, because a successful compaction shortens the
-    // transcript it counts; clamp at 0 there rather than record a negative
-    // number of calls, and let the usage delta carry that wake's real spend.
+    // first and inflated any sum over wakes quadratically.
+    //
+    // It cannot go backwards: requests() reads getEntries(), pi's storage is
+    // append-only, and a compaction APPENDS an entry rather than dropping the
+    // messages it superseded — the same reason usage() keeps counting them.
+    // The clamp is a backstop against that changing upstream, not a live case;
+    // it is also why this and the usage delta cannot disagree, since both are
+    // derived from the same message list.
     const requestsNow = coordinator.requests?.() ?? 0;
     const requests = Math.max(0, requestsNow - prevCoord.requests);
     prevCoord = { usage: sessionTotal, attempts: attemptsNow, requests: requestsNow };

@@ -21,6 +21,13 @@ export interface BilledFailure extends Error {
   usage?: RoleUsage;
   providerSessionId?: string;
   backendCwd?: string;
+  /** Provider requests the failed call made; the attached `usage` sums them. */
+  requests?: number;
+  /** Set by whichever component journalled this spend first. The error object
+   *  is rethrown, so without a claim the cadence's leaf and the completion
+   *  record downstream both write the same tokens — one payment, two records.
+   *  One owner per payment; a later handler sees the claim and stands down. */
+  usageLeafed?: true;
 }
 
 /**
@@ -55,7 +62,17 @@ export function createCliRoleSession(
       asked = true;
       const fullPrompt = `${systemText(run)}\n\n---\n\n${prompt}`;
       sentChars = fullPrompt.length;
-      const r = await runCliRole(provider, run.spec.modelId, fullPrompt, stop.signal);
+      const r = await runCliRole(provider, run.spec.modelId, fullPrompt, stop.signal).catch(
+        (e: BilledFailure) => {
+          // A nonzero exit after the provider was already paid still made N
+          // turns, and the usage on the rejection SUMS all of them. Leaving
+          // requests at the floor of 1 would report N turns of tokens against
+          // one claimed request — the defect this counter exists to prevent,
+          // surviving on the failure path alone.
+          requests = e.requests;
+          throw e;
+        },
+      );
       usage = r.usage;
       servedModel = r.servedModel;
       reportedModel = r.reportedModel;
@@ -420,6 +437,7 @@ function runCliRole(
         if (spent) failure.usage = spent;
         failure.providerSessionId = codexThreadId(out);
         failure.backendCwd = cwd;
+        failure.requests = codexTurns(out) || undefined;
         return reject(failure);
       }
       if (backend.output === "claude-json") {

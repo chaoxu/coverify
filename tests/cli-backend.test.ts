@@ -201,6 +201,39 @@ test("codexThreadId finds the rollout join key, and tolerates its absence", asyn
   expect(codexThreadId("not json at all\n")).toBeUndefined();
 });
 
+test("a nonzero exit after the provider was paid keeps its tokens and its turn count", async () => {
+  // The provider was billed before the CLI failed; stdout already holds the
+  // turn.completed usage. Rejecting before parsing threw away a measured
+  // number. The turn count must survive too — the usage SUMS every turn, so a
+  // floor of 1 would report N turns of tokens against one claimed request.
+  const stub = path.join(stubDir, "codex-billed-fail.sh");
+  fs.writeFileSync(
+    stub,
+    `#!/bin/sh\necho '{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":40,"output_tokens":7}}'\n` +
+      `echo '{"type":"turn.completed","usage":{"input_tokens":50,"output_tokens":3}}'\n` +
+      `echo 'boom' >&2\nexit 3\n`,
+    { mode: 0o755 },
+  );
+  process.env.COVERIFY_CODEX_CMD = `${stub} {out}`;
+  const session = createCliRoleSession({
+    contract: "c",
+    charge: "c",
+    prompt: "unused",
+    spec: { provider: "codex-cli", modelId: "stub", thinking: "off" },
+    models: undefined as never,
+  });
+  const err = await session.ask("q").then(
+    () => undefined,
+    (e) => e as { usage?: { input: number }; requests?: number; usageLeafed?: true },
+  );
+  expect(err?.usage?.input).toBe(110); // (100−40) + 50
+  expect(err?.requests).toBe(2);
+  // No component has claimed this payment yet, so a settle path may record it.
+  expect(err?.usageLeafed).toBeUndefined();
+  // The session reports the real turn count, not its answers-once floor.
+  expect(session.requests?.()).toBe(2);
+});
+
 test("codex requests are counted from the stream, not assumed to be one", async () => {
   // codexJsonlUsage explicitly SUMS every turn.completed event, so a tool loop
   // records N turns of usage. Stamping requests:1 alongside that made

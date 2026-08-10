@@ -126,6 +126,22 @@ test("a cancelled dispatch's two completions are not summed", () => {
   expect(formatSpend(s)).toContain("superseded completion");
 });
 
+test("a late report after cancellation supersedes the cancel's snapshot", () => {
+  // A cancel reads usage() synchronously, but a pi session only refreshes its
+  // totals in the finally of an attempt — so a mid-turn worker's cancel record
+  // is ~0 and the real number arrives only when the abort unwinds. The late
+  // artifact is journalled as a note (it must not resurface as a deliverable),
+  // and that note carries the settle-time totals.
+  const dir = fixture([
+    { kind: "completion", id: "r5", cancelled: true, usage: { input: 0, output: 0, cacheRead: 0, meter: "pi-session" } },
+    { kind: "note", note: "late report after cancellation", id: "r5", usage: { input: 900, output: 80, cacheRead: 12, meter: "pi-session" } },
+  ]);
+  const s = campaignSpend(dir);
+  expect(s.byLane).toHaveLength(1);
+  expect(s.byLane[0].calls).toBe(1);
+  expect(s.byLane[0].input).toBe(900); // the real total, not the fabricated 0
+});
+
 test("a verification completion with no usage is not a measurement gap", () => {
   // Verification and gate handles register no usage() because their spend is
   // leafed by the stage records underneath them. Counting those as gaps

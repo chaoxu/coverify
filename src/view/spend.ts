@@ -147,18 +147,18 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
   // duplicate, and the reader is what those campaigns are read with.
   // The LAST one wins: being cumulative, it is the complete total, and the
   // earlier one is a strict prefix of it.
+  // `note` as well as `completion`: a dispatch that finishes successfully AFTER
+  // being cancelled records its late artifact as a note, and that note carries
+  // the settle-time totals the cancel record was written too early to have.
+  const superseded = (r: Record<string, unknown>) =>
+    (r.kind === "completion" || r.kind === "note") && typeof r.id === "string" && Boolean(r.usage);
   const lastCompletion = new Map<string, number>();
   records.forEach((r, i) => {
-    if (r.kind === "completion" && typeof r.id === "string" && r.usage) lastCompletion.set(r.id, i);
+    if (superseded(r)) lastCompletion.set(r.id as string, i);
   });
 
   for (const [i, r] of records.entries()) {
-    if (
-      r.kind === "completion" &&
-      typeof r.id === "string" &&
-      r.usage &&
-      lastCompletion.get(r.id) !== i
-    ) {
+    if (superseded(r) && lastCompletion.get(r.id as string) !== i) {
       bump(excluded, "superseded completion for a cancelled dispatch (same session's cumulative total)");
       continue;
     }

@@ -211,6 +211,10 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
       const flushErrorSpend = (e: unknown, why: string) => {
         const { usage, providerSessionId, backendCwd } = e as BilledFailure;
         if (!usage) return;
+        // Claim this payment before writing it. The error is rethrown to the
+        // handle's settle path, which records billed spend too; unclaimed, the
+        // richer leaf here and the completion there both carry it.
+        (e as BilledFailure).usageLeafed = true;
         store.append({
           kind: "role-call",
           dispatchId: id,
