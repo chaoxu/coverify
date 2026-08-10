@@ -243,10 +243,27 @@ harness.ts       handle table, event loop, wakes; the only persistent process
 observe.ts       records + noticing queries: run-config stamp, ledger history,
                  refusal events + unaddressed-refusal noticing, wake bookkeeping
                  (prompt-surfaced noticing; never gates, dispatches, or ledgers)
-view/trace.ts         journal -> self-contained HTML timeline (read-only observability)
-trace-page.ts    that page's markup, styles, and view code
+view/trace.ts    journal -> self-contained HTML timeline (read-only observability)
+view/trace-page.ts  that page's markup, styles, and view code
+view/turns.ts    per-turn telemetry derived from the pi session trees
+view/shared.ts   the readers' shared load-and-filter, M and median
 pi-extension.ts  interactive-pi boundary layer: supervised run_script in
                  place of raw bash (phase 3; never writes trusted state)
+
+telemetry/       THE MEASUREMENT EXTENSION — deletable. Core imports none of it
+                 and cli.ts is the only composition root, so `rm -rf
+                 src/telemetry` plus its cli lines leaves a harness that still
+                 proves theorems and records verdicts, and stops counting
+                 tokens. Verified, not assumed: doing exactly that typechecks
+                 clean and passes 185/185 tests.
+  schema.ts      the span contract: run -> wake -> dispatch -> stage -> provider_call
+  context.ts     JournalTelemetryContext: spans -> role-call leaves, with the
+                 parent edges read off the ancestry rather than copied per record
+  spend.ts       per-lane/role/model tokens; refuses cross-meter sums
+  outcomes.ts    what the spend bought; refuses the on-path fraction below 50%
+                 premise coverage
+  limits.ts      rate-limit occupancy and burn rate (the binding constraint)
+  corpus.ts      measurement-protocol rule 3b, executable
 ```
 
 Observability layering (redesign phases 1–3): the **pi session JSONL trees**
