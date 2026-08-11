@@ -40,6 +40,51 @@ test("a full cadence writes one decision per stage, all under one dispatchId", a
   expect(store.all().filter((r) => r.kind === "role-call")).toHaveLength(0);
 });
 
+test("the certifier is shown every input the reconstructor will get", async () => {
+  // Promoted premises reach the blind reconstructor's prompt, and a promotion's
+  // statement text is coordinator-authored free text the harness cannot check
+  // against the candidate. Certifying the bundle alone left that one supplied
+  // input with NO leak check: a proof pasted into a promotion made every later
+  // reconstruction non-independent while the record still testified blindness.
+  // assertCandidateWithheld does not cover it — that catches whole-file
+  // interpolation of the CURRENT candidate; this leak is a paraphrase carried
+  // from an earlier promotion.
+  //
+  // Asserted on the RECORD's suppliedInputs, which is built from the same list
+  // that builds the prompt, so the two cannot drift.
+  const { dir, store } = campaign("certscope", [
+    "VERDICT: PASS\nholds",
+    "VERDICT: PASS\nno leak",
+    "A reconstruction of the argument.",
+    "VERDICT: PASS\nthey match",
+  ]);
+  await runCadence(dir, store);
+
+  const supplied = (kind: string) =>
+    (stages(store).find((r) => r.kind === kind)?.suppliedInputs ?? []) as string[];
+  // Coverage map, stated rather than inferred: the certifier receives key ideas
+  // and allowed sources COMBINED as one "proposed bundle" section, and the
+  // statement is deliberately withheld from it (a statement change invalidates
+  // every verification record anyway, so showing it would only ever refuse).
+  const coveredBy: Record<string, string> = {
+    "key ideas": "proposed bundle",
+    "allowed sources": "proposed bundle",
+    "promoted premises (statements view)": "promoted premises (statements view)",
+  };
+  const cert = supplied("bundle-cert");
+  for (const input of supplied("reconstruction")) {
+    if (input === "statement") continue;
+    const covering = coveredBy[input];
+    // A new reconstructor input with no entry here is the regression this
+    // guards: it would reach the blind prompt with nothing certifying it.
+    expect(covering).toBeDefined();
+    expect(cert).toContain(covering);
+  }
+  expect(cert).toContain("promoted premises (statements view)");
+  // And the certifier still sees the candidate it judges them against.
+  expect(cert).toContain("candidate revision");
+});
+
 test("an audit FAIL exits before the second stage runs", async () => {
   // "A substantive FAIL from any stage stands" — the cadence must not spend
   // certifier, reconstructor and comparator tokens after the audit refuses.

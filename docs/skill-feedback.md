@@ -604,8 +604,16 @@ cannot get them wrong:
 
 - inputs exclude the candidate  =>  the step is blind, enforced by what the
   harness supplies rather than promised by the author
-- inputs exclude the candidate  =>  its output is reusable across candidates
-  (this is why reconstruction is `requireStranded: false` today)
+- inputs exclude the candidate  =>  reuse may cross COMPLETED cadences on the
+  same candidate (this is what `requireStranded: false` means for the
+  reconstruction). CORRECTION, review 2026-08-11: an earlier draft of this entry
+  said "reusable across candidates". That is wrong and dangerous.
+  `candidateHash` IS in the reconstruction reuse key (cadence.ts), deliberately,
+  as an influence-tracking bound. Deriving the key from the declared inputs would
+  key reconstruction on the bundle alone — exactly the bundle-keyed reuse built
+  and removed in 6997036 for violating "never reuse a verifier response that
+  influenced the repair". Reuse keys stay the caller-passed hash set and are
+  NEVER derived from a profile.
 - inputs include the candidate  =>  the record is candidate-hash-keyed, so a
   repaired candidate always gets a fresh one
 
@@ -699,3 +707,36 @@ inputs rather than passing it; collapse the per-role knob fan-out
 (`COVERIFY_MODEL_*`, `COVERIFY_EFFORT_*` — 17 of 37 names) into per-category
 defaults with per-role override; add the declaration validator plus its
 rejection tests; stamp the registry in the run config.
+
+**Review outcome (2026-08-11).** Two independent reviewers traced every claim in
+the entry above against the code. The DIRECTION survives; the specific mechanism
+does not, and is not to be implemented as drafted:
+
+- The reuse derivation was wrong (corrected in place above).
+- Three of the four profile fields fail: `session` is a fact of the resolved
+  provider, not a role property, and does not carry the "fresh instance
+  (enforced)" claim (freshness comes from session-id minting); `tools` is an
+  AUTHORITY GRANT, so a profile granting a workspace lets a nominally blind role
+  read the candidate straight out of EVIDENCE/ (readRoots is the campaign root,
+  and assertCandidateWithheld only inspects the rendered prompt); budget must
+  NOT be derived from session, because harness.ts records that `kind` is an
+  explicit field precisely to stop a derivation silently moving a launcher limit.
+- The correctness criterion fails on its own terms: deleting the bundle
+  certifier reduces no capability but turns the reconstruction's blindness claim
+  into a FALSE record. Criterion becomes: deleting a plugin must not turn an
+  enforced invariant into a false claim.
+- "Monotonically safer" is false. A judge with a false-FAIL rate is a promotion
+  DoS and a budget attack: its FAIL arms the candidate-hash-keyed prior-FAIL
+  guard, the contract-legal answer is a repair, the repair changes the candidate
+  hash, and that invalidates the reconstruction reuse key — so every round
+  re-pays all four stages, against a metric of verified output per token.
+- Zero-judges fails closed today only because promotion is existential over two
+  literal record kinds. Under a data registry either kinds stay hardcoded (the
+  kernel does know roles, and a profile merely NAMED `comparison` inherits
+  promotion authority) or requirements derive from the registry (and an empty
+  registry makes promotion UNCONDITIONAL).
+
+Landed from this review instead (harness, this commit): the bundle certifier now
+certifies EVERY input the blind reconstructor receives, closing a live leak —
+promoted premises reached that prompt with no leak check at all, and a promotion
+statement is coordinator-authored text the harness cannot check.

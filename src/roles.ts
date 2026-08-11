@@ -3,6 +3,17 @@
 // packet content). Do not re-export mechanics through here — confinement lives
 // in sandbox.ts / workspace.ts, model invocation in providers.ts.
 
+/** The verdict tokens a first line must be, declared ONCE. The charge sentence
+ *  interpolates these and `parseFirstLineVerdict` is handed the same array, so
+ *  the tokens a role is told to emit and the tokens the harness accepts cannot
+ *  drift — they were two hand-kept copies, and a token edited on one side would
+ *  have silently turned every reply UNPARSEABLE (never PASS, so it fails safe,
+ *  but it would burn a whole cadence per attempt to say so). */
+export const VERDICT_TOKENS = {
+  gate: ["IDEA PASS", "IDEA FAIL", "IDEA REPAIR"],
+  stage: ["VERDICT: PASS", "VERDICT: FAIL"],
+} as const;
+
 /** Role charges. Each states only the role's scope; policy comes from the contract above it. */
 export const CHARGES = {
   coordinator: `You are the resident coordinator of an ongoing proof-search campaign; this session
@@ -56,7 +67,7 @@ conclusion-first report: the raw outputs (saved as evidence artifacts), exactly 
 and how the encoding maps to the stated definitions, and implementation caveats.`,
   gateCritic: `You are a fresh idea-gate critic. You receive only the frozen target, promoted
 premises, one proposed mechanism, and its claimed first nontrivial implication. Your VERY FIRST
-line must be exactly one of: IDEA PASS / IDEA FAIL / IDEA REPAIR. Then give the justification the
+line must be exactly one of: ${VERDICT_TOKENS.gate.join(" / ")}. Then give the justification the
 contract requires for that verdict.`,
   hostileAuditor: `You are stage 1 of the verification cadence: a fresh hostile auditor. You receive
 the exact candidate revision, its statement, declared dependencies, and the current PROVED.md so
@@ -66,12 +77,15 @@ outright check — reconstruction structurally cannot reach it, so your verifica
 only one it gets; and an unboundedly quantified claim asserted only in passing prose, rather than
 as an explicit theorem or lemma with exposed hypotheses and quantifiers, is a concrete defect.
 Your VERY FIRST line must be exactly
-VERDICT: PASS or VERDICT: FAIL; then the smallest concrete gap (on FAIL) or what you checked.`,
+${VERDICT_TOKENS.stage.join(" or ")}; then the smallest concrete gap (on FAIL) or what you checked.`,
   bundleCertifier: `You certify a reconstruction bundle before blind reconstruction begins. You
-receive the candidate and the proposed bundle (key ideas + allowed sources). Certify that no bundle
-element amounts to a stepwise paraphrase of the candidate argument or contains it. A too-thin
+receive the candidate and EVERY input the blind reconstructor will be given: the proposed bundle
+(key ideas + allowed sources) and the promoted premises. Certify that no supplied element amounts
+to a stepwise paraphrase of the candidate argument or contains it. Judge the promoted premises the
+same way as the bundle: a promotion's statement text is coordinator-authored and unchecked, so a
+proof pasted into one leaks into the reconstruction exactly as a leaky key idea would. A too-thin
 bundle is safe and passes; a leaky one fails. Your VERY FIRST line must be exactly
-VERDICT: PASS or VERDICT: FAIL; then the specific leaky element (on FAIL).`,
+${VERDICT_TOKENS.stage.join(" or ")}; then the specific leaky element (on FAIL).`,
   reconstructor: `You are stage 2a of the verification cadence: a fresh no-context reconstructor.
 You receive only the statement, high-level key ideas, allowed sources, and promoted premises — not
 the candidate proof. Produce an end-to-end reconstruction using only that bundle. Do not give a
@@ -88,7 +102,7 @@ conclusion not established (including established only in a
 weaker or nearby form), or reliance on material outside the declared dependencies and bundle. Use
 the frozen statement and the candidate's declared contract; do not invent a stronger output
 requirement and fail the candidate for omitting it. Your VERY FIRST line must be exactly
-VERDICT: PASS or VERDICT: FAIL; then the mapping (on PASS) or the concrete mismatch (on FAIL).`,
+${VERDICT_TOKENS.stage.join(" or ")}; then the mapping (on PASS) or the concrete mismatch (on FAIL).`,
 } as const;
 
 /** The delegated librarian's charge (external web-searching CLI agent; the

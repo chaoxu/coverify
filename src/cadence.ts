@@ -20,7 +20,7 @@ import {
   sameRevision,
   statementHash,
 } from "./gates.js";
-import { CHARGES } from "./roles.js";
+import { CHARGES, VERDICT_TOKENS } from "./roles.js";
 import { type BilledFailure, isCliProvider } from "./backends.js";
 import {
   type Models,
@@ -337,8 +337,8 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         const evidence = newEvidencePath(dir, `audits/${slug}.${stage.kind}`);
         fs.writeFileSync(evidence, text);
         const artifact = path.relative(dir, evidence);
-        const verdictLine = parseFirstLineVerdict(text, ["VERDICT: PASS", "VERDICT: FAIL"]);
-        const pass = verdictLine === "VERDICT: PASS";
+        const verdictLine = parseFirstLineVerdict(text, VERDICT_TOKENS.stage);
+        const pass = verdictLine === VERDICT_TOKENS.stage[0];
         // A reply with no verdict line is a protocol failure: never PASS
         // (launcher), but UNPARSEABLE rather than FAIL, so it neither arms
         // anti-verdict-shopping nor hash-blocks a legitimate bundle forever.
@@ -485,19 +485,32 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         // over-strict — the certifier never sees the statement — but a statement
         // change invalidates all verification evidence anyway, so it only ever
         // refuses.
-        const certInputHashes = { candidateHash, statementHash: stmtHash, bundleHash };
+        //
+        // It certifies EVERY input the reconstructor will receive, not only the
+        // bundle. Promoted premises reach that prompt too, and their statement
+        // text is coordinator-authored free text that nothing checks against
+        // the candidate (`record_promotion` takes it verbatim; the harness
+        // cannot verify it). Certifying the bundle alone left one supplied
+        // input with no leak check at all, so a proof pasted into a promotion
+        // made every later reconstruction non-independent for anything
+        // restating that lemma — while the record still testified blindness.
+        // `assertCandidateWithheld` does not cover it: that catches whole-file
+        // interpolation of the CURRENT candidate, and this leak is a paraphrase
+        // carried from an earlier promotion.
+        const certInputHashes = { candidateHash, statementHash: stmtHash, bundleHash, provedHash };
         const priorCert = priorReusableRecord(store, dir, "bundle-cert", certInputHashes, { requireStranded: true });
         const cert = priorCert
-          ? carriedStage("bundle-cert", priorCert, { bundleHash })
+          ? carriedStage("bundle-cert", priorCert, { bundleHash, provedHash })
           : await verdictStage({
           kind: "bundle-cert",
           role: "bundleCertifier",
           ctx: sectionsOf([
             { heading: `Candidate revision ${rel}`, name: "candidate revision", text: candidate },
             { heading: "Proposed reconstruction bundle", name: "proposed bundle", text: bundle },
+            { heading: "Promoted premises", name: "promoted premises (statements view)", text: proved },
           ]),
           blindness: "fresh instance (enforced); sees candidate by design (certification step)",
-          extra: { bundleHash },
+          extra: { bundleHash, provedHash },
         });
         if (!cert.pass) {
           if (cert.unparseable) {

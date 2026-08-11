@@ -4,6 +4,7 @@ import { stateHome } from "./userdirs.js";
 import * as path from "node:path";
 import { appendJournal, gateOf, readLedger, sha256File, sha256Text } from "./campaign.js";
 import { spendFields, type RoleUsage } from "./providers.js";
+import { VERDICT_TOKENS } from "./roles.js";
 
 /**
  * Gate state store. Gate decisions must not depend on files any role's
@@ -823,7 +824,7 @@ export function recordGateVerdict(
   },
 ): string {
   const verdict =
-    parseFirstLineVerdict(verdictText, ["IDEA PASS", "IDEA FAIL", "IDEA REPAIR"]) ?? "UNPARSEABLE";
+    parseFirstLineVerdict(verdictText, VERDICT_TOKENS.gate) ?? "UNPARSEABLE";
   // A DECISION record. The critic's call opens its own span, so with a sink
   // installed the tokens are already on a `role-call` leaf joined by
   // `dispatchId`, and repeating them here counted the whole gate lane twice
