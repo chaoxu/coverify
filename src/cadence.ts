@@ -127,6 +127,37 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
       const candidateHash = sha256Text(candidate);
       const stmtHash = statementHash(dir);
 
+      // Anti-verdict-shopping, concurrent form. The sequential guards below
+      // only see verdicts already ON RECORD, and `verificationState` takes the
+      // LATEST record per stage — so two cadences overlapping on one revision
+      // let the slower one's PASS land after the faster one's FAIL and make
+      // the revision promotable with a substantive FAIL standing against it.
+      // Keyed on the bytes, like every other guard here, so a copy under a new
+      // filename is the same revision. The cadence tool invites this by
+      // design: it returns a handle immediately and the verdict arrives at a
+      // later wake, so a coordinator that forgets can simply ask twice.
+      const liveOnCandidate = store
+        .all()
+        .find(
+          (e) =>
+            e.kind === "dispatch" &&
+            e.role === "verification" &&
+            e.candidateHash === candidateHash &&
+            typeof e.id === "string" &&
+            deps.hasHandle(e.id),
+        );
+      if (liveOnCandidate) {
+        return refuse(
+          store,
+          "verification",
+          `a verification cadence (${String(liveOnCandidate.id)}) is already running on these exact ` +
+            "bytes; its verdict arrives at a later wake. A second concurrent cadence on one revision " +
+            "would let a later PASS overwrite an earlier FAIL. Wait for that verdict — if the cadence " +
+            "has in fact already settled, its result is delivered at the next wake.",
+          { revision: rel, candidateHash },
+        );
+      }
+
       // Anti-verdict-shopping (contract): a substantive FAIL stands against
       // the exact revision contents; re-attempt only with a recorded rebuttal.
       // A bundle-cert FAIL is different: it faults the bundle, not the
@@ -612,6 +643,11 @@ export function requestVerificationTool(deps: CadenceDeps): AgentTool {
         role: "verification",
         mechanism: `${VERIFICATION_MECHANISM_PREFIX}${rel}`,
         task: rel,
+        // The bytes this cadence is running on, so the concurrent-cadence
+        // guard above can recognize a second request on the same revision
+        // while this one is still in flight — before any stage record exists
+        // to carry the hash.
+        candidateHash,
       });
       cancelled = () => cadenceStop.signal.aborted || !deps.hasHandle(id);
       deps.registerHandle({

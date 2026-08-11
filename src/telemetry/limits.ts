@@ -54,19 +54,23 @@ export function campaignLimits(campaignDir: string, run?: string): LimitsReport 
   // `ts` is an ISO-8601 STRING on every record, not epoch millis. Number() on it
   // yields NaN, which reports "no rollout attributed" for a full campaign.
   const times = records.map((r) => Date.parse(String(r.ts))).filter((n) => Number.isFinite(n) && n > 0);
-  if (times.length === 0) return { attribution: "none", rollouts: 0, samples: [], creditsEverUsed: false };
 
-  // A campaign that made no provider call has no window to report. Its record
-  // timestamps collapse to an instant, and the +-1 day widening below then
-  // pools in every rollout on the machine from that window — a campaign holding
-  // one note reported "peak 95.0% occupancy", which is someone else's number
-  // wearing this campaign's name.
-  // "Did anything call a provider", not "did anything report tokens". A
-  // campaign whose calls all FAILED before parse carries neither usage nor
-  // unmetered — and that is precisely the campaign someone runs `limits` on,
-  // because it is what a rate-limit wall looks like. spend.ts already keys on
-  // the record KIND for this question; use the same one.
-  if (!records.some((r) => SPENDING_KINDS.has(String(r.kind)))) {
+  // Nothing to attribute: no usable timestamp at all, or no record of a
+  // provider call. A campaign that made no provider call has no window to
+  // report — its record timestamps collapse to an instant, and the +-1 day
+  // widening below then pools in every rollout on the machine from that
+  // window; a campaign holding one note reported "peak 95.0% occupancy",
+  // which is someone else's number wearing this campaign's name.
+  //
+  // The second test asks "did anything call a provider", not "did anything
+  // report tokens". A campaign whose calls all FAILED before parse carries
+  // neither usage nor unmetered — and that is precisely the campaign someone
+  // runs `limits` on, because it is what a rate-limit wall looks like. Both
+  // lanes still leave a SPENDING_KIND behind: a dispatched worker writes a
+  // completion, and a coordinator turn that dies writes a `usage` record
+  // (harness.ts leafDiscardedCoordSpend) beside its note. spend.ts already
+  // keys on the record KIND for this question; use the same one.
+  if (times.length === 0 || !records.some((r) => SPENDING_KINDS.has(String(r.kind)))) {
     return { attribution: "none", rollouts: 0, samples: [], creditsEverUsed: false };
   }
 

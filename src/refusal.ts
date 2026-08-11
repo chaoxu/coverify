@@ -8,6 +8,4 @@
  *
  *  Its own module, importing nothing: every layer throws refusals, including
  *  `userdirs.ts`, which sits below `campaign.ts` and cannot import from it. */
-export class Refusal extends Error {
-  readonly refusal = true;
-}
+export class Refusal extends Error {}

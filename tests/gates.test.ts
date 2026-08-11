@@ -324,6 +324,28 @@ describe("delivery is durable, not one-shot", () => {
     });
     expect(undeliveredCompletions(store, dir).map((c) => c.id)).toEqual(["r003"]);
   });
+
+  test("a cancellation racing a finished report does not bury the report", () => {
+    // A worker settles mid-turn and a cancel arrives before the next wake's
+    // harvest, so both records exist for one id. Suppression is per RECORD:
+    // the cancellation suppresses itself, the finished report is still
+    // delivered. Resolving `cancelled` per ID instead would make a complete,
+    // paid-for deliverable unreachable — `undeliveredCompletions` is the only
+    // reader that ever names a completion's report.
+    const { dir, store } = campaign("cancel-race");
+    const report = path.join(dir, "EVIDENCE", "r004.md");
+    fs.mkdirSync(path.dirname(report), { recursive: true });
+    fs.writeFileSync(report, "# a real report\n");
+    store.append({ kind: "dispatch", id: "r004", role: "reasoner", mechanism: "m", task: "t" });
+    store.append({
+      kind: "completion",
+      id: "r004",
+      report: path.relative(dir, report),
+      reportSha256: sha256File(report),
+    });
+    store.append({ kind: "completion", id: "r004", cancelled: true, reason: "assumed stuck" });
+    expect(undeliveredCompletions(store, dir).map((c) => c.id)).toEqual(["r004"]);
+  });
 });
 
 describe("bookkeeping the harness should own", () => {

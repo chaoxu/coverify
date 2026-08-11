@@ -83,6 +83,14 @@ export const SPENDING_KINDS = new Set([
   "reconstruction", "comparison", "role-call", "usage",
 ]);
 
+/** The lane whose calls are made INSIDE another role's turn rather than being
+ *  that dispatch's own payment, so it may neither vouch for the dispatch nor
+ *  stand in for its declaration: counting it made one literature search
+ *  suppress the worker's own usage-less record, turning a real measurement gap
+ *  into silence — rule 10 inverted. Reader-side shorthand only; the producer
+ *  (workspace.ts) cannot import this, since core must not import telemetry/. */
+const TOOL_SPAWNED_LANE = "librarian";
+
 export function accumulate(into: LaneSpend, u: RoleUsage): void {
   into.calls += 1;
   into.input += u.input;
@@ -155,12 +163,8 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
   const leafed = new Set<string>();
   for (const r of records) {
     if (r.kind !== "role-call" || !r.usage) continue;
-    // A librarian leaf is a call made INSIDE the role's turn, not the
-    // dispatch's own payment, so it must not vouch for the dispatch. Counting
-    // it made one literature search suppress the worker's own usage-less
-    // record, turning a real measurement gap into silence — the same rule-10
-    // inversion the unmetered branch had, on what is now the default path.
-    if (r.role === "librarian") continue;
+    // Must not vouch for the dispatch (see TOOL_SPAWNED_LANE).
+    if (r.role === TOOL_SPAWNED_LANE) continue;
     if (typeof r.dispatchId === "string") leafed.add(`d:${r.dispatchId}`);
     if (typeof r.role === "string" && typeof r.wake === "number") leafed.add(`w:${r.role}:${r.wake}`);
   }
@@ -181,12 +185,9 @@ export function campaignSpend(campaignDir: string, run?: string): CampaignSpend 
         (r) =>
           typeof r.unmetered === "string" &&
           typeof r.dispatchId === "string" &&
-          // The dispatch's OWN lane, not a tool it spawned. A librarian gap
-          // belongs to a call made inside the role's turn, so treating it as
-          // the dispatch's declaration made one librarian search absorb the
-          // worker's own unmeasurable call — a real gap turned into silence,
-          // which is rule 10 inverted.
-          r.unmetered !== "librarian",
+          // The dispatch's OWN lane, not a tool it spawned: a gap on that lane
+          // is not the dispatch's declaration (see TOOL_SPAWNED_LANE).
+          r.unmetered !== TOOL_SPAWNED_LANE,
       )
       .map((r) => String(r.dispatchId)),
   );

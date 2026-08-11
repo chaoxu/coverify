@@ -137,10 +137,9 @@ function parseFlags(args: string[]): { flags: Map<string, string>; positional: s
 // exactly the moments they are already worried something is wrong. An
 // unexpected error still shows its stack, because that one is a bug report.
 process.on("uncaughtException", (e) => {
-  // Only a marked Refusal loses its stack. The first version tested "is an
-  // Error with a nonempty message", which is nearly every bug — a TypeError six
-  // hours into a run printed one line with no file, no frame, and sandbox.ts
-  // declines to install handlers for exactly that reason.
+  // Only a Refusal loses its stack (refusal.ts explains why the intent must be
+  // marked at the throw site). sandbox.ts declines to install handlers for the
+  // same reason.
   if (e instanceof Refusal) console.error(e.message);
   else console.error(e);
   process.exit(1);

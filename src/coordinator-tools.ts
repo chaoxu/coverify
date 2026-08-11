@@ -39,8 +39,9 @@ import type { CampaignOptions, Handle } from "./harness.js";
 
 /** What the coordinator's tools need from the campaign loop: the live handle map
  *  (dispatch patches sessions in place; cancel and declare remove entries), the
- *  settled queue (a cancelled handle's queued report must not be delivered), and
- *  get/set access to the declaration. */
+ *  settled queue (finished work awaiting harvest — `cancel_agent` reads it so a
+ *  handle whose result already landed is not cancelled out from under the
+ *  harvest), and get/set access to the declaration. */
 export interface CoordinatorToolDeps {
   dir: string;
   store: GateStore;
@@ -62,7 +63,10 @@ export interface CoordinatorToolDeps {
    *  the bill) is unattributable to the wake that ordered it. */
   wake: () => number;
   handles: Map<string, Handle>;
-  settledQueue: { h: Handle }[];
+  /** `failed` is carried, not dropped: a settled handle can hold a finished
+   *  report OR an infrastructure failure, and telling the coordinator the wrong
+   *  one invites it to close a route on a dead stream. */
+  settledQueue: { h: Handle; failed?: string }[];
   liveWorkers: () => number;
   liveOnMechanism: (mechanism: string) => number;
   registerHandle: (
@@ -634,9 +638,26 @@ export function coordinatorTools(deps: CoordinatorToolDeps): {
       const p = params as { id: string; reason: string };
       const handle = handles.get(p.id);
       if (!handle) return toolText(`no live agent ${p.id}`);
+      // Already finished, merely not harvested yet. A handle stays in `handles`
+      // until the next wake's harvest, so a worker that settled DURING this
+      // turn is still listed as running in the digest the coordinator is acting
+      // on. Cancelling it used to splice the settled entry and record a
+      // cancellation, which threw away a complete, paid-for report that nothing
+      // else names — the same loss `declare_campaign_state` harvests first to
+      // avoid. There is nothing to interrupt: the work is done.
+      const settled = settledQueue.find((s) => s.h.id === p.id);
+      if (settled) {
+        return toolText(
+          settled.failed === undefined
+            ? `${p.id} had already finished when this cancel arrived — nothing to interrupt, and its ` +
+                "report is NOT discarded. It is delivered at the next wake; judge the route from it."
+            : `${p.id} had already died when this cancel arrived (${settled.failed}) — nothing to ` +
+                "interrupt. That is an INFRASTRUCTURE failure, not a route result: it carries no " +
+                "mathematical content, is never PASS, and re-dispatching the assignment is legitimate. " +
+                "Do not close the route on it. The record is delivered at the next wake.",
+        );
+      }
       handles.delete(p.id);
-      const queued = settledQueue.findIndex((s) => s.h.id === p.id);
-      if (queued >= 0) settledQueue.splice(queued, 1);
       handle.stop?.();
       store.append({
         kind: "completion",

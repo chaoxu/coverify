@@ -65,13 +65,77 @@ test("a bundle-cert FAIL exits before the reconstruction is paid for", async () 
   expect(calls()).toBe(2);
 });
 
-test("a re-run on byte-identical inputs carries every reusable stage forward", async () => {
-  // Reuse is keyed on the content hash of every input the stage saw
-  // (priorReusableRecord, requireStranded), so on an unchanged candidate the
-  // audit, the bundle certification AND the blind reconstruction all carry
-  // forward and only the comparison is re-bought. That is the economic point
-  // of the carry-forward rule, and it is the strongest claim this cadence
-  // makes about not paying twice for the same verifier response.
+test("a second cadence on the same bytes is refused while the first is live", async () => {
+  // Verdict shopping in its concurrent form. The sequential guards only see
+  // verdicts already ON RECORD, and verificationState takes the LATEST record
+  // per stage — so two overlapping cadences on one revision let the slower
+  // one's PASS land after the faster one's FAIL, and the revision becomes
+  // promotable with a substantive FAIL standing against it.
+  const { dir, store, calls } = campaign("concurrent", [
+    "VERDICT: PASS\nholds",
+    "VERDICT: PASS\nno leak",
+    "A reconstruction of the argument.",
+    "VERDICT: FAIL\nthe conclusions differ",
+  ]);
+  await runCadence(dir, store, { settle: false });
+  const afterFirst = calls();
+
+  const refusal = await runCadence(dir, store, {
+    id: "v2",
+    wake: 2,
+    alsoLive: ["v1"],
+    expectRefusal: true,
+  });
+  expect(refusal).toContain("already running on these exact bytes");
+  // Refused before anything was bought, and on record as a refusal.
+  expect(calls()).toBe(afterFirst);
+  expect(store.all().some((r) => r.kind === "note" && r.refusal === "verification")).toBe(true);
+});
+
+test("a re-run after a COMPLETED cadence re-buys the gated stages", async () => {
+  // The rule the contract actually states: a PASS from a completed cadence is
+  // never reused, so a rebuttal challenge or duplicate re-request reruns every
+  // stage fresh. Carry-forward is a RECOVERY path (requireStranded), not an
+  // economy — reusing a verifier response a completed cadence produced is what
+  // "never reuse a verifier response that influenced the repair" forbids.
+  //
+  // Only the blind reconstruction carries forward, deliberately: the
+  // reconstructor never sees a candidate, so its reuse crosses completed
+  // cadences by design (requireStranded: false).
+  const { dir, store, calls } = campaign("recomplete", [
+    "VERDICT: PASS\nholds",
+    "VERDICT: PASS\nno leak",
+    "A reconstruction of the argument.",
+    "VERDICT: FAIL\nthe conclusions differ",
+    // Second cadence: audit and bundle certification bought AGAIN, then the
+    // comparison. The reconstruction is not re-bought.
+    "VERDICT: PASS\nholds",
+    "VERDICT: PASS\nno leak",
+    "VERDICT: PASS\nthey match now",
+  ]);
+  await runCadence(dir, store);
+  const afterFirst = calls();
+  expect(afterFirst).toBe(4);
+
+  fs.writeFileSync(path.join(dir, "EVIDENCE", "rebuttal.md"), "# rebuttal\n\nWhy the comparison erred.\n");
+  await runCadence(dir, store, { id: "v2", wake: 2, rebuttalArtifact: "rebuttal.md" });
+
+  expect(calls() - afterFirst).toBe(3);
+  const reused = store.all().filter((r) => r.carriedForwardFrom !== undefined);
+  expect(reused.map((r) => r.kind)).toEqual(["reconstruction"]);
+  // The audit really was re-purchased under the new cadence, not relabelled.
+  const audits = store.all().filter((r) => r.kind === "audit");
+  expect(audits).toHaveLength(2);
+  expect(audits[1].dispatchId).toBe("v2");
+  expect(audits[1].carriedForwardFrom).toBeUndefined();
+});
+
+test("a re-run after a STRANDED cadence carries every reusable stage forward", async () => {
+  // Reuse is keyed on the content hash of every input the stage saw AND on the
+  // prior cadence being stranded — dispatched, never completed, the journal's
+  // definition of an infrastructure failure. This is the only path on which the
+  // audit and the bundle certification carry forward, so it is the only one
+  // that can notice the requireStranded gate being deleted.
   const { dir, store, calls } = campaign("carry", [
     "VERDICT: PASS\nholds",
     "VERDICT: PASS\nno leak",
@@ -80,7 +144,9 @@ test("a re-run on byte-identical inputs carries every reusable stage forward", a
     // Second cadence: the comparison, and nothing else.
     "VERDICT: PASS\nthey match now",
   ]);
-  await runCadence(dir, store);
+  // The run dies before its completion lands — the crash the recovery path
+  // exists for.
+  await runCadence(dir, store, { settle: false });
   const afterFirst = calls();
   expect(afterFirst).toBe(4);
 

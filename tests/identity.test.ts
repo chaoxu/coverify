@@ -76,9 +76,15 @@ test("garbage in the id file is a hard stop, not a new identity", () => {
   // Minting here would orphan an intact gate store under the id this file used
   // to hold, with no tool that names it — while the ADOPT guard then steers
   // the operator to the lower-trust journal rebuild.
-  const { dir } = campaign({ id: "not-an-id\n", journal: true });
+  const { dir, state } = campaign({ id: "not-an-id\n", journal: true });
   expect(() => new GateStore(dir)).toThrow(Refusal);
   expect(() => new GateStore(dir)).toThrow(/malformed/);
+  // The "not a new identity" half. Throwing is not enough: move the refusal
+  // below the mint and the throw still happens, from the downstream guard,
+  // after the id file has been overwritten and a state directory minted —
+  // which is the damage. Only these two assertions see that.
+  expect(fs.readFileSync(path.join(dir, ".coverify", "campaign-id"), "utf-8")).toBe("not-an-id\n");
+  expect(stateDirs(state)).toEqual([]);
 });
 
 test("an empty id file self-heals when nothing can be lost", () => {
@@ -88,6 +94,12 @@ test("an empty id file self-heals when nothing can be lost", () => {
   const { dir, state } = campaign({ id: "" });
   new GateStore(dir).append({ kind: "note", note: "x" } as never);
   expect(stateDirs(state)).toHaveLength(1);
+  // "Self-heals" means the id is now ON DISK. Asserting only that a state
+  // directory appeared leaves the file empty on a failed persist, and the next
+  // run mints a DIFFERENT id and loses this history.
+  const healed = fs.readFileSync(path.join(dir, ".coverify", "campaign-id"), "utf-8").trim();
+  expect(healed).toMatch(/^[0-9a-f]{16}$/);
+  expect(stateDirs(state)).toEqual([healed]);
 });
 
 test("an empty id file is a stop once the campaign has run", () => {

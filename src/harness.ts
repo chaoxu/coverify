@@ -83,6 +83,22 @@ export function failedSettleRecord(
     : { kind: "note", id, note: `late failure after cancellation: ${failed}` };
 }
 
+/** Handles that are actually still RUNNING. A handle stays in the map until the
+ *  next wake's harvest, so one that settled during this turn is finished work
+ *  sitting in the queue — it occupies no slot and explores nothing. The same
+ *  distinction `cancel_agent` makes: counting it live refuses a dispatch under
+ *  `--agent-limit` with nothing running, and makes the wave gate assert a
+ *  "concurrent" worker on a mechanism that has already returned.
+ *
+ *  Exported so the rule can be tested without driving the whole wake loop. */
+export function runningHandles<H extends { id: string }>(
+  handles: Iterable<H>,
+  settledQueue: readonly { h: { id: string } }[],
+): H[] {
+  const settled = new Set(settledQueue.map((s) => s.h.id));
+  return [...handles].filter((h) => !settled.has(h.id));
+}
+
 export interface CampaignOptions {
   campaignDir: string;
   /** User-set limit only; the launcher forbids a fixed harness ceiling. */
@@ -262,14 +278,15 @@ async function runLockedCampaign(
     return path.relative(root, resolved);
   };
 
+  const running = (): Handle[] => runningHandles(handles.values(), settledQueue);
+
   const liveOnMechanism = (mechanism: string): number =>
-    liveWorkersOnMechanism(handles.values(), mechanism);
+    liveWorkersOnMechanism(running(), mechanism);
 
   // --agent-limit caps concurrent WORKERS only. Judges (gate critics, cadences)
   // are handles too but must not consume the workers' budget: ten pending
   // verdicts should never block a dispatch.
-  const liveWorkers = (): number =>
-    [...handles.values()].filter((h) => h.kind === "worker").length;
+  const liveWorkers = (): number => running().filter((h) => h.kind === "worker").length;
 
   const sessionsRoot = path.join(dir, ".coverify", "sessions");
 
@@ -346,12 +363,24 @@ async function runLockedCampaign(
           );
           partial = path.relative(dir, p);
         }
-        store.append({
+        const settle = {
           ...failedSettleRecord(handle.id, failed, live),
           ...defined({ partial }),
           ...spend(),
-        });
-        if (live) settledQueue.push({ h: handle, failed });
+        };
+        // Same predicate as the success branch below, spelled the same way. A
+        // post-cancellation late FAILURE is a campaign event, so it mirrors
+        // into the journal verbatim — the call the success branch makes.
+        // Through append() it would land wrapped under `gate` instead, giving
+        // one situation two journal shapes depending only on which way the
+        // cancelled worker died. (The `kind` restamp is a type narrowing: the
+        // spread re-widens it to the union `failedSettleRecord` returns.)
+        if (live) {
+          store.append(settle);
+          settledQueue.push({ h: handle, failed });
+        } else {
+          store.event({ ...settle, kind: "note" });
+        }
         return;
       }
       const reportPath = newEvidencePath(dir, `${handle.id}/report`);
@@ -635,7 +664,7 @@ async function runLockedCampaign(
     if (opts.maxWakes !== undefined) limits.push(`wakes ${wakeCount}/${opts.maxWakes}`);
     // Mechanical fact only; allocation judgment stays the coordinator's
     // (skill-feedback 2026-08-09).
-    const liveJudges = [...handles.values()].filter((h) => h.kind !== "worker").length;
+    const liveJudges = running().filter((h) => h.kind !== "worker").length;
     if (
       opts.userAgentLimit !== undefined &&
       liveJudges > 0 &&

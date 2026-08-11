@@ -98,60 +98,77 @@ export function campaignIdPath(campaignDir: string): string {
  */
 function campaignIdentity(campaignDir: string, stateDir: string, readOnly = false): string {
   const idFile = campaignIdPath(campaignDir);
+  const legacy = sha256Text(campaignDir).slice(0, 16);
+  const legacyStore = path.join(stateDir, legacy, "gates.jsonl");
   if (fs.existsSync(idFile)) {
     const raw = fs.readFileSync(idFile, "utf-8").trim();
     // Case-insensitive: the same 64 bits either way, and an id copied by hand
     // or written by another tool in uppercase names the same directory.
     if (/^[0-9a-f]{16}$/i.test(raw)) return raw.toLowerCase();
-    // An EMPTY file is the likeliest real corruption, and on a campaign that
-    // never ran there is nothing to orphan — no journal means no gate history
-    // exists anywhere to lose. Self-heal there rather than hard-stopping a
-    // campaign whose id file an editor or an aborted init truncated.
-    // Empty carries no information about a previous id, so refusing gives the
-    // operator nothing to restore. Fall through when nothing can be lost: a
-    // campaign that never ran, or a legacy one whose store still sits at the
-    // path hash two lines below and would be adopted correctly.
-    const neverRan = !fs.existsSync(path.join(campaignDir, ".coverify", "journal.jsonl"));
-    const legacyStoreExists = fs.existsSync(
-      path.join(stateDir, sha256Text(campaignDir).slice(0, 16), "gates.jsonl"),
-    );
-    if (raw === "" && (neverRan || legacyStoreExists)) {
-      // fall through and mint (or adopt the legacy store)
-    } else {
-    // Present but malformed. Falling through would MINT A NEW IDENTITY and
-    // overwrite the file, orphaning an intact gate store one directory away
-    // with no tool that names it — while the ADOPT guard then steers the
-    // operator to the lower-trust journal rebuild. The id IS the campaign;
-    // a damaged one is a stop, not a fresh start.
-    throw new Refusal(
-      `campaign id at ${idFile} is malformed (${JSON.stringify(raw.slice(0, 40))}); expected 16 hex ` +
-        "characters. Its gate history is under the id this file used to hold. Restore the file from " +
-        "backup or version control rather than deleting it — deleting mints a new identity and leaves " +
+    // An EMPTY file carries no information about a previous id, so refusing
+    // gives the operator nothing to restore. Self-heal exactly where nothing
+    // can be lost: a campaign that never ran (no journal ⇒ no gate history
+    // exists anywhere), or a legacy one whose store still sits at the path
+    // hash and is adopted correctly below.
+    const selfHeals =
+      raw === "" &&
+      (!fs.existsSync(path.join(campaignDir, ".coverify", "journal.jsonl")) ||
+        fs.existsSync(legacyStore));
+    // Otherwise: present but malformed. Falling through would MINT A NEW
+    // IDENTITY and overwrite the file, orphaning an intact gate store one
+    // directory away with no tool that names it — while the ADOPT guard then
+    // steers the operator to the lower-trust journal rebuild. The id IS the
+    // campaign; a damaged one is a stop, not a fresh start.
+    if (!selfHeals) {
+      throw new Refusal(
+        `campaign id at ${idFile} is malformed (${JSON.stringify(raw.slice(0, 40))}); expected 16 hex ` +
+          "characters. Its gate history is under the id this file used to hold. Restore the file from " +
+          "backup or version control rather than deleting it — deleting mints a new identity and leaves " +
           "the existing history unreachable.",
       );
     }
   }
-  const legacy = sha256Text(campaignDir).slice(0, 16);
   // Adopt the legacy id when its store exists. Otherwise mint one — but
   // deterministically for a reader, which never persists what it minted: a
   // random id per invocation made `spend` name a different state directory
   // every run, so the recovery path it prints could not be followed.
-  const id = fs.existsSync(path.join(stateDir, legacy, "gates.jsonl")) || readOnly
-    ? legacy
-    : sha256Text(`${campaignDir}:${Date.now()}:${Math.random()}`).slice(0, 16);
+  const id =
+    fs.existsSync(legacyStore) || readOnly
+      ? legacy
+      : sha256Text(`${campaignDir}:${Date.now()}:${Math.random()}`).slice(0, 16);
   // A reader must not brand a campaign it is only looking at: `coverify spend`
   // on someone else's directory used to mint .coverify/campaign-id there and
   // create a state directory for it, which is a write dressed as a read.
   if (!readOnly) {
+    // tmp + rename, for the same reason meta.json got it — and this file
+    // matters more: a torn id reads as malformed, which is now a hard stop.
+    const tmp = `${idFile}.${process.pid}.tmp`;
     try {
       fs.mkdirSync(path.dirname(idFile), { recursive: true });
-      // tmp + rename, for the same reason meta.json got it — and this file
-      // matters more: a torn id reads as malformed, which is now a hard stop.
-      const tmp = `${idFile}.${process.pid}.tmp`;
       fs.writeFileSync(tmp, id + "\n");
       fs.renameSync(tmp, idFile);
-    } catch {
-      /* read-only checkout or a race: the legacy lookup still works */
+    } catch (e) {
+      // `force` only swallows ENOENT: with `.coverify` itself unusable (a file
+      // where the directory should be) this throws, and the raw errno would
+      // escape in place of the actionable Refusal below.
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch {
+        /* nothing to clean, or the same breakage that caused the failure */
+      }
+      // A MINTED id that cannot be persisted is unreachable: nothing on disk
+      // names it, so this run writes gate history into a directory no later
+      // invocation can find, and the next run's "ledgers but no gate history"
+      // refusal steers the operator to the lower-trust ADOPT rebuild while an
+      // intact store sits beside it. Stop instead. The legacy id is derivable
+      // from the path, so losing that write costs nothing.
+      if (id !== legacy) {
+        throw new Refusal(
+          `cannot write the campaign id to ${idFile} (${e instanceof Error ? e.message : String(e)}). ` +
+            "A campaign whose identity cannot be recorded would write gate history to a directory " +
+            "nothing can name again. Fix the permissions on .coverify/ and rerun.",
+        );
+      }
     }
   }
   return id;
@@ -190,6 +207,13 @@ dir: string,
   const out: { id: string; mechanism: string; section: string }[] = [];
   for (const e of store.all()) {
     if (e.kind !== "completion" || typeof e.id !== "string") continue;
+    // Per RECORD, deliberately: a cancellation record suppresses only itself,
+    // never a sibling completion carrying a real report. Both live writers now
+    // avoid producing that pair at all (`cancel_agent` declines a settled
+    // handle; `declare_campaign_state` harvests before cancelling), so it comes
+    // only from a store written before those guards — and in exactly those
+    // stores, resolving `cancelled` per ID would bury finished, paid-for work
+    // that nothing else names.
     if (e.cancelled || delivered.has(e.id)) continue;
     const mechanism = mechanisms.get(e.id) ?? "";
     if (typeof e.failed === "string") {
@@ -667,10 +691,12 @@ const FAILED_CHECK_RE = /^(no close prior route|closest prior route is .+; this 
  * rules. Raw comparison fails both ways: a trailing space or capital letter
  * evades the wave gate AND discards an IDEA PASS the campaign already paid for.
  */
-/** Live WORKERS on a mechanism, for the launcher's wave gate. Lives here beside
- *  `normalizeMechanism` and the IDEA-PASS lookup because it is the other half of
- *  one rule: when this counted raw while the lookup normalized, retyping a
- *  mechanism both evaded the gate and discarded the PASS it had earned.
+export function normalizeMechanism(mechanism: string): string {
+  return mechanism.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/** Live WORKERS on a mechanism, for the launcher's wave gate — the counting
+ *  half of the rule `normalizeMechanism` above spells.
  *  Exported so a test can drive the real rule — the previous test passed the
  *  count in as a literal, so it could only ever exercise the lookup half. */
 export function liveWorkersOnMechanism(
@@ -683,10 +709,6 @@ export function liveWorkersOnMechanism(
     if (h.kind === "worker" && normalizeMechanism(h.mechanism ?? "") === key) n++;
   }
   return n;
-}
-
-export function normalizeMechanism(mechanism: string): string {
-  return mechanism.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 /** Latest verdict wins: a mechanism re-gated to IDEA FAIL/REPAIR loses fan-out
