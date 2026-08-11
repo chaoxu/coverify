@@ -520,13 +520,36 @@ export function workspaceTools(
               "dispatch (launcher preregistration)",
           );
         }
-        if (APPEND_ONLY_LEDGERS.has(base) && fs.existsSync(real)) {
-          const prior = await fs.promises.readFile(real, "utf8");
-          if (!content.startsWith(prior) && !content.startsWith(prior.trimEnd())) {
+        if (APPEND_ONLY_LEDGERS.has(base)) {
+          // The ledger's identity is its name case-folded, because the guard
+          // must not depend on what the filesystem happens to fold. On macOS
+          // `failed.md` IS `FAILED.md`, so writing the variant overwrites the
+          // ledger and the append-only rule below catches it; on Linux it is a
+          // second file, so the rule never fired and a role could leave a
+          // shadow ledger beside the real one — same campaign, two histories,
+          // and every reader that lowercases a name sees whichever it found
+          // first. Refuse the variant outright on both: a ledger is written
+          // under its exact name. (Same reasoning as the candidate-path fold
+          // in cadence.ts, where retyping the case looked like a new revision.)
+          const parent = path.dirname(real);
+          const onDisk = fs.existsSync(parent)
+            ? fs.readdirSync(parent).find((n) => n.toLowerCase() === base)
+            : undefined;
+          if (onDisk !== undefined && onDisk !== path.basename(real)) {
             throw new Error(
-              `${path.basename(real)} is append-only (launcher): new content must begin with the existing ` +
-                "content unchanged; append below it",
+              `${path.basename(real)} is append-only (launcher) and this campaign already has it as ` +
+                `${onDisk}; write that exact name rather than a case variant, which would leave two ` +
+                "ledgers with two histories",
             );
+          }
+          if (fs.existsSync(real)) {
+            const prior = await fs.promises.readFile(real, "utf8");
+            if (!content.startsWith(prior) && !content.startsWith(prior.trimEnd())) {
+              throw new Error(
+                `${path.basename(real)} is append-only (launcher): new content must begin with the existing ` +
+                  "content unchanged; append below it",
+              );
+            }
           }
         }
         if (/^literature-\d+\.md$/i.test(base)) {

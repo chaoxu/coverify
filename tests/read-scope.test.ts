@@ -13,7 +13,15 @@ function text(result: { content: { type: string; text?: string }[] }): string {
 }
 
 function campaign() {
-  const prior = fs.mkdtempSync(`${os.tmpdir()}/coverify-readscope-prior-`);
+  // NESTED on purpose: readRoots grants a statement-declared path only at depth
+  // >= 3, so a bare `/tmp` or `/var` in prose is never a read grant. macOS
+  // tmpdir is /var/folders/<x>/<y>/T, deep enough by accident; Linux tmpdir is
+  // /tmp, so a fixture created directly there is depth 2 and the grant is
+  // (correctly) refused — the suite passed on one platform and failed on the
+  // other for a reason that had nothing to do with the rule under test.
+  const priorBase = fs.mkdtempSync(`${os.tmpdir()}/coverify-readscope-prior-`);
+  const prior = path.join(priorBase, "campaigns", "route-x");
+  fs.mkdirSync(prior, { recursive: true });
   fs.writeFileSync(path.join(prior, "FAILED.md"), "# FAILED\n\nroute X closed.\n");
   const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-readscope-`);
   fs.writeFileSync(
@@ -105,7 +113,13 @@ describe("read scope", () => {
   });
 
   test("statement paths with trailing punctuation still grant; bare top-level dirs never do", () => {
-    const prior = fs.mkdtempSync(`${os.tmpdir()}/coverify-readscope-punct-`);
+    // Nested for the depth >= 3 rule, as in campaign() above.
+    const prior = path.join(
+      fs.mkdtempSync(`${os.tmpdir()}/coverify-readscope-punct-`),
+      "campaigns",
+      "route-y",
+    );
+    fs.mkdirSync(prior, { recursive: true });
     const dir = fs.mkdtempSync(`${os.tmpdir()}/coverify-readscope-p2-`);
     fs.writeFileSync(
       path.join(dir, "STATEMENT.md"),
