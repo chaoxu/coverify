@@ -24,7 +24,12 @@ const { buildModels, setTelemetrySink } = await import("../src/providers.ts");
 const { GateStore } = await import("../src/gates.ts");
 import type { Handle } from "../src/harness.ts";
 
-const ROLE_ENVS = ["COVERIFY_MODEL_REASONER", "COVERIFY_MODEL_GATECRITIC"];
+// COVERIFY_MODEL_CRITIC, not _GATECRITIC: the latter is not a knob and never
+// was. The fixture only worked because the gate critic's default provider was
+// `codex-cli` and COVERIFY_CODEX_CMD redirects EVERY codex-cli call to the
+// stub, so a dead model override looked like a live one. Pointing the role at
+// a non-CLI provider is what exposed it.
+const ROLE_ENVS = ["COVERIFY_MODEL_REASONER", "COVERIFY_MODEL_CRITIC"];
 
 afterEach(() => {
   for (const e of [...FIXTURE_ENVS, ...ROLE_ENVS]) delete process.env[e];

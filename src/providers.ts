@@ -106,16 +106,19 @@ const ROLE_ENV: Record<RoleName, string> = {
  *  COVERIFY_MODEL_<ROLE>. The hostile auditor stays on a different family so
  *  every candidate gets one cross-family check; it goes through the official
  *  `claude` CLI because third-party OAuth against Anthropic draws Extra
- *  Credits. */
+ *  Credits — an Anthropic-specific fact, and the only reason any role spawns a
+ *  CLI. The codex verdict roles run in process (Chao, 2026-08-11): the same
+ *  subscription, and an ephemeral session grants no tools where `codex exec`
+ *  carries its own. */
 const ROLE_DEFAULTS: Record<RoleName, string> = {
   coordinator: "openai-codex/gpt-5.6-sol@max",
   reasoner: "openai-codex/gpt-5.6-sol@max",
   technician: "openai-codex/gpt-5.6-sol@max",
-  gateCritic: "codex-cli/gpt-5.6-sol",
+  gateCritic: "openai-codex/gpt-5.6-sol",
   hostileAuditor: "claude-cli/opus",
-  bundleCertifier: "codex-cli/gpt-5.6-sol",
-  reconstructor: "codex-cli/gpt-5.6-sol",
-  comparator: "codex-cli/gpt-5.6-sol",
+  bundleCertifier: "openai-codex/gpt-5.6-sol",
+  reconstructor: "openai-codex/gpt-5.6-sol",
+  comparator: "openai-codex/gpt-5.6-sol",
 };
 
 const envSpec = (env: string, fallback: string): ModelSpec =>

@@ -556,3 +556,146 @@ asks a fresh reader what the routes share.
 *Activation test:* a second campaign accumulating >= 20 closures whose gate
 artifacts cite each other (as g177/g180 did) without the frontier's working
 hypothesis changing.
+
+## 2026-08-11: one dispatch profile for every role (uniform + extensible roles)
+
+The launcher names roles by what they do — coordinator, exploration agent,
+gate critic, hostile auditor, bundle certifier, blind reconstructor,
+comparison agent — and the harness implements each as its own thing. But
+there is really ONE dispatch mechanism plus flags, one genuine singleton, and
+one thing that is not a role at all. The evidence is already in the code:
+`cadence.ts` says stage 1, bundle certification and comparison "differ only
+in inputs and disclosure", and it runs them through a single shared helper.
+Three of the four stages are already the uniform thing; nothing names it.
+
+### What is actually there
+
+- `RoleName` has eight members. `coordinator` is the only one that cannot be
+  replicated: the contract makes generation delegable and selection not, and
+  two coordinators would be two authorities over one ledger set.
+- `technician` is not a species. It is a worker holding code tools
+  (`run_script` + non-prose writes), granted only on a dispatch carrying a
+  computation declaration with concrete bounds.
+- The librarian is NOT a role. It is a tool invoked inside another role's
+  turn, which is exactly why `spend.ts` must exclude its lane from vouching
+  for the dispatch (a literature search once suppressed the worker's own
+  usage-less record).
+- Judges and workers are the same machinery — both are handles, both settle
+  through `persist`, both write completion records and EVIDENCE artifacts.
+  What differs is what they are POINTED AT: a frozen, hash-bound artifact
+  admits replication; an open search space does not. A worker dispatched to
+  find a counterexample against a fixed claim is already a judge, and the
+  contract asks for exactly that ("devote a lane to an exact counterexample").
+
+### The model
+
+One dispatch profile, declaring:
+
+- `inputs` — from a fixed vocabulary (candidate, statement, proved,
+  dependencies, bundle, a named prior step's output)
+- `session` — ephemeral (one answer) or durable
+- `tools` — none | workspace | workspace+code
+- `output` — parsed verdict | artifact | both
+- `authority` — may BLOCK a promotion, or may AUTHORIZE one
+- `counts against --agent-limit` — worker budget or judge budget
+
+Three properties are then DERIVED from `inputs`, never declared, so an author
+cannot get them wrong:
+
+- inputs exclude the candidate  =>  the step is blind, enforced by what the
+  harness supplies rather than promised by the author
+- inputs exclude the candidate  =>  its output is reusable across candidates
+  (this is why reconstruction is `requireStranded: false` today)
+- inputs include the candidate  =>  the record is candidate-hash-keyed, so a
+  repaired candidate always gets a fresh one
+
+Every current role maps onto this without a special case, which is the test
+of whether the model is expressive enough:
+
+| role | inputs | session | tools | output | authority |
+|---|---|---|---|---|---|
+| coordinator | ledgers | durable | prose + dispatch | — | authorizes |
+| reasoner | assignment | durable | workspace | artifact | blocks nothing |
+| technician | assignment + declaration | durable | workspace+code | artifact | blocks nothing |
+| gate critic | mechanism + first implication | ephemeral | none | verdict | route triage only |
+| hostile auditor | candidate, statement, proved, deps | ephemeral | none | verdict | blocks |
+| bundle certifier | candidate, bundle | ephemeral | none | verdict | blocks |
+| reconstructor | bundle ONLY | ephemeral | none | artifact | — |
+| comparator | candidate, reconstruction | ephemeral | none | verdict | blocks + final |
+| librarian | (not a role — a tool inside a turn) | | | | |
+
+### Extension rules
+
+Open: adding JUDGES (any inputs, FAIL-only) and EXPLORERS / ideation families
+— `COVERIFY_FAMILY_*` already does the latter, and the contract already says
+proposal generation may run on any model family.
+
+Closed: redefining the four cadence stages, and adding a coordinator. The
+stages are protocol, not roles you swap.
+
+The load-bearing rule: **a user-declared role may hold "blocks a promotion"
+but never "authorizes one."** It can halt; it can never license. That
+asymmetry means a plugged-in role cannot weaken verification however it is
+written, and it falls straight out of "a substantive FAIL from any stage
+stands."
+
+### Ordering
+
+The cadence becomes an ordered pipeline rather than four names — some steps
+judge, one produces (the reconstruction returns no verdict) and one consumes
+that product. Two properties of the current order must survive:
+
+1. Cheapest disqualifier first. A bundle-cert FAIL exits BEFORE the
+   reconstruction is bought, and a test pins it. Reconstruction is measured
+   at ~830k input per call (two campaigns), so an inserted expensive judge
+   belongs late.
+2. An inserted judge must not write anything the bundle is later built from,
+   or it becomes a leak channel into the blind reconstruction and bundle
+   certification is the only thing left standing between that and a
+   contaminated verification.
+
+### The hazard this introduces, and what it costs to close
+
+**Uniformity makes illegal states expressible.** Today the reconstructor
+cannot see the candidate because no code path passes it — the guarantee is
+structural. Under declarations, "give the reconstructor the candidate"
+becomes writable, converting an impossibility into a validation problem.
+That is strictly weaker unless the validator is airtight and directly tested.
+
+This is the same failure class as `COVERIFY_MODEL_GATECRITIC` (2026-08-11): a
+name nothing read looked like it was working for as long as something else
+happened to cover for it. A declaration nothing validates would look like it
+was enforcing.
+
+So the validator is not a follow-up; it is the price of admission. Illegal
+combinations must be rejected as loudly as `validateKnobs` rejects a bad
+effort value, with tests that fail when an illegal declaration is accepted.
+
+Two constraints inherited from decisions already made here: the role registry
+must live OUTSIDE the campaign directory (a technician with `run_script`
+could otherwise add a judge or retarget its own auditor), and it must be
+stamped into the run config — `knobs.ts` refused a config file because
+ambient inputs made runs unreproducible (issue #44), and the set of judges
+that ran is part of what a promotion MEANS.
+
+### What this does not solve
+
+Line count, mostly. `cadence.ts` is ~665 lines of a ~13k repo, and the wake
+loop, handles, spend, workspace and gate store are untouched. The win is
+REVIEW SURFACE: four hand-maintained implementations of one idea become one
+mechanism plus a declaration table, so a reviewer checks the mechanism and
+the table instead of re-verifying hash-binding, blindness and reuse keys four
+times.
+
+*Activation test:* either (a) a live campaign wants a judge the contract does
+not name — a delta auditor for certified non-load-bearing diffs, or a second
+cross-family audit — and adding it needs a harness release; or (b) two stage
+implementations drift on a shared property (hash-binding, reuse key,
+blindness disclosure) inside one review cycle.
+
+Harness ripple when landed: generalize the `cadence.ts` stage helper to the
+declared-input form; derive `priorReusableRecord`'s `requireStranded` from
+inputs rather than passing it; collapse the per-role knob fan-out
+(`COVERIFY_MODEL_*`, `COVERIFY_EFFORT_*` — 17 of 37 names) into per-category
+defaults with per-role override; add the declaration validator plus its
+rejection tests; stamp the registry in the run config.
