@@ -1,11 +1,14 @@
 # The only contract this repository has is `bun run check`, and nothing was
-# running it. Three environment facts the suite depends on, learned by having a
+# running it. The environment facts the suite depends on, learned by having a
 # reviewer run it on a clean machine:
 #   - `bun install` first; tsc resolves without it but the tests spawn
 #     ./node_modules/.bin/tsc and die on a bare ENOENT.
 #   - a writable HOME: one test builds a temp dir under $HOME directly.
 #   - os.tmpdir(), not /private/tmp: the fixtures hardcoded a macOS path, so
 #     this workflow could not have passed on Linux when it was first written.
+#     Nor is os.tmpdir() alone enough -- a fixture created directly in it sits
+#     at depth 2 on Linux and depth 5 on macOS, which the read-scope depth rule
+#     can tell apart.
 #   - network on the first run: pi-coding-agent downloads ripgrep into
 #     ~/.cache/vscode-ripgrep, so an offline runner fails in read-scope tests.
 name: check
@@ -20,7 +23,20 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # BOTH platforms, because the enforcement genuinely differs between them and
+    # each one hides the other's bugs. The first Linux run went red on four
+    # tests that pass on macOS: the FAILED.md append-only guard did nothing on a
+    # case-sensitive filesystem, and the read-scope fixtures were clearing the
+    # depth>=3 rule only because macOS tmpdir is /var/folders/<x>/<y>/T. The
+    # inverse class is just as real -- sandbox.ts runs seatbelt here and landlock
+    # there, with different network semantics -- and saturn being a Mac is not a
+    # substitute for testing it. fail-fast off: when one platform breaks, the
+    # other's result is exactly what identifies it as platform-specific.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
