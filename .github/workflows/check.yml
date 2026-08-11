@@ -9,8 +9,10 @@
 #     Nor is os.tmpdir() alone enough -- a fixture created directly in it sits
 #     at depth 2 on Linux and depth 5 on macOS, which the read-scope depth rule
 #     can tell apart.
-#   - network on the first run: pi-coding-agent downloads ripgrep into
-#     ~/.cache/vscode-ripgrep, so an offline runner fails in read-scope tests.
+#   - network on the first run: pi-coding-agent downloads ripgrep into its own
+#     tools dir, ~/.pi/agent/bin (config.js getBinDir), so an offline runner
+#     fails in read-scope tests. It checks that dir and then PATH, and only
+#     then downloads.
 name: check
 
 on:
@@ -44,8 +46,13 @@ jobs:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
       # Cache the ripgrep download rather than pretending the suite is offline.
+      # The path must be pi's OWN tools dir: ~/.cache/vscode-ripgrep is where an
+      # older version put it, so this cached an empty directory and every run
+      # re-downloaded ripgrep from GitHub releases. That is a network round trip
+      # per job on a path with no retry, and it is what made the macOS leg fail
+      # while Linux passed on the identical commit.
       - uses: actions/cache@v6
         with:
-          path: ~/.cache/vscode-ripgrep
+          path: ~/.pi/agent/bin
           key: ripgrep-${{ runner.os }}
       - run: bun run check
